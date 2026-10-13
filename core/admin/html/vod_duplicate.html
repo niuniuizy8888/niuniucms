@@ -1,0 +1,73 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>
+                <h2 class="card-title">重复视频检测</h2>
+                <div class="ms-auto d-flex gap-2">
+                    <a href="<?php echo url('vod-list', '', TRUE); ?>" class="btn btn-primary btn-sm">返回视频管理</a>
+                    <button type="button" class="btn btn-success btn-sm" onclick="batchMerge('max')">合并到最大ID</button>
+                    <button type="button" class="btn btn-success btn-sm" onclick="batchMerge('min')">合并到最小ID</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:40px;"><input type="checkbox" id="select-all"></th>
+                                <th class="text-center" style="width:80px;">组ID</th>
+                                <th>视频名称</th>
+                                <th class="text-center" style="width:100px;">重复数量</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if(!empty($duplicate_list)) { foreach($duplicate_list as $group) { ?>
+                            <tr>
+                                <td class="text-center">
+                                    <input type="checkbox" class="group-checkbox" value="<?php echo intval($group['group_vid']);?>" data-vids="<?php echo xn_h(implode(',', array_map('intval', (array)$group['vids'])));?>">
+                                </td>
+                                <td class="text-center"><?php echo intval($group['group_vid']);?></td>
+                                <td><?php echo xn_h($group['name']);?></td>
+                                <td class="text-center"><span class="badge bg-danger"><?php echo intval($group['count']);?></span></td>
+                            </tr>
+                            <?php }} else { ?>
+                            <tr><td colspan="4"><div class="empty-state">
+                                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+                                <h4>没有发现重复视频</h4>
+                            </div></td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<form id="merge-form" action="<?php echo url('vod-duplicate');?>" method="post" style="display:none;">
+    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+    <input type="hidden" name="action" id="merge-action">
+    <input type="hidden" name="groups" id="merge-groups">
+</form>
+
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+document.getElementById('select-all').addEventListener('change', function() {
+    document.querySelectorAll('.group-checkbox').forEach(function(cb) { cb.checked = this.checked; }.bind(this));
+});
+function batchMerge(type) {
+    var checkboxes = document.querySelectorAll('.group-checkbox:checked');
+    if (checkboxes.length === 0) { window.showToast('请选择要合并的视频组', 'warning'); return; }
+    var groups = [];
+    checkboxes.forEach(function(cb) {
+        groups.push({ group_vid: cb.value, vids: cb.dataset.vids });
+    });
+    if (confirm('确定要执行批量合并操作吗？')) {
+        document.getElementById('merge-action').value = type === 'max' ? 'batch_merge_max' : 'batch_merge_min';
+        document.getElementById('merge-groups').value = encodeURIComponent(JSON.stringify(groups));
+        document.getElementById('merge-form').submit();
+    }
+}
+</script>

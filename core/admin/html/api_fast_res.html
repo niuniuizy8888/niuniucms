@@ -1,0 +1,41 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                <h3 class="card-title">快速入库</h3>
+            </div>
+            <div class="card-body">
+                <p class="lh-lg"><?php echo xn_h($resstr);?></p>
+            </div>
+            <div class="card-footer">
+                <div class="d-flex gap-2 flex-wrap">
+                    <?php if (!empty($post_params)) { ?>
+                    <form action="<?php echo htmlspecialchars($post_action, ENT_QUOTES, 'UTF-8'); ?>" method="post" id="fastdb-next-form">
+                        <?php foreach ($post_params as $key => $val) { ?>
+                        <input type="hidden" name="<?php echo htmlspecialchars($key, ENT_QUOTES, 'UTF-8'); ?>" value="<?php echo htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8'); ?>">
+                        <?php } ?>
+                        <button type="submit" class="btn btn-primary" id="submit" data-loading-text="处理中...">继续导入</button>
+                    </form>
+                    <?php } ?>
+                    <?php if (!empty($batch_link)) { ?>
+                    <a class="btn btn-outline-secondary" href="<?php echo htmlspecialchars($batch_link, ENT_QUOTES, 'UTF-8'); ?>">查看批次详情</a>
+                    <?php } ?>
+                    <a class="btn btn-light" href="<?php echo url('api-fastapi', array(), TRUE); ?>">返回快速采集</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<?php if (!empty($post_params)) { ?>
+<script>
+setTimeout(function () {
+    var form = document.getElementById('fastdb-next-form');
+    /* 表单内有 id="submit" 的按钮，会遮蔽 form.submit 方法，必须走原型调用 */
+    form && HTMLFormElement.prototype.submit.call(form);
+}, 1000);
+</script>
+<?php } ?>

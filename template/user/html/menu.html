@@ -1,0 +1,102 @@
+<!-- menu -->
+<div class="menu">
+    <div class="menu-header">
+        <a href="/" class="menu-header-logo">
+            <img src="/template/default/images/logo.png" alt="<?php echo $nncms['site_name'] ?? 'NiuNiuCms';?>">
+        </a>
+        <a href="#" class="btn btn-sm menu-close-btn">
+            <i class="bi bi-x"></i>
+        </a>
+    </div>
+    <div class="menu-body">
+        <div style="padding:12px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--nn-border);margin-bottom:8px;">
+            <div style="width:40px;height:40px;border-radius:50%;background:var(--nn-primary);display:flex;align-items:center;justify-content:center;color:var(--nn-bg);font-weight:700;font-size:16px;flex-shrink:0;">
+                <?php echo strtoupper(substr($user['username'] ?? 'U', 0, 1));?>
+            </div>
+            <div>
+                <div style="font-weight:600;color:var(--nn-text);font-size:15px;"><?php echo htmlspecialchars($user['username'] ?? '');?></div>
+                <small style="color:var(--nn-text3);font-size:12px;"><?php echo htmlspecialchars($user['groupname'] ?? '');?></small>
+            </div>
+        </div>
+        <ul>
+            <li class="menu-divider">个人中心</li>
+            <li class="<?php echo $action=='index' ? 'open' : '';?>">
+                <a class="<?php echo $action=='index' ? 'active' : '';?>" href="<?php echo url('member-index');?>">
+                    <span class="nav-link-icon"><i class="bi bi-house"></i></span>
+                    <span>会员中心</span>
+                </a>
+            </li>
+
+            <li class="menu-divider">收藏点赞</li>
+            <li class="<?php echo ($action=='art_like'||$action=='vod_like') ? 'open' : '';?>">
+                <a href="#">
+                    <span class="nav-link-icon"><i class="bi bi-heart"></i></span>
+                    <span>我的点赞</span>
+                </a>
+                <ul>
+                    <li><a class="<?php echo $action=='art_like' ? 'active' : '';?>" href="<?php echo url('member-art_like');?>">文章点赞</a></li>
+                    <li><a class="<?php echo $action=='vod_like' ? 'active' : '';?>" href="<?php echo url('member-vod_like');?>">视频点赞</a></li>
+                </ul>
+            </li>
+            <li class="<?php echo ($action=='art_favorites'||$action=='vod_favorites') ? 'open' : '';?>">
+                <a href="#">
+                    <span class="nav-link-icon"><i class="bi bi-bookmark"></i></span>
+                    <span>我的收藏</span>
+                </a>
+                <ul>
+                    <li><a class="<?php echo $action=='art_favorites' ? 'active' : '';?>" href="<?php echo url('member-art_favorites');?>">文章收藏</a></li>
+                    <li><a class="<?php echo $action=='vod_favorites' ? 'active' : '';?>" href="<?php echo url('member-vod_favorites');?>">视频收藏</a></li>
+                </ul>
+            </li>
+
+            <?php
+            /* 论坛 · 会员中心侧栏入口（需求：会员中心显示论坛插件信息）。
+             * 与 plugins/forum/hook/user_sidebar_end.php 同口径：仅论坛开启且当前为登录会员时显示；
+             * menu.html 为纯 PHP 模板（_include 直入，不走 {inc:} 编译管线），故此处直接输出而非 hook 标记。 */
+            $fsCfg = function_exists('kv_get') ? kv_get('plugin_forum') : NULL;
+            if (!empty($fsCfg['on']) && is_array($user) && !empty($user['uid']))
+            {
+                $fsName = htmlspecialchars((string)(($fsCfg['name'] ?? '') !== '' ? $fsCfg['name'] : '论坛'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $fsPostOpen = !isset($fsCfg['post_on']) || !empty($fsCfg['post_on']);
+                $fsEt = $fsPostOpen ? (string)bull_token_set((int)$user['uid'], 'forum_post_entry') : '';
+                // 会员中心菜单仅作论坛入口，选中态仅在论坛页（$action==='forum'）才点亮；
+                // 本站会员中心（?member-*）$action 恒非 'forum'，故此处论坛分组恒为导航态。
+                $fsIsForum = isset($action) && $action === 'forum';
+                $fsSub = (string)param('act', '');
+                $fsIsHome = $fsIsForum && ($fsSub === '');
+                $fsIsPost = $fsIsForum && in_array($fsSub, array('post', 'edit'), TRUE);
+                $fsIsMy = $fsIsForum && ($fsSub === 'my');
+            ?>
+            <li class="menu-divider"><?php echo $fsName; ?></li>
+            <li class="<?php echo $fsIsHome ? 'open' : '';?>">
+                <a class="<?php echo $fsIsHome ? 'active' : '';?>" href="?forum">
+                    <span class="nav-link-icon"><i class="bi bi-chat-dots"></i></span>
+                    <span><?php echo $fsName; ?>首页</span>
+                </a>
+            </li>
+            <?php if ($fsPostOpen) { ?>
+            <li class="<?php echo $fsIsPost ? 'open' : '';?>">
+                <a class="<?php echo $fsIsPost ? 'active' : '';?>" href="?forum&act=post&et=<?php echo rawurlencode($fsEt); ?>">
+                    <span class="nav-link-icon"><i class="bi bi-pencil-square"></i></span>
+                    <span>发布主题</span>
+                </a>
+            </li>
+            <?php } ?>
+            <li class="<?php echo $fsIsMy ? 'open' : '';?>">
+                <a class="<?php echo $fsIsMy ? 'active' : '';?>" href="?forum&act=my">
+                    <span class="nav-link-icon"><i class="bi bi-file-text"></i></span>
+                    <span>我的帖子</span>
+                </a>
+            </li>
+            <?php } ?>
+
+            <li class="menu-divider">账号操作</li>
+            <li><a href="<?php echo url('member-password');?>"><span class="nav-link-icon"><i class="bi bi-key"></i></span><span>修改密码</span></a></li>
+            <?php if(group_access($gid, 'intoadmin')){?>
+            <li><a href="/<?php echo $admin_entry ?? 'admin.php';?>" target="_blank"><span class="nav-link-icon"><i class="bi bi-gear"></i></span><span>后台管理</span></a></li>
+            <?php }?>
+            <li><a href="<?php echo url('user-logout', array('safe_token' => bull_token_set(array_value($user, 'uid', 0), 'user_logout')));?>"><span class="nav-link-icon"><i class="bi bi-box-arrow-right"></i></span><span>退出登录</span></a></li>
+        </ul>
+    </div>
+</div>
+<!-- ./ menu -->

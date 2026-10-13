@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>牛牛CMS - 安装配置</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/install.css" rel="stylesheet">
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="row justify-content-center">
+        <div class="col-lg-10 col-xl-8">
+          <div class="install-card">
+            <div class="install-card-head">
+              <a class="install-logo" target="_blank" href="../"><img src="../static/logo.png" alt="牛牛CMS"></a>
+              <h2><?php echo lang('step_2_title');?></h2>
+            </div>
+            <div class="install-steps">
+              <div class="step-item done"><span class="step-dot">✓</span>许可协议</div>
+              <div class="step-line done"></div>
+              <div class="step-item done"><span class="step-dot">✓</span>环境检测</div>
+              <div class="step-line done"></div>
+              <div class="step-item active"><span class="step-dot">3</span>数据库设置</div>
+            </div>
+            <div class="install-card-body">
+              <form action="<?php echo $install_entry; ?>?action=database" method="post" id="form" class="install-form">
+                <fieldset>
+                  <legend><?php echo lang('step_2_title');?></legend>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('db_engine');?></label>
+                    <div>
+                      <!-- 修正：默认值原为 MyISAM，与产品基线（全库 InnoDB /
+                           事务 / 3072B 索引上限）矛盾，且极易撞 MyISAM 1000B 索引硬限。
+                           MyISAM 仍可选，但不再是默认。 -->
+                      <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="engine" value="myisam">
+                        <label class="form-check-label">MyISAM</label>
+                      </div>
+                      <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="engine" value="innodb" checked>
+                        <label class="form-check-label">InnoDB</label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('db_host');?></label>
+                    <input type="text" name="host" class="form-control" value="127.0.0.1">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('db_name');?></label>
+                    <input type="text" name="name" class="form-control" value="NiuNiuCMS">
+                    <div class="form-text">支持字母、数字、下划线，也支持数字开头，例如 <code>38_123_cms</code></div>
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('db_user');?></label>
+                    <input type="text" name="user" class="form-control" value="root">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('db_pass');?></label>
+                    <input type="password" name="password" class="form-control" value="" autocomplete="new-password" placeholder="<?php echo lang('db_pass');?>">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('db_table_pre');?></label>
+                    <input type="text" name="tablepre" class="form-control" value="nncms_">
+                  </div>
+                </fieldset>
+
+                <fieldset>
+                  <legend><?php echo lang('step_3_title');?></legend>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('admin_email');?></label>
+                    <input type="text" name="adminemail" class="form-control" value="" placeholder="you@example.com" autocomplete="off">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('admin_username');?></label>
+                    <input type="text" name="adminuser" class="form-control" value="" placeholder="请勿使用 admin 等易猜账号" autocomplete="off">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('admin_pw');?></label>
+                    <input type="password" name="adminpass" class="form-control" value="">
+                  </div>
+
+                  <div class="mb-3">
+                    <label class="form-label"><?php echo lang('admin_pw_repeat');?></label>
+                    <input type="password" name="adminpassrepeat" class="form-control" value="">
+                  </div>
+                </fieldset>
+
+                <div class="form-check mb-3 text-start">
+                  <input class="form-check-input" type="checkbox" id="report" name="report" value="1" checked>
+                  <label class="form-check-label" for="report">
+                    <?php echo lang('install_report_tip');?>
+                  </label>
+                </div>
+
+                <div class="d-flex justify-content-between mt-4">
+                  <button type="button" class="btn btn-install-outline" onclick="history.back();"><?php echo lang('last_step');?></button>
+                  <button type="submit" class="btn btn-install" id="submit" <?php echo !$succeed ? 'disabled' : '';?> data-loading-text="<?php echo lang('installing_about_moment');?>..."><?php echo lang('next_step');?></button>
+                </div>
+              </form>
+            </div>
+            <div class="install-footer">牛牛CMS 安装向导</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>

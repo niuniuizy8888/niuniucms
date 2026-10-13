@@ -1,0 +1,42 @@
+<?php
+/**
+ * 数据库配置 overlay 模板（可选文件）：本文件存在时（core/config/database.php），
+ * core.php 会用它【整体替换】config.php 的 db 段——用于连接池/读写分离部署（db.type=proxy）。
+ *
+ * 启用方式：复制本文件为 database.php 并填入真实凭据；删除本文件即回退 config.php 的 db 段。
+ * 完整说明（分阶段启用/影子日志分析/回滚）：.skills/读写分离使用说明.md
+ *
+ * 层级规则（重要）：db_new 归一——若本数组存在与 'type' 同名的子键（如 'proxy'），
+ * 该子键整体作为驱动配置；无同名子键则本数组顶层就是驱动配置。
+ * 本模板采用【无同名子键的顶层结构】，故 rw_* 键与 master/slaves 同级即被驱动读到。
+ *
+ * 生产若已有 database.php（如压测批次创建的 proxy overlay），以实际文件为准——
+ * 启用读写分离时把 rw_* 键按同样的「与 master 同级」规则并入实际文件。
+ */
+return array(
+  'type' => 'proxy',
+  'master' => array(
+    'host' => '127.0.0.1',
+    'port' => 3306,
+    'user' => 'nncms',
+    'password' => '',
+    'name' => 'nncms',
+    'tablepre' => 'nncms_',
+    'charset' => 'utf8mb4',
+    'engine' => 'innodb',
+  ),
+  // 从库节点：写账号建议只读（read_only=ON）——锁定读误路由会显式报错而非静默无锁；
+  // 'weight' 仅在 slave_strategy='weight' 时参与选择（默认 1）
+  'slaves' => array(
+    // array('host' => '192.168.1.101', 'port' => 3306, 'user' => 'nncms_ro', 'password' => '', 'name' => 'nncms', 'tablepre' => 'nncms_', 'weight' => 1),
+  ),
+  // —— 连接池/读写分离开关（默认全关=零行为变化；分阶段启用见使用说明）——
+  'rw_split' => false,            // 阶段3：读写分离总开关（SELECT 且非粘滞窗口走从库）
+  'rw_shadow' => false,           // 阶段2：影子模式，只记录路由决策不切流量
+  'rw_sticky_seconds' => 0,       // 阶段2 一起开：写后粘滞秒数（跨请求 cookie），建议观察期 3 起步
+  'slave_strategy' => 'random',   // 从库负载均衡：random/roundrobin/weight
+  // 'breaker_seconds' => 30,      // 池熔断冷却秒数
+  // 'rw_shadow_sample' => 100,    // 影子落盘采样 1-100（默认 100=全量；超 50MB/天建议降 25/10）
+  // 'rw_shadow_sink' => false,    // 影子落盘显式关闭
+  // 'rw_shadow_log' => '',        // 影子落盘显式路径（默认 runtime/log/rw_shadow.log）
+);

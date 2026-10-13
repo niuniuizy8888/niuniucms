@@ -1,0 +1,173 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></div>
+                <h3 class="card-title">地址替换</h3>
+            </div>
+            <div class="card-body">
+                <?php /* ：本页从「只读展示」升级为**可执行替换**——填老域名/新域名点按钮，
+                         CMS 用本站 wire 令牌回调商店 `?api=replace`，商店登记后由 rsync-task worker
+                         全站推送（站点侧由 api.php?route=store_push 按白名单列 REPLACE play_url/pic）。 */ ?>
+                <div class="alert alert-info d-flex align-items-start gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mt-1 flex-shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    <div>
+                        资源站换域名后在此执行：<b>老域名 → 新域名</b>。
+                        <b>本站立即替换</b>（走与 <code>api.php?route=replace</code> 完全相同的执行器），成功后<b>再上报商店</b>登记，
+                        勾选「立即推送」时商店会继续向**其它**站点推送。只需填<b>域名</b>（可带端口），不要带 <code>http://</code> 或路径。
+                    </div>
+                </div>
+                <form action="<?php echo url('set-rep', '', TRUE); ?>" method="post" class="row g-3 align-items-end mb-4">
+                    <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($safe_token ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                    <div class="col-md-3">
+                        <label class="form-label">资源站</label>
+                        <select class="form-select" name="code">
+                            <?php foreach ((array)($sources ?? array()) as $_s) { ?>
+                            <option value="<?php echo xn_h($_s['code']); ?>"><?php echo xn_h($_s['name']); ?>（<?php echo xn_h($_s['code']); ?>）</option>
+                            <?php } ?>
+                        </select>
+                        <?php if (empty($sources)) { ?>
+                        <div class="form-text text-danger">未取到资源站列表：请先在「视频采集」里导入商店资源站。</div>
+                        <?php } ?>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">替换类型</label>
+                        <select class="form-select" name="type">
+                            <option value="play">播放地址（play_url）</option>
+                            <option value="pic">图片地址（pic）</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">老域名</label>
+                        <input type="text" class="form-control" name="old_domain" placeholder="old.example.com" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">新域名</label>
+                        <input type="text" class="form-control" name="new_domain" placeholder="new.example.com" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">备注（选填）</label>
+                        <input type="text" class="form-control" name="remark" placeholder="如：换域名">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label">超时(秒)</label>
+                        <input type="number" class="form-control" name="timeout" value="300" min="5" max="1800" step="5"
+                               title="本次替换的 PHP 执行时限（5–1800 秒，默认 300）">
+                    </div>
+                    <div class="col-md-2">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" name="push" value="1" id="rep_push" checked>
+                            <label class="form-check-label" for="rep_push">上报后推送其它站点</label>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">执行替换</button>
+                    </div>
+                </form>
+
+                <div class="d-flex align-items-center gap-2 mb-4 flex-wrap">
+                    <form action="<?php echo url('set-rep', '', TRUE); ?>" method="post" class="d-inline">
+                        <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($safe_token ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="do" value="pull">
+                        <div class="input-group input-group-sm" style="width:190px">
+                            <span class="input-group-text">超时(秒)</span>
+                            <input type="number" class="form-control" name="timeout" value="300" min="5" max="1800" step="5">
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary btn-sm">从商店拉取并应用</button>
+                    </form>
+                    <span class="text-muted small">
+                        商店把替换**推**到站点需要它能反向访问本站（公网域名场景）；商店与本站同处内网时，
+                        商店侧按安全策略拒绝向私网推送，此时用这里的**拉取并应用**——本站主动读商店最近 30 天替换记录并本地改写。
+                    </span>
+                </div>
+
+                <?php
+                // 显示口径：后台统一只保留最近 60 天的 `replist`。
+                // 来源仍是商店 `?macapi`，但这里不再展示更早历史，避免旧记录长期淹没近期替换。
+                // 同时把条数/跨度/可达性显式写出来：商店不可达与“窗口内确实没记录”可区分。
+                $replist = is_array($nnzs['replist'] ?? NULL) ? $nnzs['replist'] : array();
+                $rep_times = array();
+                foreach ($replist as $_r) {
+                    if (!empty($_r['addtime'])) $rep_times[] = (string)$_r['addtime'];
+                }
+                sort($rep_times);
+                $rep_span = $rep_times ? (substr($rep_times[0], 0, 10) . ' ~ ' . substr(end($rep_times), 0, 10)) : '';
+                ?>
+                <h6 class="mb-2">
+                    云端替换记录
+                    <?php if ($replist) { ?>（共 <b><?php echo count($replist); ?></b> 条<?php echo $rep_span !== '' ? '，时间跨度 ' . xn_h($rep_span) : ''; ?>）
+                    <?php } else { ?>（0 条）<?php } ?>
+                </h6>
+                <?php if (NULL === ($nnzs ?? NULL)) { ?>
+                <div class="alert alert-warning py-2" role="alert" style="font-size:13px;">
+                    商店暂不可达：本次未能同步替换记录（<b>不代表没有记录</b>）。已留痕 <code>runtime/log 下的 store_error.php</code>，稍后刷新重试。
+                </div>
+                <?php } elseif ($replist) { ?>
+                <p class="text-muted small mb-2">
+                    数据源：商店 <code>?macapi</code> 的 <code>replist</code>，后台只展示<b>最近 60 天</b>；
+                    下面那个外链仍可用于对照商店侧 <b>30 天窗口</b>数据。
+                </p>
+                <div class="mb-2" style="max-width:280px;">
+                    <input type="text" class="form-control form-control-sm" id="repFilter" placeholder="过滤：域名 / 备注 / 类型…">
+                </div>
+                <?php } ?>
+                <?php if (!empty($nnzs['replist'])) { ?>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>来源地址</th>
+                                <th>替换地址</th>
+                                <th>类型</th>
+                                <th>站点</th>
+                                <th>时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach($replist as &$_rep) { ?>
+                            <tr class="rep-row" data-rep="<?php echo xn_h(mb_strtolower(($_rep['old'] ?? '') . ' ' . ($_rep['new'] ?? '') . ' ' . ($_rep['type'] ?? '') . ' ' . ($_rep['sitename'] ?? '') . ' ' . ($_rep['addtime'] ?? ''), 'UTF-8')); ?>">
+                                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($_rep['old']??'');?></td>
+                                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;"><?php echo htmlspecialchars($_rep['new']??'');?></td>
+                                <td><?php echo htmlspecialchars($_rep['type']??'');?></td>
+                                <td><?php echo htmlspecialchars($_rep['sitename']??'');?></td>
+                                <td><?php echo htmlspecialchars($_rep['addtime']??'');?></td>
+                            </tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted mt-3">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-1"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    记录由商店自动同步；本页通过商店 <code>?macapi</code> 的 <code>replist</code> 取数，并只展示最近 60 天。
+                    <a class="ms-2" href="<?php echo url('api-store_replacements', array(), TRUE);?>" target="_blank">商店侧入口（30 天窗口 + 全量对照）</a>
+                </p>
+                <?php } else { ?>
+                <div class="empty-state">
+                    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    <h4>暂无替换记录</h4>
+                    <p>上方表单提交后，商店登记成功即会出现在这里（仅展示最近 60 天，商店 <code>replist</code> 同步有缓存，稍后刷新即可）。</p>
+                    <p class="text-muted small">若长期返回 0 条，多为商店不可达，或最近 60 天内确实没有替换记录（看 <code>runtime/log 下的 store_error.php</code>）。</p>
+                </div>
+                <?php } ?>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+/* 记录较多（实测 55 条）时的本地过滤：只隐藏行，不改数据 */
+(function(){
+    var box = document.getElementById('repFilter');
+    if (!box) return;
+    box.addEventListener('input', function(){
+        var kw = this.value.trim().toLowerCase();
+        var rows = document.querySelectorAll('tr.rep-row');
+        var shown = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var hit = kw === '' || (rows[i].getAttribute('data-rep') || '').indexOf(kw) !== -1;
+            rows[i].style.display = hit ? '' : 'none';
+            if (hit) shown++;
+        }
+    });
+})();
+</script>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

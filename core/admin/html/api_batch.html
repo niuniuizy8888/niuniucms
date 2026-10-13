@@ -1,0 +1,424 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 3h5v5"/><path d="M21 3l-7 7"/><path d="M8 21H3v-5"/><path d="M3 21l7-7"/></svg></div>
+                <h3 class="card-title">采集批次</h3>
+                <div class="card-actions">
+                    <a href="<?php echo url('api-fastapi', array(), TRUE); ?>" class="btn btn-primary btn-sm">新建快速采集</a>
+                    <a href="<?php echo url('api-list', array(), TRUE); ?>" class="btn btn-light btn-sm">返回采集列表</a>
+                </div>
+            </div>
+            <div class="card-body">
+                <?php if (!empty($batch)) { ?>
+                <?php $batch_risk = api_import_batch_risk_profile($batch); ?>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3"><div class="border rounded p-3">批次ID<br><strong>#<?php echo intval($batch['id']); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3">资源站<br><strong><?php echo htmlspecialchars($batch['source_name'], ENT_QUOTES, 'UTF-8'); ?></strong></div></div>
+                    <div class="col-md-2"><div class="border rounded p-3">新增<br><strong><?php echo intval($batch['imported_num']); ?></strong></div></div>
+                    <?php if (!empty($batch_supports_updated_num)) { ?>
+                    <div class="col-md-2"><div class="border rounded p-3 text-primary">更新<br><strong><?php echo intval($batch['updated_num'] ?? 0); ?></strong></div></div>
+                    <?php } ?>
+                    <div class="col-md-2"><div class="border rounded p-3">跳过<br><strong><?php echo intval($batch['duplicate_num']); ?></strong></div></div>
+                    <div class="col-md-2"><div class="border rounded p-3">状态<br><strong><?php echo intval($batch['status']) === 2 ? '已回滚' : (intval($batch['status']) === 1 ? '已完成' : '进行中'); ?></strong></div></div>
+                </div>
+                <div class="d-flex gap-2 flex-wrap mb-4">
+                    <?php if (intval($batch['status']) === 1 && intval($batch['imported_num']) > 0) { ?>
+                    <form action="<?php echo url('api-rollback', array(), TRUE); ?>" method="post" onsubmit="return confirm('确认回滚该批次导入内容吗？');">
+                        <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($safe_token, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="batch_id" value="<?php echo intval($batch['id']); ?>">
+                        <button type="submit" class="btn btn-danger">回滚本批次</button>
+                    </form>
+                    <?php } ?>
+                    <?php if (!empty($batch['note'])) { ?>
+                    <div class="alert alert-light mb-0"><?php echo htmlspecialchars($batch['note'], ENT_QUOTES, 'UTF-8'); ?></div>
+                    <?php } ?>
+                </div>
+                <div class="alert alert-light border mb-4">
+                    <div class="fw-bold">风险评估：<?php echo htmlspecialchars(($batch_risk['label'] ?? '低') . ' / ' . intval($batch_risk['score'] ?? 0), ENT_QUOTES, 'UTF-8'); ?></div>
+                    <div class="text-muted mb-2"><?php echo htmlspecialchars($batch_risk['summary'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div>
+                    <?php if (!empty($batch_risk['items'])) { ?>
+                    <div class="mb-2 d-flex overflow-hidden rounded api-slim-bar" style="height:10px">
+                        <?php foreach ($batch_risk['items'] as $risk_item) { ?>
+                        <?php $risk_href = !empty($risk_item['drill_params']) ? url('api-batch', $risk_item['drill_params'], TRUE) : ''; ?>
+                        <?php if ($risk_href !== '') { ?><a href="<?php echo $risk_href; ?>" title="<?php echo htmlspecialchars($risk_item['label'] . ' +' . intval($risk_item['points']) . '分（' . $risk_item['ratio'] . '%）', ENT_QUOTES, 'UTF-8'); ?>" style="display:block;width:<?php echo htmlspecialchars((string)$risk_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($risk_item['color'] ?? '#6c757d', ENT_QUOTES, 'UTF-8'); ?>;"></a><?php } else { ?><div title="<?php echo htmlspecialchars($risk_item['label'] . ' +' . intval($risk_item['points']) . '分（' . $risk_item['ratio'] . '%）', ENT_QUOTES, 'UTF-8'); ?>" style="width:<?php echo htmlspecialchars((string)$risk_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($risk_item['color'] ?? '#6c757d', ENT_QUOTES, 'UTF-8'); ?>;"></div><?php } ?>
+                        <?php } ?>
+                    </div>
+                    <div class="small text-muted mb-2">主要风险来源：<?php echo htmlspecialchars($batch_risk['dominant_label'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                    <?php } ?>
+                    <?php if (!empty($batch_risk['reasons'])) { ?>
+                        <?php foreach ($batch_risk['reasons'] as $reason) { ?>
+                        <div class="small text-muted">
+                            +<?php echo intval($reason['points'] ?? 0); ?> 分，<?php echo htmlspecialchars($reason['text'] ?? '', ENT_QUOTES, 'UTF-8'); ?>
+                            <?php if (!empty($reason['drill_text']) && !empty($reason['drill_params'])) { ?>
+                            <a class="ms-2" href="<?php echo url('api-batch', $reason['drill_params'], TRUE); ?>"><?php echo htmlspecialchars($reason['drill_text'], ENT_QUOTES, 'UTF-8'); ?></a>
+                            <?php } ?>
+                        </div>
+                        <?php } ?>
+                    <?php } ?>
+                    <?php $batch_risk_suggestions = api_import_batch_risk_suggestions($batch); ?>
+                    <?php if (!empty($batch_risk_suggestions)) { ?>
+                    <div class="mt-2">
+                        <div class="small fw-bold">建议动作</div>
+                        <?php foreach ($batch_risk_suggestions as $suggestion) { ?>
+                        <div class="small text-muted">- <?php echo htmlspecialchars($suggestion, ENT_QUOTES, 'UTF-8'); ?></div>
+                        <?php } ?>
+                    </div>
+                    <?php } ?>
+                </div>
+                <?php if (empty($batch_item_supports_action_type)) { ?>
+                <div class="alert alert-warning">
+                    当前数据库批次明细表仍是旧结构，只能完整记录“新增”明细；如需查看“更新了哪些字段 / 前后值”，请执行根目录新增的明细升级 SQL。
+                </div>
+                <?php } ?>
+
+                <h5 class="mb-3">批次分析概览</h5>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3"><div class="border rounded p-3">当前筛选明细<br><strong><?php echo intval($batch_analysis['total'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-success">新增动作<br><strong><?php echo intval($batch_analysis['create_count'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-primary">更新动作<br><strong><?php echo intval($batch_analysis['update_count'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-danger">跳过动作<br><strong><?php echo intval($batch_analysis['skip_count'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-warning">平均差异字段数<br><strong><?php echo htmlspecialchars((string)($batch_analysis['avg_diff_fields'] ?? 0), ENT_QUOTES, 'UTF-8'); ?></strong></div></div>
+                </div>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-2">Top 字段</div>
+                            <?php if (!empty($batch_analysis['top_fields'])) { ?>
+                                <?php foreach ($batch_analysis['top_fields'] as $label => $count) { ?>
+                                <div class="d-flex justify-content-between border-bottom py-1">
+                                    <span><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></span>
+                                    <strong><?php echo intval($count); ?></strong>
+                                </div>
+                                <?php } ?>
+                            <?php } else { ?>
+                            <div class="text-muted">暂无字段变化统计</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-2">Top 更新范围</div>
+                            <?php if (!empty($batch_analysis['top_scopes'])) { ?>
+                                <?php foreach ($batch_analysis['top_scopes'] as $scope => $count) { ?>
+                                <div class="d-flex justify-content-between border-bottom py-1">
+                                    <span><?php echo htmlspecialchars(fast_db_update_scope_options()[$scope] ?? $scope, ENT_QUOTES, 'UTF-8'); ?></span>
+                                    <strong><?php echo intval($count); ?></strong>
+                                </div>
+                                <?php } ?>
+                            <?php } else { ?>
+                            <div class="text-muted">暂无更新范围统计</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-2">动作分布</div>
+                            <?php if (!empty($batch_analysis['top_actions'])) { ?>
+                                <?php foreach ($batch_analysis['top_actions'] as $action => $count) { ?>
+                                <div class="d-flex justify-content-between border-bottom py-1">
+                                    <span><?php echo htmlspecialchars(api_import_batch_item_action_label($action), ENT_QUOTES, 'UTF-8'); ?></span>
+                                    <strong><?php echo intval($count); ?></strong>
+                                </div>
+                                <?php } ?>
+                            <?php } else { ?>
+                            <div class="text-muted">暂无动作分布</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                </div>
+
+                <h5 class="mb-3">最近导入明细</h5>
+                <form action="<?php echo url('api-batch', array('batch_id' => intval($batch['id'])), TRUE); ?>" method="get" class="row g-3 mb-4">
+                    <input type="hidden" name="page" value="<?php echo intval($page); ?>">
+                    <div class="col-md-3">
+                        <label class="form-label">动作类型</label>
+                        <select class="form-select" name="action_type">
+                            <?php foreach ($batch_action_options as $action_key => $action_label) { ?>
+                            <option value="<?php echo htmlspecialchars($action_key, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $batch_filter_action_type === $action_key ? 'selected' : ''; ?>><?php echo htmlspecialchars($action_label, ENT_QUOTES, 'UTF-8'); ?></option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">字段分组</label>
+                        <select class="form-select" name="field_group">
+                            <?php foreach ($batch_field_group_options as $group_key => $group_label) { ?>
+                            <option value="<?php echo htmlspecialchars($group_key, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $batch_filter_field_group === $group_key ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($group_label, ENT_QUOTES, 'UTF-8'); ?>
+                            </option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">关键词</label>
+                        <input type="text" class="form-control" name="keyword" value="<?php echo htmlspecialchars($batch_filter_keyword, ENT_QUOTES, 'UTF-8'); ?>" placeholder="视频名 / 字段名 / 前后值关键词">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">每页条数</label>
+                        <select class="form-select" name="item_pagesize">
+                            <?php foreach (array(20, 50, 100, 200) as $_size) { ?>
+                            <option value="<?php echo $_size; ?>" <?php echo intval($batch_items_pagesize) === $_size ? 'selected' : ''; ?>><?php echo $_size; ?>/页</option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="col-md-12 d-flex align-items-end gap-2">
+                        <button type="submit" class="btn btn-primary">筛选</button>
+                        <a class="btn btn-outline-primary" href="<?php echo url('api-batch', array('batch_id' => intval($batch['id']), 'page' => intval($page), 'action_type' => $batch_filter_action_type, 'field_group' => $batch_filter_field_group, 'keyword' => $batch_filter_keyword, 'item_pagesize' => intval($batch_items_pagesize), 'export' => 'csv'), TRUE); ?>">导出当前筛选</a>
+                    </div>
+                </form>
+                <?php if (empty($batch_item_supports_diff_fields) || empty($batch_item_supports_diff_snapshot) || empty($batch_item_supports_result_status)) { ?>
+                <div class="text-muted mb-3">当前库结构未完整升级时，字段分组、跳过明细下钻和前后值关键词筛选会自动降级；如需完整能力，请执行 `api_import_batch_item.upgrade.sql` 与 `api_import_batch_item_result.upgrade.sql`。</div>
+                <?php } ?>
+                <div class="table-responsive mb-4">
+                    <table class="table table-bordered align-middle">
+                        <thead>
+                            <tr>
+                                <?php if (!empty($batch_item_supports_action_type)) { ?><th>动作</th><?php } ?>
+                                <th>VID</th>
+                                <th>CID</th>
+                                <th>名称</th>
+                                <?php if (!empty($batch_item_supports_diff_fields)) { ?><th>差异字段</th><?php } ?>
+                                <?php if (!empty($batch_item_supports_diff_snapshot)) { ?><th>前后值</th><?php } ?>
+                                <th>导入时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($batch_items)) { foreach ($batch_items as $item) { ?>
+                            <tr>
+                                <?php if (!empty($batch_item_supports_action_type)) { ?><td><?php echo htmlspecialchars($item['action_type_label'] ?? '新增', ENT_QUOTES, 'UTF-8'); ?></td><?php } ?>
+                                <td><?php echo intval($item['vid']); ?></td>
+                                <td><?php echo intval($item['cid']); ?></td>
+                                <td>
+                                    <?php echo htmlspecialchars($item['vod_name'], ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php if (!empty($batch_item_supports_update_scope) && !empty($item['update_scope']) && ($item['action_type'] ?? '') === 'update') { ?>
+                                    <div><small class="text-muted">范围：<?php echo htmlspecialchars(fast_db_update_scope_options()[$item['update_scope']] ?? $item['update_scope'], ENT_QUOTES, 'UTF-8'); ?></small></div>
+                                    <?php } ?>
+                                    <?php if (($item['result_status'] ?? '') === 'unbound') { ?>
+                                    <div><small class="text-danger">该条因分类未绑定被跳过</small></div>
+                                    <?php } ?>
+                                </td>
+                                <?php if (!empty($batch_item_supports_diff_fields)) { ?>
+                                <td>
+                                    <?php if (!empty($item['diff_fields_arr'])) { ?>
+                                    <?php echo htmlspecialchars(implode('、', $item['diff_fields_arr']), ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php } else { ?>
+                                    <span class="text-muted">-</span>
+                                    <?php } ?>
+                                </td>
+                                <?php } ?>
+                                <?php if (!empty($batch_item_supports_diff_snapshot)) { ?>
+                                <td>
+                                    <?php if (!empty($item['diff_snapshot_arr'])) { ?>
+                                        <?php foreach ($item['diff_snapshot_arr'] as $diff) { ?>
+                                        <div class="mb-2 border rounded p-2 bg-light">
+                                            <div><strong><?php echo htmlspecialchars($diff['label'] ?? ($diff['field'] ?? '-'), ENT_QUOTES, 'UTF-8'); ?></strong></div>
+                                            <div class="small text-muted">旧值：<?php echo htmlspecialchars(mb_substr((string)($diff['old'] ?? ''), 0, 120), ENT_QUOTES, 'UTF-8'); ?></div>
+                                            <div class="small text-primary">新值：<?php echo htmlspecialchars(mb_substr((string)($diff['new'] ?? ''), 0, 120), ENT_QUOTES, 'UTF-8'); ?></div>
+                                        </div>
+                                        <?php } ?>
+                                    <?php } else { ?>
+                                    <span class="text-muted">-</span>
+                                    <?php } ?>
+                                </td>
+                                <?php } ?>
+                                <td><?php echo empty($item['create_date']) ? '-' : date('Y-m-d H:i:s', intval($item['create_date'])); ?></td>
+                            </tr>
+                            <?php } } else { ?>
+                            <tr><td colspan="<?php echo 4 + (!empty($batch_item_supports_action_type) ? 1 : 0) + (!empty($batch_item_supports_diff_fields) ? 1 : 0) + (!empty($batch_item_supports_diff_snapshot) ? 1 : 0); ?>" class="text-center text-muted">当前批次暂无明细</td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+                    <div class="text-muted">当前明细共筛出 <?php echo intval($batch_items_total); ?> 条记录，当前第 <?php echo intval($batch_items_page); ?> / <?php echo intval($batch_items_totalpage); ?> 页。当前筛选与导出上限为 5000 条。</div>
+                    <?php if (!empty($batch_items_pagination)) { ?>
+                    <nav><ul class="pagination mb-0"><?php echo $batch_items_pagination; ?></ul></nav>
+                    <?php } ?>
+                </div>
+                <?php } ?>
+
+                <h5 class="mb-3">批次列表</h5>
+                <form action="<?php echo url('api-batch', array(), TRUE); ?>" method="get" class="row g-3 mb-4">
+                    <?php if (!empty($batch)) { ?><input type="hidden" name="batch_id" value="<?php echo intval($batch['id']); ?>"><?php } ?>
+                    <input type="hidden" name="item_page" value="<?php echo intval($batch_items_page ?? 1); ?>">
+                    <input type="hidden" name="item_pagesize" value="<?php echo intval($batch_items_pagesize ?? 20); ?>">
+                    <input type="hidden" name="action_type" value="<?php echo htmlspecialchars($batch_filter_action_type ?? 'all', ENT_QUOTES, 'UTF-8'); ?>">
+                    <input type="hidden" name="field_group" value="<?php echo htmlspecialchars($batch_filter_field_group ?? 'all', ENT_QUOTES, 'UTF-8'); ?>">
+                    <input type="hidden" name="keyword" value="<?php echo htmlspecialchars($batch_filter_keyword ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                    <div class="col-md-3">
+                        <label class="form-label">风险筛选</label>
+                        <select class="form-select" name="risk_level">
+                            <?php foreach ($batch_risk_options as $risk_key => $risk_label) { ?>
+                            <option value="<?php echo htmlspecialchars($risk_key, ENT_QUOTES, 'UTF-8'); ?>" <?php echo ($batch_risk_level ?? 'all') === $risk_key ? 'selected' : ''; ?>><?php echo htmlspecialchars($risk_label, ENT_QUOTES, 'UTF-8'); ?></option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">列表排序</label>
+                        <select class="form-select" name="batch_sort">
+                            <?php foreach ($batch_sort_options as $sort_key => $sort_label) { ?>
+                            <option value="<?php echo htmlspecialchars($sort_key, ENT_QUOTES, 'UTF-8'); ?>" <?php echo ($batch_sort ?? 'latest') === $sort_key ? 'selected' : ''; ?>><?php echo htmlspecialchars($sort_label, ENT_QUOTES, 'UTF-8'); ?></option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6 d-flex align-items-end gap-2">
+                        <button type="submit" class="btn btn-primary">应用到批次列表</button>
+                        <a class="btn btn-outline-secondary" href="<?php echo url('api-batch', !empty($batch) ? array('batch_id' => intval($batch['id'])) : array(), TRUE); ?>">重置列表条件</a>
+                    </div>
+                </form>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3"><div class="border rounded p-3">最近批次总数<br><strong><?php echo intval($batch_overview['total_batches'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-success">已完成批次<br><strong><?php echo intval($batch_overview['finished_batches'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-primary">累计新增/更新<br><strong><?php echo intval($batch_overview['total_imported'] ?? 0); ?> / <?php echo intval($batch_overview['total_updated'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-warning">平均风险分<br><strong><?php echo htmlspecialchars((string)($batch_overview['avg_risk_score'] ?? 0), ENT_QUOTES, 'UTF-8'); ?></strong></div></div>
+                </div>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-2">新增/更新最多的批次</div>
+                            <?php if (!empty($batch_overview['top_updated_batch'])) { ?>
+                            <div>#<?php echo intval($batch_overview['top_updated_batch']['id'] ?? 0); ?> - <?php echo htmlspecialchars($batch_overview['top_updated_batch']['source_name'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                            <div class="text-muted">新增 <?php echo intval($batch_overview['top_updated_batch']['imported_num'] ?? 0); ?> / 更新 <?php echo intval($batch_overview['top_updated_batch']['updated_num'] ?? 0); ?></div>
+                            <?php } else { ?>
+                            <div class="text-muted">暂无统计</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-2">跳过最多的批次</div>
+                            <?php if (!empty($batch_overview['top_skipped_batch'])) { ?>
+                            <div>#<?php echo intval($batch_overview['top_skipped_batch']['id'] ?? 0); ?> - <?php echo htmlspecialchars($batch_overview['top_skipped_batch']['source_name'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                            <div class="text-muted">跳过 <?php echo intval($batch_overview['top_skipped_batch']['duplicate_num'] ?? 0); ?> 条</div>
+                            <?php if (!empty($batch_overview['top_skipped_batch']['_skip_breakdown']['summary'])) { ?>
+                            <div class="text-muted small"><?php echo htmlspecialchars($batch_overview['top_skipped_batch']['_skip_breakdown']['summary'], ENT_QUOTES, 'UTF-8'); ?></div>
+                            <?php } ?>
+                            <?php if (!empty($batch_overview['top_skipped_batch']['_skip_breakdown']['items'])) { ?>
+                            <div class="mt-2 d-flex overflow-hidden rounded api-slim-bar" style="height:8px">
+                                <?php foreach ($batch_overview['top_skipped_batch']['_skip_breakdown']['items'] as $skip_item) { ?>
+                                <?php $skip_color = $skip_item['key'] === 'unbound' ? '#dc3545' : ($skip_item['key'] === 'skipped_update' ? '#fd7e14' : '#6c757d'); ?>
+                                <div title="<?php echo htmlspecialchars($skip_item['label'] . ' ' . $skip_item['ratio'] . '%', ENT_QUOTES, 'UTF-8'); ?>" style="width:<?php echo htmlspecialchars((string)$skip_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($skip_color, ENT_QUOTES, 'UTF-8'); ?>;"></div>
+                                <?php } ?>
+                            </div>
+                            <div class="small mt-2 text-muted">主要跳过原因：<?php echo htmlspecialchars($batch_overview['top_skipped_batch']['_skip_breakdown']['dominant_label'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                            <?php } ?>
+                            <?php } else { ?>
+                            <div class="text-muted">暂无统计</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="border rounded p-3 h-100">
+                            <div class="fw-bold mb-2">风险最高的批次</div>
+                            <?php if (!empty($batch_overview['top_risk_batch'])) { ?>
+                            <div>#<?php echo intval($batch_overview['top_risk_batch']['id'] ?? 0); ?> - <?php echo htmlspecialchars($batch_overview['top_risk_batch']['source_name'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                            <div class="text-muted">风险 <?php echo htmlspecialchars(($batch_overview['top_risk_batch']['_risk_label'] ?? '-') . ' / ' . intval($batch_overview['top_risk_batch']['_risk_score'] ?? 0), ENT_QUOTES, 'UTF-8'); ?></div>
+                            <div class="text-muted small"><?php echo htmlspecialchars($batch_overview['top_risk_batch']['_risk_summary'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div>
+                            <?php $top_risk_profile = api_import_batch_risk_profile($batch_overview['top_risk_batch']); ?>
+                            <?php if (!empty($top_risk_profile['items'])) { ?>
+                            <div class="mt-2 d-flex overflow-hidden rounded api-slim-bar" style="height:8px">
+                                <?php foreach ($top_risk_profile['items'] as $risk_item) { ?>
+                                <?php $risk_href = !empty($risk_item['drill_params']) ? url('api-batch', $risk_item['drill_params'], TRUE) : ''; ?>
+                                <?php if ($risk_href !== '') { ?><a href="<?php echo $risk_href; ?>" title="<?php echo htmlspecialchars($risk_item['label'] . ' +' . intval($risk_item['points']) . '分（' . $risk_item['ratio'] . '%）', ENT_QUOTES, 'UTF-8'); ?>" style="display:block;width:<?php echo htmlspecialchars((string)$risk_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($risk_item['color'] ?? '#6c757d', ENT_QUOTES, 'UTF-8'); ?>;"></a><?php } else { ?><div title="<?php echo htmlspecialchars($risk_item['label'] . ' +' . intval($risk_item['points']) . '分（' . $risk_item['ratio'] . '%）', ENT_QUOTES, 'UTF-8'); ?>" style="width:<?php echo htmlspecialchars((string)$risk_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($risk_item['color'] ?? '#6c757d', ENT_QUOTES, 'UTF-8'); ?>;"></div><?php } ?>
+                                <?php } ?>
+                            </div>
+                            <div class="small mt-2 text-muted">主要风险来源：<?php echo htmlspecialchars($top_risk_profile['dominant_label'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                            <?php } ?>
+                            <div class="mt-2"><a class="btn btn-outline-primary btn-sm" href="<?php echo url('api-batch', array('batch_id' => intval($batch_overview['top_risk_batch']['id'] ?? 0)), TRUE); ?>">查看详情</a></div>
+                            <?php } else { ?>
+                            <div class="text-muted">暂无统计</div>
+                            <?php } ?>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>资源站</th>
+                                <th>状态</th>
+                                <th>处理量</th>
+                                <th>新增</th>
+                                <?php if (!empty($batch_supports_updated_num)) { ?><th>更新</th><?php } ?>
+                                <th>跳过</th>
+                                <th>跳过构成</th>
+                                <th>风险</th>
+                                <th>创建时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($batchlist)) { foreach ($batchlist as $row) { ?>
+                            <?php $row_risk = api_import_batch_risk_profile($row); ?>
+                            <tr>
+                                <td>#<?php echo intval($row['id']); ?></td>
+                                <td><?php echo htmlspecialchars($row['source_name'], ENT_QUOTES, 'UTF-8'); ?><br><small class="text-muted"><?php echo htmlspecialchars($row['source_code'], ENT_QUOTES, 'UTF-8'); ?></small></td>
+                                <td><?php echo intval($row['status']) === 2 ? '已回滚' : (intval($row['status']) === 1 ? '已完成' : '进行中'); ?></td>
+                                <td><?php echo intval($row['processed_num']); ?>/<?php echo intval($row['total_num']); ?></td>
+                                <td><?php echo intval($row['imported_num']); ?></td>
+                                <?php if (!empty($batch_supports_updated_num)) { ?><td><?php echo intval($row['updated_num'] ?? 0); ?></td><?php } ?>
+                                <td><?php echo intval($row['duplicate_num']); ?></td>
+                                <td>
+                                    <?php if (intval($row['duplicate_num'] ?? 0) <= 0) { ?>
+                                    <span class="text-muted">-</span>
+                                    <?php } elseif (empty($batch_item_supports_result_status)) { ?>
+                                    <span class="text-muted">待升级</span>
+                                    <?php } else { ?>
+                                    <div class="text-muted small"><?php echo htmlspecialchars(($row['_skip_breakdown']['summary'] ?? '暂无跳过明细'), ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php if (!empty($row['_skip_breakdown']['items'])) { ?>
+                                    <div class="mt-1 d-flex overflow-hidden rounded api-slim-bar" style="height:8px;min-width:180px;">
+                                        <?php foreach ($row['_skip_breakdown']['items'] as $skip_item) { ?>
+                                        <?php $skip_color = $skip_item['key'] === 'unbound' ? '#dc3545' : ($skip_item['key'] === 'skipped_update' ? '#fd7e14' : '#6c757d'); ?>
+                                        <div title="<?php echo htmlspecialchars($skip_item['label'] . ' ' . $skip_item['ratio'] . '%', ENT_QUOTES, 'UTF-8'); ?>" style="width:<?php echo htmlspecialchars((string)$skip_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($skip_color, ENT_QUOTES, 'UTF-8'); ?>;"></div>
+                                        <?php } ?>
+                                    </div>
+                                    <div class="small text-muted mt-1">主因：<?php echo htmlspecialchars($row['_skip_breakdown']['dominant_label'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php } ?>
+                                    <?php if (!empty($row['_skip_breakdown']['items'])) { ?>
+                                    <div class="mt-1">
+                                        <?php foreach ($row['_skip_breakdown']['items'] as $skip_item) { ?>
+                                        <a class="badge bg-light text-dark text-decoration-none me-1 mb-1" href="<?php echo url('api-batch', array('batch_id' => intval($row['id']), 'page' => intval($page), 'action_type' => $skip_item['key'], 'field_group' => 'all', 'keyword' => '', 'item_page' => 1, 'item_pagesize' => 20), TRUE); ?>"><?php echo htmlspecialchars($skip_item['label'] . ' ' . intval($skip_item['count']), ENT_QUOTES, 'UTF-8'); ?></a>
+                                        <?php } ?>
+                                    </div>
+                                    <?php } ?>
+                                    <?php } ?>
+                                </td>
+                                <td>
+                                    <div><?php echo htmlspecialchars(($row_risk['label'] ?? '低') . ' / ' . intval($row_risk['score'] ?? 0), ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <div class="text-muted small"><?php echo htmlspecialchars($row_risk['summary'] ?? '', ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php if (!empty($row_risk['items'])) { ?>
+                                    <div class="mt-1 d-flex overflow-hidden rounded api-slim-bar" style="height:8px;min-width:160px;">
+                                        <?php foreach ($row_risk['items'] as $risk_item) { ?>
+                                        <?php $risk_href = !empty($risk_item['drill_params']) ? url('api-batch', $risk_item['drill_params'], TRUE) : ''; ?>
+                                        <?php if ($risk_href !== '') { ?><a href="<?php echo $risk_href; ?>" title="<?php echo htmlspecialchars($risk_item['label'] . ' +' . intval($risk_item['points']) . '分（' . $risk_item['ratio'] . '%）', ENT_QUOTES, 'UTF-8'); ?>" style="display:block;width:<?php echo htmlspecialchars((string)$risk_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($risk_item['color'] ?? '#6c757d', ENT_QUOTES, 'UTF-8'); ?>;"></a><?php } else { ?><div title="<?php echo htmlspecialchars($risk_item['label'] . ' +' . intval($risk_item['points']) . '分（' . $risk_item['ratio'] . '%）', ENT_QUOTES, 'UTF-8'); ?>" style="width:<?php echo htmlspecialchars((string)$risk_item['ratio'], ENT_QUOTES, 'UTF-8'); ?>%;background:<?php echo htmlspecialchars($risk_item['color'] ?? '#6c757d', ENT_QUOTES, 'UTF-8'); ?>;"></div><?php } ?>
+                                        <?php } ?>
+                                    </div>
+                                    <div class="small text-muted mt-1">主因：<?php echo htmlspecialchars($row_risk['dominant_label'] ?? '-', ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php } ?>
+                                    <?php if (!empty($row_risk['primary_reason']['drill_text']) && !empty($row_risk['primary_reason']['drill_params'])) { ?>
+                                    <div class="small mt-1"><a href="<?php echo url('api-batch', $row_risk['primary_reason']['drill_params'], TRUE); ?>"><?php echo htmlspecialchars($row_risk['primary_reason']['drill_text'], ENT_QUOTES, 'UTF-8'); ?></a></div>
+                                    <?php } ?>
+                                </td>
+                                <td><?php echo empty($row['create_date']) ? '-' : date('Y-m-d H:i:s', intval($row['create_date'])); ?></td>
+                                <td><a class="btn btn-outline-primary btn-sm" href="<?php echo url('api-batch', array('batch_id' => intval($row['id'])), TRUE); ?>">详情</a></td>
+                            </tr>
+                            <?php } } else { ?>
+                            <tr><td colspan="<?php echo !empty($batch_supports_updated_num) ? '11' : '10'; ?>" class="text-center text-muted">暂无采集批次</td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+                    <div class="text-muted">当前筛出 <?php echo intval($batch_count); ?> / <?php echo intval($batch_total_raw ?? $batch_count); ?> 个批次。列表概览基于当前筛选后的最近 <?php echo intval($batch_overview['total_batches'] ?? 0); ?> 个批次聚合。</div>
+                    <?php if (!empty($batch_list_pagination)) { ?>
+                    <nav><ul class="pagination mb-0"><?php echo $batch_list_pagination; ?></ul></nav>
+                    <?php } ?>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

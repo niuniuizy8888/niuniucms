@@ -1,0 +1,182 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <form method="get" action="<?php echo htmlspecialchars($conf['admin_entry'] ?? 'admin.php', ENT_QUOTES, 'UTF-8'); ?>" class="list-toolbar">
+                    <input type="hidden" name="0" value="art">
+                    <input type="hidden" name="1" value="list">
+                    <div class="toolbar-group">
+                        <label>分类</label>
+                        <select class="form-control" name="cid">
+                            <option value="0"><?php echo 'sticky'==$route?lang('top_3'):lang('select'); ?></option>
+                            <?php if(!empty($columnlist)){foreach ($columnlist as $v) { ?>
+                            <option value="<?php echo $v['cid']; ?>" <?php if ($cid == $v['cid']) echo 'selected'; ?>><?php echo xn_h($v['name']); ?></option>
+                            <?php }} ?>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>时间范围</label>
+                        <select class="form-control" name="range">
+                            <option value="" <?php if (empty($filter['range'])) echo 'selected'; ?>>全部时间</option>
+                            <option value="today" <?php if (!empty($filter['range']) && $filter['range'] == 'today') echo 'selected'; ?>>今天</option>
+                            <option value="7d" <?php if (!empty($filter['range']) && $filter['range'] == '7d') echo 'selected'; ?>>7天内</option>
+                            <option value="30d" <?php if (!empty($filter['range']) && $filter['range'] == '30d') echo 'selected'; ?>>30天内</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>每页数量</label>
+                        <select class="form-control" name="pagesize">
+                            <?php foreach (array(20, 50, 100) as $_size) { ?>
+                            <option value="<?php echo $_size; ?>" <?php if (!empty($filter) && intval($filter['pagesize']) == $_size) echo 'selected'; ?>><?php echo $_size; ?>/页</option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>关键词</label>
+                        <input type="text" id="keyword" class="form-control" placeholder="搜索文章…" name="keyword" value="<?php if(!empty($keyword)) { ?><?php echo htmlspecialchars($keyword);?><?php } ?>" style="min-width:160px;">
+                    </div>
+                    <div class="toolbar-group" style="align-self:flex-end;">
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">筛选</button>
+                            <a href="<?php echo url('art-list', '', TRUE); ?>" class="btn btn-secondary">重置</a>
+                        </div>
+                    </div>
+                </form>
+
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">文章列表</h3>
+                <div class="ms-auto d-flex gap-2 align-items-center">
+                    
+                    <label class="d-flex align-items-center gap-1 mb-0 cursor-pointer user-select-none">
+                        <input type="checkbox" data-target='input[name="delete"]' class="checkall"> 全选
+                    </label>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="margin:0;padding:0;">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:40px;"></th>
+                                <th class="text-center" style="width:60px;">AID</th>
+                                <th>名称</th>
+                                <th class="text-center">分类</th>
+                                <th>标签</th>
+                                <th class="text-center">添加时间</th>
+                                <th class="text-center" style="width:100px;">管理</th>
+                            </tr>
+                        </thead>
+                        <tbody id="artlist">
+                            <?php if($artlist) { foreach($artlist as &$_art) { ?>
+                            <tr aid="<?php echo $_art['aid']; ?>">
+                                <td class="text-center">
+                                    <input type="checkbox" name="delete" value="<?php echo $_art['aid']; ?>">
+                                </td>
+                                <td class="text-center text-muted font-monospace" style="font-size:12px;">#<?php echo $_art['aid'];?></td>
+                                <td><a class="fw-semibold" target="_blank" href="<?php echo ($conf['url_rewrite_on'] < 2 ? '../' : ''), xn_h($_art['url']); ?>"><?php echo htmlspecialchars($_art['name'], ENT_QUOTES, 'UTF-8');?></a></td>
+                                <td class="text-center"><span class="badge bg-secondary"><?php echo htmlspecialchars($_art['cate_name'], ENT_QUOTES, 'UTF-8');?></span></td>
+                                <td>
+                                    <?php if($_art['tag']){?>
+                                    <div class="tags">
+                                        <?php foreach($_art['tag_fmt'] as $key => $_tag) { ?>
+                                        <span class="tag"><a target="_blank" href="<?php echo ($conf['url_rewrite_on'] < 2 ? '../' : ''),url($conf['route']['tag'].'-'.$key, '', 2);?>"><?php echo htmlspecialchars($_tag, ENT_QUOTES, 'UTF-8');?></a></span>
+                                        <?php }?>
+                                    </div>
+                                    <?php }?>
+                                </td>
+                                <td class="text-center text-sm text-muted"><?php echo $_art['create_date_fmt_ymd'];?></td>
+                                <td class="text-center">
+                                    <a class="icon-btn danger del-one" title="删除" href="javascript:void(0);" data-aid="<?php echo $_art['aid'];?>"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a>
+                                </td>
+                            </tr>
+                            <?php }} else { ?>
+                            <tr><td colspan="7">
+                                <div class="empty-state">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                    <h4>暂无文章</h4>
+                                    <p>当前筛选条件下没有找到文章数据</p>
+                                </div>
+                            </td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <?php if ($pagination) { ?>
+            <div class="card-footer">
+                <nav><ul class="pagination"><?php echo $pagination; ?></ul></nav>
+            </div>
+            <?php } ?>
+        </div>
+
+    </div>
+</div>
+
+        <!-- 批量操作浮条（勾选行后浮现） -->
+        <div class="batch-bar" id="batchBar">
+            <span class="batch-count">已选 <strong id="batchCount">0</strong> 项</span>
+            <select class="form-control form-control-sm" id="batch_action" style="width:auto;max-width:150px;">
+                <option value="">批量操作</option>
+                        <option value="delete">批量删除</option>
+            </select>
+            <button class="btn btn-danger btn-sm" id="confirm">删除</button>
+            <button class="btn btn-primary btn-sm" id="batch_submit">执行</button>
+            <button class="btn btn-ghost btn-sm" id="batch_cancel">取消</button>
+        </div>
+
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+
+<script>
+var jconfirm = $("#confirm");
+var jbatch = $("#batch_submit");
+var jbatchAction = $("#batch_action");
+var jartlist = $('#artlist');
+function selectedArtIds() {
+    return jartlist.find('input[name="delete"]').filter(function(){ return this.checked; }).map(function(){ return $(this).val(); }).get();
+}
+function executeArtBatch(action) {
+    var ids = selectedArtIds();
+    if(ids.length < 1) { window.showToast(<?php echo json_encode(lang('please_check_delete_art'), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>, 'warning'); return; }
+    if(action == 'delete' && !window.confirm(<?php echo json_encode(lang('art_delete_confirm'), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>)) return false;
+    $.xpost(xn.url('art-batch', '', true), {ids: ids.join(','), batch_action: action, safe_token: <?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>}, function (code, message) {
+        if (code == 0) {
+            $.alert(message, 1);
+            window.setTimeout(function(){ window.location.reload(); }, 800);
+        } else {
+            $.alert(message);
+        }
+    });
+}
+jconfirm.on('click', function(){ executeArtBatch('delete'); });
+jbatch.on('click', function () {
+    var action = jbatchAction.val();
+    if(!action) { window.showToast('请选择批量操作', 'warning'); return; }
+    executeArtBatch(action);
+});
+$('body').on('click', 'a.del-one', function(){
+    if(!window.confirm('确定删除吗？')) return false;
+    var aid = $(this).data('aid'), jtr = $(this).parents('tr');
+    $.xpost(xn.url('art-del', '', true), {aid: aid, safe_token: <?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>}, function(code, message){
+        if(code == 0){ jtr.remove(); } else { $.alert(message); }
+    });
+    return false;
+});
+
+/* 批量浮条联动（v6.3） */
+function syncBatchBar() {
+    var ids = selectedArtIds();
+    $('#batchCount').text(ids.length);
+    $('#batchBar').toggleClass('show', ids.length > 0);
+    var total = jartlist.find('input[name="delete"]').length;
+    if (total) $('.checkall').prop('checked', ids.length === total);
+}
+jartlist.on('change', 'input[name="delete"]', syncBatchBar);
+$(document).on('change', '.checkall', function () { setTimeout(syncBatchBar, 0); });
+$('#batch_cancel').on('click', function () {
+    jartlist.find('input[name="delete"]:checked').prop('checked', false);
+    $('.checkall').prop('checked', false);
+    syncBatchBar();
+});
+</script>

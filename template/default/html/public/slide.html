@@ -1,0 +1,64 @@
+<div class="bannerSwiper" style="position: relative; width: 100%; overflow: hidden; cursor: pointer;">
+    <div class="swiper-wrapper">
+{if:!empty($sticky_list)}
+        {loop:$sticky_list $v}
+        <div class="swiper-slide relative group overflow-hidden">
+            <div class="aspect-[2/1] md:aspect-[5/2] relative overflow-hidden">
+                <a class="d-flex h-full relative" href="{$v.url}">
+                    <img decoding="async" src="{$v.pic}" alt="{$v.name}" loading="lazy" class="w-full h-full object-cover cursor-pointer opacity-90 group-hover:scale-105 transition-transform duration-700 ease-in-out">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/40"></div>
+                    <div class="md:hidden absolute bottom-0 left-0 right-0 p-6" style="margin: 0 1rem 1rem;">
+                        <h3 class="text-white text-lg font-bold mb-1 drop-shadow-lg">{$v.name}</h3>
+                        <p class="text-[var(--text-secondary)] text-sm drop-shadow-md">{$v.year} | {$v.area}</p>
+                    </div>
+                    <div class="hidden md:flex absolute bottom-0 left-0 right-0 z-10" style="margin: 0 2rem 3rem;">
+                        <div class="flex container">
+                            <div class="col pt-3">
+                                <h3 class="text-2xl font-bold text-white drop-shadow-lg">{$v.name}</h3>
+                                <p class="text-sm pt-2 text-[var(--text-secondary)] drop-shadow-md">{$v.year} | {$v.area}</p>
+                                {if:!empty($v['remarks'])}<p class="text-sm pt-2 text-[var(--text-secondary)] drop-shadow-md" style="font-weight: 200; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; text-overflow: ellipsis; overflow: hidden;">{$v.remarks}</p>{/if}
+                            </div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        </div>
+        {/loop}
+{else}
+        {block:sticky_index_video n="6"}
+        {loop:$data $v}
+        <div class="swiper-slide relative group overflow-hidden">
+            <div class="aspect-[2/1] md:aspect-[5/2] relative overflow-hidden">
+                <a class="d-flex h-full relative" href="{$v.url}">
+                    <img decoding="async" src="{$v.pic}" alt="{$v.name}" loading="lazy" class="w-full h-full object-cover cursor-pointer opacity-90 group-hover:scale-105 transition-transform duration-700 ease-in-out">
+                    <div class="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/40"></div>
+                    <div class="md:hidden absolute bottom-0 left-0 right-0 p-6" style="margin: 0 1rem 1rem;">
+                        <h3 class="text-white text-lg font-bold mb-1 drop-shadow-lg">{$v.name}</h3>
+                        <p class="text-[var(--text-secondary)] text-sm drop-shadow-md">{$v.year} | {$v.area}</p>
+                    </div>
+                    <div class="hidden md:flex absolute bottom-0 left-0 right-0 z-10" style="margin: 0 2rem 3rem;">
+                        <div class="flex container">
+                            <div class="col pt-3">
+                                <h3 class="text-2xl font-bold text-white drop-shadow-lg">{$v.name}</h3>
+                                <p class="text-sm pt-2 text-[var(--text-secondary)] drop-shadow-md">{$v.year} | {$v.area}</p>
+                                {if:!empty($v['remarks'])}<p class="text-sm pt-2 text-[var(--text-secondary)] drop-shadow-md" style="font-weight: 200; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; text-overflow: ellipsis; overflow: hidden;">{$v.remarks}</p>{/if}
+                            </div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        </div>
+        {/loop}
+        {/block}
+{/if}
+    </div>
+    <div class="banner-pagination" style="position: absolute; bottom: 1.5rem; right: 1.5rem; z-index: 10; display: flex; gap: 6px;"></div>
+    <div class="banner-arrow banner-prev" style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); z-index: 10; width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 0.3s;">
+        <svg width="10" height="16" viewBox="0 0 10 16" fill="none"><path d="M8 1L1 8L8 15" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+    </div>
+    <div class="banner-arrow banner-next" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); z-index: 10; width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity 0.3s;">
+        <svg width="10" height="16" viewBox="0 0 10 16" fill="none"><path d="M2 1L9 8L2 15" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+    </div>
+</div>
+
+

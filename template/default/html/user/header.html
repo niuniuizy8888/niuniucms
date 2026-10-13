@@ -1,0 +1,41 @@
+
+            <!-- app-Header -->
+            <div class="app-header header sticky" style="z-index:100;">
+                <div class="container-fluid main-container">
+                    <div class="d-flex align-items-center">
+                        <a aria-label="Hide Sidebar" class="app-sidebar__toggle" data-bs-toggle="sidebar" href="javascript:void(0)"></a>
+                        <a class="logo-horizontal" href="/">
+                            <img src="/template/default/images/logo.png" class="header-brand-img desktop-logo" alt="{$nncms.site_name}" style="height:28px;">
+                        </a>
+                        <div class="main-header-center ms-3 d-none d-lg-block">
+                            <div class="input-group" style="max-width:320px;">
+                                <input type="text" id="keyword" class="form-control" name="keyword" placeholder="搜索内容..." value="{if:!empty($keyword)}{$keyword}{/if}" style="border-radius:9999px 0 0 9999px;">
+                                <button class="btn btn-primary" id="search" style="border-radius:0 9999px 9999px 0;"><i class="fe fe-search"></i></button>
+                            </div>
+                        </div>
+                        <div class="d-flex order-lg-2 ms-auto align-items-center gap-2">
+                            <a href="/" class="nav-link icon d-flex align-items-center" title="返回首页" style="color:var(--nn-text-secondary);">
+                                <i class="fe fe-home" style="font-size:18px;"></i>
+                            </a>
+                            <div class="dropdown d-flex profile-1">
+                                <a href="javascript:void(0)" data-bs-toggle="dropdown" class="nav-link leading-none d-flex align-items-center" style="gap:8px;">
+                                    <div style="width:32px;height:32px;border-radius:50%;background:var(--nn-color-primary);display:flex;align-items:center;justify-content:center;color:var(--nn-bg-base);font-weight:700;font-size:14px;">
+                                        {if:!empty($user['username'])}{$user['username|0']}{else}U{/if}
+                                    </div>
+                                    <span class="d-none d-md-inline" style="color:var(--nn-text-primary);font-size:14px;">{$user['username']}</span>
+                                </a>
+                                <div class="dropdown-menu dropdown-menu-end dropdown-menu-arrow" style="min-width:180px;">
+                                    <div class="drop-heading px-3 py-2">
+                                        <h6 class="mb-0" style="color:var(--nn-text-primary);">{$user['username']}</h6>
+                                        <small style="color:var(--nn-text-tertiary);">{$user['groupname']}</small>
+                                    </div>
+                                    <div class="dropdown-divider m-0"></div>
+                                    <a class="dropdown-item" href="{$user_index}"><i class="dropdown-icon fe fe-user"></i> 会员中心</a>
+                                    <a class="dropdown-item" href="{$user_logout}"><i class="dropdown-icon fe fe-log-out"></i> 退出登录</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- /app-Header -->

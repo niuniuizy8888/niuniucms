@@ -1,0 +1,99 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <form class="list-toolbar" method="get" action="<?php echo htmlspecialchars($conf['admin_entry'] ?? 'admin.php', ENT_QUOTES, 'UTF-8'); ?>">
+            <input type="hidden" name="0" value="user">
+            <input type="hidden" name="1" value="list">
+            <div class="toolbar-search">
+                <span class="t-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+                <input type="text" class="form-control" id="keyword" name="keyword" value="<?php echo htmlspecialchars($keyword ?? '', ENT_QUOTES, 'UTF-8'); ?>" placeholder="搜索用户名或邮箱…">
+            </div>
+            <div class="toolbar-actions">
+                <button type="submit" class="btn btn-primary" id="search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> 搜索</button>
+            </div>
+        </form>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
+                <h3 class="card-title">用户列表</h3>
+                <div class="card-actions">
+                    <a href="<?php echo url('user-create','',TRUE);?>" class="btn btn-primary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        添加用户
+                    </a>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="margin:0;padding:0;">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th style="width:60px;">UID</th>
+                                <th>邮箱</th>
+                                <th>用户名</th>
+                                <th>用户组</th>
+                                <th>创建时间</th>
+                                <th>创建IP</th>
+                                <th class="text-center" style="width:100px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="userlist">
+                            <?php if (!empty($userlist)) { foreach($userlist as &$_user){ ?>
+                            <tr uid="<?php echo $_user['uid']; ?>">
+                                <td><span class="font-monospace text-muted" style="font-size:12px;">#<?php echo $_user['uid']; ?></span></td>
+                                <td><?php echo htmlspecialchars($_user['email'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td class="fw-semibold"><?php echo htmlspecialchars($_user['username'] ?? '', ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><span class="badge bg-primary"><?php echo htmlspecialchars($_user['groupname'] ?? '', ENT_QUOTES, 'UTF-8'); ?></span></td>
+                                <td class="text-sm text-muted"><?php echo date('Y-n-j H:i:s', $_user['create_date']); ?></td>
+                                <td class="text-sm text-muted font-monospace"><?php echo $_user['create_ip_fmt']; ?></td>
+                                <td class="text-center">
+                                    <div class="d-flex gap-1 justify-content-center">
+                                        <a class="icon-btn" title="编辑" href="<?php echo url('user-update', array('uid'=>$_user['uid']), TRUE); ?>"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
+                                        <button class="icon-btn danger delete-user" title="删除" data-uid="<?php echo $_user['uid'];?>"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php }} else { ?>
+                            <tr><td colspan="7"><div class="empty-state">暂无用户</div></td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <?php if ($pagination) { ?>
+            <div class="card-footer">
+                <nav><ul class="pagination"><?php echo $pagination; ?></ul></nav>
+            </div>
+            <?php } ?>
+        </div>
+
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var jkeyword = $('#keyword');
+jkeyword.on('keydown', function(e) {
+    if(e.keyCode == 13) {
+        var kw = jkeyword.val();
+        if (kw) window.location = xn.url('user-list', {keyword: xn.urlencode(kw)}, true);
+    }
+});
+$('#userlist').on('click', '.delete-user', function() {
+    var uid = $(this).data('uid');
+    if(uid == 1) { window.showToast('<?php echo lang('user_admin_cant_be_deleted');?>', 'warning'); return; }
+    if(!window.confirm("<?php echo lang('user_delete_confirm');?>")) return false;
+    $.xpost(xn.url('user-delete', '', true), {uid: uid, safe_token: '<?php echo $safe_token;?>'}, function (code, message) {
+        if (code == 0) { window.location.reload(); }
+        else { $.alert(message); }
+    });
+});
+$('#search').on('click', function() {
+    var kw = jkeyword.val();
+    if (kw) {
+        window.location = xn.url('user-list', {keyword: xn.urlencode(kw)}, true);
+    } else {
+        window.location = xn.url('user-list', '', true);
+    }
+});
+</script>

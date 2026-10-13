@@ -1,0 +1,48 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+                <h3 class="card-title">伪静态设置</h3>
+            </div>
+            <div class="card-body">
+                <form action="<?php echo url('set-rw', '', TRUE);?>" method="post" id="form" class="ajaxform">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                    <div class="mb-3">
+                        <label class="form-label">伪静态设置</label>
+                        <?php echo $input['rewrite']; ?>
+                        <small class="text-muted d-block mt-1">
+                            默认: ?video-1.html &nbsp;|&nbsp;
+                            伪静态1: video-1.html &nbsp;|&nbsp;
+                            伪静态2: video/1.html &nbsp;|&nbsp;
+                            伪静态3: video/1
+                        </small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">⚠️ 伪静态修改后需清理缓存</label>
+                        <p class="text-muted small mb-1">nginx 伪静态规则：</p>
+                        <pre class="bg-light p-3 rounded small" style="font-size:.8125rem;">
+# 伪静态1
+location / {
+    if (!-e $request_filename) {
+        rewrite ^((.*)/)?(.*).html$ $1/index.php last;
+    }
+}
+
+# 伪静态2/3
+location / {
+    if (!-e $request_filename) {
+        rewrite ^((.*)/) /index.php last;
+    }
+}</pre>
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="submit" data-loading-text="保存中...">保存</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

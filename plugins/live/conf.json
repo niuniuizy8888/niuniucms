@@ -1,0 +1,15 @@
+{
+    "name": "体育直播",
+    "version": "1.1.0",
+    "software_version": "",
+    "brief": "体育直播大厅：官方播放器（足球/篮球）一键嵌入站点。直播数据由播放器页面每次直连 okzhibo 接口拉取、本站零缓存；后台可改开关/导航名/SEO/播放器地址与尺寸。经 ?live 前台路由 + 顶栏导航入口接入。",
+    "author": "NiuNiuCMS",
+    "dependencies": [],
+    "hooks_rank": {
+        "head_nav_end.php": 0,
+        "index_route_default.php": 0
+    },
+    "overwrites_rank": [],
+    "installed": 0,
+    "enable": 0
+}

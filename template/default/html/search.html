@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+    {inc:public/include.html}
+	</head>
+<body class="overflow-y-auto overflow-x-hidden">
+       <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
+           <div class="z-50 w-screen sticky top-0">{inc:public/head.html}</div>   
+            <div class="w-full grow flex justify-center ">
+                <div class="flex flex-col">
+                <div class="mobile">
+                    <div class="style_containerHeader__hXI_t" style="height: 120px;">
+                        <div class="topic-container-header container">
+                            <div class="topic-header-text" style="font-size: var(--text-xl);">{$keyword}</div>
+                            <div class="topic-header-text-sub">搜索"{$keyword}" ，找到<span class="search-count text-theme"><span class="hl-total" data-count="{$num}"></span></span>部影视作品</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="desktop">
+                    <div class="style_containerHeader__hXI_t">
+                        <div class="d-flex" style="width: 100%;">
+                            <div class="overlay" style="width: 100%;">
+                                <div class="px-0 d-flex flex-column ">
+                                    <div class="topic-container-header container content-end">
+                                        <div class="topic-header-text">{$keyword}</div>
+                                        <div class="topic-header-text-sub">搜索"{$keyword}" ，找到<span class="search-count text-theme"><span class="hl-total" data-count="{$num}"></span></span>部影视作品</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="desktop">
+                    <div class="d-flex container pt-3 " style="width: 100%;">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                            {loop:$videolist $v} 
+                            <div class="mt-2 mb-2 cursor-pointer">
+                                <a  href="{$v.url}">
+                                    <div class="topic-details-card">
+                                        <div class="flex flex-col md:flex-row gap-4">
+                                            <div style="padding: 0px; width: 132px; height: 206px; position: relative; overflow: hidden; border-radius: 10px; flex-shrink-0;">
+                                                <img loading="lazy" src="{$v.pic}" alt="{$v.name}" class="rounded-xl" style="position: absolute; height: 100%; width: 100%; inset: 0px; object-fit: cover;">
+                                            </div>
+                                            <div class="flex-1">
+                                                <div class="topic-details-title">{$v.name}</div>
+                                                <div class="topic-details-title-sub text-secondary ">{$v.year} </div>
+                                                
+                                                <div class="topic-details-title-sub text-secondary ">
+                                                    主演：{$v.actor}</div> 
+                                                <div class="topic-details-title-sub text-secondary ">{$v.blurb}</div>
+                                                <span class="btn-topic-play">
+                                                <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="play" class="svg-inline--fa fa-play " role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" style="color: white;"><path fill="currentColor" d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z">
+                                                  </path>
+                                                    </svg> 
+                                                <span class="ml-2"> 立即播放 </span></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </a>
+                            </div>
+                             {/loop}
+                             {if:empty($videolist)}
+                             <div class="col-span-full text-center py-20 text-[var(--text-tertiary)]">
+                                 <p class="text-lg mb-2">未找到"{$keyword}"相关的影视作品</p>
+                                 <p class="text-sm">试试其他关键词吧</p>
+                             </div>
+                             {/if}
+                        </div>
+                    </div>
+
+                </div>
+                <div class="mobile">
+                    <div class="d-flex container pt-3" style="width: 100%;">
+                        <div class="grid grid-cols-1 gap-4 w-full">
+                           {loop:$videolist $v}
+                            <div class="pt-3 pb-3 cursor-pointer">
+                                <div class="flex flex-row gap-4">
+                                    <div style="width: 128px;">
+                                        <div style="padding: 0px; width: 104px; height: 180px; position: relative; overflow: hidden; border-radius: 10px;">
+                                            <img loading="lazy" src="{$v.pic}" alt="{$v.name}" class="rounded-xl object-cover" style="position: absolute; height: 100%; width: 100%; inset: 0px; object-fit: cover; color: transparent;">
+                                        </div>
+                                    </div>
+                                    <div class="flex-1">
+                                        <div class="topic-details-title-mobile">{$v.name}</div>
+                                        <div class="topic-details-title-sub text-secondary ">{$v.year}</div>
+                                              
+                                         <div class="topic-details-title-sub text-secondary " style="display: -webkit-box; -webkit-box-orient: vertical;-webkit-line-clamp: 2;text-overflow: ellipsis;overflow: hidden;">
+                                          主演：{$v.actor}</div>
+                                        <a href="{$v.url}" class="btn-topic-play">
+                                        <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="play" class="svg-inline--fa fa-play " role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" style="color: white;"><path fill="currentColor" d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z">
+                                        </path>
+                                         </svg> 
+                                     <span class="ml-2" > 立即播放 </span></a>
+                                    </div>
+                                </div>
+                            </div>
+                            {/loop}
+                            {if:empty($videolist)}
+                            <div class="text-center py-20 text-[var(--text-tertiary)]">
+                                <p class="text-base mb-2">未找到"{$keyword}"相关的影视作品</p>
+                                <p class="text-sm">试试其他关键词吧</p>
+                            </div>
+                            {/if}
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+           </div>  
+                 {inc:public/foot.html}
+        </div>   
+        
+</body>
+</html>
+

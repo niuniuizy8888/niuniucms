@@ -1,0 +1,143 @@
+<div id="header" class="transition-all duration-500 w-screen z-30 bg-[var(--bg-surface)]/95 backdrop-blur-md">
+    <div class="flex pb-2.5 md:pb-4 pt-3 justify-center container md:pl-0">
+        <div class="gap-y-2 flex-col w-full md:flex-row flex">
+            <div class="flex-1 flex gap-x-2 md:justify-between">
+                <a href="{$nncms.path}" class="flex justify-between w-24 md:w-28 items-center" id="logo">
+                    <img decoding="async" alt="{$nncms.site_name}" width="141" height="39" src="{$path_tpl}images/logo.png" class="transition-transform duration-300 hover:scale-105">
+                </a>
+
+                <div class="items-center flex flex-1 md:flex-none">
+                    <div class="flex-1 md:flex-none">
+                        <div class="relative flex flex-1 md:flex-none">
+                            <div id="back" class="flex justify-between pr-4 pl-2 self-center hidden">
+                                <img decoding="async" alt="" width="9" height="16" src="{$path_tpl}images/back.svg">
+                            </div>
+                            <div class="flex items-center gap-2 w-full">
+                                <form class="search_form flex-1" onsubmit="return handleSearch(this)" role="search" data-rewrite="{$conf.url_rewrite_on}" data-search="{$search_url}">
+                                    <label for="searchInput" class="sr-only">搜索影视内容</label>
+                                    <div class="relative flex-1">
+                                        <input id="searchInput" placeholder="请输入要搜索的关键词" maxlength="20" class="search-expand border-0 text-white rounded-full pl-10 md:pl-4 md:pr-10 pr-4 py-2 focus:outline-none w-full md:w-60 header-search-input-desktop text-[14px] search-field bg-[var(--bg-overlay)]/70 backdrop-blur-sm transition-all duration-300 focus:ring-2 focus:ring-[var(--color-primary)] focus:bg-[var(--bg-overlay)]" name="keyword" autocomplete="off" type="text" value="{if:isset($keyword)}{$keyword}{/if}">
+                                        <button type="submit" class="absolute inset-y-0 left-3 flex items-center justify-center md:hidden">
+                                            <img decoding="async" alt="search" loading="lazy" width="20" height="20" class="search-icon-img hover:text-[var(--color-primary)] transition-colors duration-200" src="{$path_tpl}images/search.png">
+                                        </button>
+                                        <button type="submit" class="absolute inset-y-0 right-3 items-center justify-center hidden md:flex">
+                                            <img decoding="async" alt="search" loading="lazy" width="20" height="20" class="search-icon-img hover:text-[var(--color-primary)] transition-colors duration-200" src="{$path_tpl}images/search.png">
+                                        </button>
+                                    </div>
+                                </form>
+
+                                <button id="mobileMenuBtn" class="md:hidden flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-overlay)] hover:bg-[var(--bg-hover)] transition-all duration-200 active:scale-95">
+                                    <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="bars" class="svg-inline--fa fa-bars" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" style="width: 20px; height: 20px; color: var(--text-primary);">
+                                        <path fill="currentColor" d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 桌面端导航 -->
+            <div id="menu" class="grow md:flex items-center justify-end md:flex hidden">
+                <a class="flex items-center cursor-pointer header-tab group relative px-3 py-1 whitespace-nowrap" href="/" title="首页">
+                    <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">首页</span>
+                    <div class="nav-underline absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-0.5 bg-[var(--color-primary)] group-hover:w-full transition-all duration-300 rounded-full"></div>
+                </a>
+
+                {loop:$cate_nav $v}
+                <div class="nav-item group relative px-3 py-1 whitespace-nowrap">
+                    <a href="{$v.url}" title="{$v.name}" class="flex items-center gap-1">
+                        <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">{$v.name}</span>
+                        {if:isset($v['child']) && !empty($v['child'])}
+                        <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="chevron-down" class="svg-inline--fa fa-chevron-down transition-all duration-200 group-hover:rotate-180 group-hover:text-[var(--color-primary)]" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" style="width: 10px; height: 10px;">
+                            <path fill="currentColor" d="M233.4 406.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L256 338.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z"></path>
+                        </svg>
+                    {/if}
+                </a>
+                <div class="nav-underline absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-0.5 bg-[var(--color-primary)] group-hover:w-full transition-all duration-300 rounded-full"></div>
+                {if:isset($v['child']) && !empty($v['child'])}
+                    <div class="dropdown-menu absolute left-0 top-full mt-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] shadow-xl rounded-lg overflow-hidden z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[140px] py-1">
+                        {loop:$v['child'] $child}
+                        <a href="{$child.url}" title="{$child.name}" class="block px-4 py-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-colors duration-150">{$child.name}</a>
+                        {/loop}
+                    </div>
+                    {/if}
+                </div>
+                {/loop}
+
+                <!--{hook head_nav_end.php}-->
+                {if:(group_access($gid, 'intoadmin'))}
+                <a class="flex items-center cursor-pointer header-tab group relative px-3 py-1 whitespace-nowrap" href="/{$admin_entry}" title="">
+                    <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">{$lang.admin_page}</span>
+                </a>
+
+                <a class="flex items-center cursor-pointer header-tab group relative px-3 py-1 whitespace-nowrap" href="{$user_logout}" title="">
+                    <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">{$lang.logout}</span>
+                </a>
+                {/if}
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+<!-- 移动端侧边栏 -->
+<div id="mobileSidebar" class="fixed inset-0 z-50 hidden">
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm transition-opacity duration-300" id="sidebarOverlay"></div>
+    <div class="fixed top-0 left-0 h-full w-72 bg-[var(--bg-surface)] shadow-2xl transform transition-transform duration-300 ease-out -translate-x-full" id="sidebarContent">
+        <div class="p-4 border-b border-[var(--border-subtle)] flex justify-between items-center">
+            <div class="text-lg font-bold text-[var(--text-primary)]">导航菜单</div>
+            <button id="closeSidebarBtn" class="w-8 h-8 flex items-center justify-center rounded-full text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-all duration-200">
+                <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="times" class="svg-inline--fa fa-times" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 352 512" style="width: 18px; height: 18px;">
+                    <path fill="currentColor" d="M242.72 256l100.07-100.07c12.28-12.28 12.28-32.19 0-44.48l-22.24-22.24c-12.28-12.28-32.19-12.28-44.48 0L176 189.28 75.93 89.21c-12.28-12.28-32.19-12.28-44.48 0L9.21 111.45c-12.28 12.28-12.28 32.19 0 44.48L109.28 256 9.21 356.07c-12.28 12.28-12.28 32.19 0 44.48l22.24 22.24c12.28 12.28 32.2 12.28 44.48 0L176 322.72l100.07 100.07c12.28 12.28 32.2 12.28 44.48 0l22.24-22.24c12.28-12.28 12.28-32.19 0-44.48L242.72 256z"></path>
+                </svg>
+            </button>
+        </div>
+        <div class="p-4 overflow-y-auto">
+            <ul class="space-y-1">
+                <li>
+                    <a href="/" class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)]">
+                        <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="home" class="svg-inline--fa fa-home" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" style="width: 18px; height: 18px; color: var(--text-tertiary);">
+                            <path fill="currentColor" d="M575.8 255.5c0 18-15 32.1-32 32.1H462.4l-21.1 21.1c-9.4 9.4-24.6 9.4-33.9 0L288 224.1l-97.4 97.4c-9.4 9.4-24.6 9.4-33.9 0L98.6 287.6H32c-18 0-32-14.1-32-32.1c0-9 3.5-17 9.4-23l238-198.1c9.4-7.8 22.9-7.8 32.3 0l238 198.1c5.9 4.9 9.4 14 9.4 23z"></path>
+                        </svg>
+                        首页
+                    </a>
+                </li>
+                {if:isset($cate_nav)}
+                {loop:$cate_nav $v}
+                <li>
+                    <a href="{$v.url}" class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)]">
+                        <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="film" class="svg-inline--fa fa-film" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" style="width: 18px; height: 18px; color: var(--text-tertiary);">
+                            <path fill="currentColor" d="M576 128H0V384H576V128zM48 160h64v192H48V160zm80 0h64v192H128V160zm80 0h64v192h-64V160zm80 0h64v192h-64V160z"></path>
+                        </svg>
+                        {$v.name}
+                    </a>
+                </li>
+                {/loop}
+                {/if}
+                <!--{hook head_nav_end.php}-->
+                {if:(group_access($gid, 'intoadmin'))}
+                <li class="pt-2 mt-2 border-t border-[var(--border-subtle)]">
+                    <a href="/{$admin_entry}" class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)]">
+                        <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="cog" class="svg-inline--fa fa-cog" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" style="width: 18px; height: 18px; color: var(--text-tertiary);">
+                            <path fill="currentColor" d="M487.4 315.7l-42.6-24.6c4.3-23.2 4.3-47 0-70.2l42.6-24.6c4.9-2.8 7.6-8.2 7.6-14 0-9.3-7.4-16.6-16.6-16.6l-48.3 27.8c-23.2-19.5-50.4-33.4-79.4-40.6l-10.9-50.8c-1.1-5.2-6.1-8.9-11.3-8.9h-58.3c-5.2 0-10.2 3.7-11.3 8.9l-10.9 50.8c-29 7.2-56.2 21.1-79.4 40.6L88.6 128c-9.3 0-16.6 7.4-16.6 16.6 0 5.8 2.7 11.2 7.6 14L96 220.5c-4.3 23.2-4.3 47 0 70.2L53.4 295.7c-4.9 2.8-7.6 8.2-7.6 14 0 9.3 7.4 16.6 16.6 16.6l48.3-27.8c23.2 19.5 50.4 33.4 79.4 40.6l10.9 50.8c1.1 5.2 6.1 8.9 11.3 8.9h58.3c5.2 0 10.2-3.7 11.3-8.9l10.9-50.8c29-7.2 56.2-21.1 79.4-40.6l48.3 27.8c9.3 0 16.6-7.4 16.6-16.6 0-5.8-2.7-11.2-7.6-14z"></path>
+                        </svg>
+                        {$lang.admin_page}
+                    </a>
+                </li>
+                <li>
+                    <a href="{$user_logout}" class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)]">
+                        <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="sign-out-alt" class="svg-inline--fa fa-sign-out-alt" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" style="width: 18px; height: 18px; color: var(--text-tertiary);">
+                            <path fill="currentColor" d="M471.6 21.7c-21.9-21.9-57.3-21.9-79.2 0L256 127.9l-136.4-106.2c-21.9-21.9-57.3-21.9-79.2 0-21.9 21.9-21.9 57.3 0 79.2l152.4 117.8L96 480c0 17.7 14.3 32 32 32h352c17.7 0 32-14.3 32-32V118.9l152.4-117.8c21.9-21.9 21.9-57.3 0-79.2z"></path>
+                        </svg>
+                        {$lang.logout}
+                    </a>
+                </li>
+                {/if}
+            </ul>
+        </div>
+    </div>
+</div>
+
+

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+{inc:public/include.html}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TVSeries",
+  "name": "{$video.name}",
+  "description": "{if:isset($seo['d']) && !empty($seo['d'])}{$seo.d}{/if}",
+  "image": "{$video.pic}",
+  "genre": "{if:isset($cate) && !empty($cate['name'])}{$cate.name}{/if}",
+  {if:isset($seo['url']) && !empty($seo['url'])}"url": "{$seo.url}",{/if}
+  {if:isset($video['year']) && !empty($video['year'])}"datePublished": "{$video.year}",{/if}
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "ratingValue": "{if:isset($video['score']) && !empty($video['score'])}{$video.score}{else}0{/if}",
+    "ratingCount": "{if:isset($video['hit']) && !empty($video['hit'])}{$video.hit}{else}0{/if}"
+  }
+}
+</script>
+</head>
+<body class="overflow-x-hidden text-white">
+    <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
+        <div class="mobile z-50 sticky top-0 w-screen bg-[var(--bg-surface)]">
+            <div class="flex items-center justify-center cursor-pointer py-3.5 sticky top-0 w-full z-[999] bg-[var(--bg-surface)]">
+                <span class="flex backPage" style="position: absolute; left: 12px;"><svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="angle-left" class="svg-inline--fa fa-angle-left" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><path fill="currentColor" d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"></path></svg></span>
+                <span class="flex text-[var(--text-primary)]">{$video.name}</span>
+            </div>
+        </div>
+        <div class="desktop z-50 sticky top-0 w-screen bg-[var(--bg-base)]">
+           {inc:public/head.html}
+        </div>
+        <div class="w-full grow flex justify-center ">
+            <div class="container" style="padding: 0px; position: relative;">
+                <div class="flex flex-row space-x-4">
+                    <div class="flex-1 space-y-4 no-scrollbar video-player">
+                        <div class="absolute w-full lg:relative lg:w-[100%] sticky inset-0" style="z-index: 1;position: static;">
+                            <div class="">
+                                <div class="">
+                            <div id="videoInfo" class="space-y-4 style_vodMetaContainer__TFb8U">
+                                <div class="flex flex-row space-x-4">
+                                    <div class="relative hidden lg:flex rounded-xl">
+                                    <img width="230" height="300" class="rounded-xl" loading="lazy" src="{$video.pic}" alt="{$video.name}" style="max-width: 100%; height: auto;"></div>
+                                    <div class="flex flex-col lg:w-2/3 allow-select">
+                                        <div class="flex flex-row"><span class="text-lg pr-5 line-clamp-2">{$video.name}</span>
+                                             
+                                        </div><span class="video-meta py-1"><span>{$video.year}</span><span class="video-meta-dot"></span><span>{$video.area}</span><span class="video-meta-dot"></span><span>{$video.lang}</span></span>
+                                        <div class="video-meta py-1"><span>更新: {$video.create_date_fmt_ymd}</span>
+                                        </div>
+                                        <div class="text-sm pt-1 text-ellipsis overflow-hidden">主演: {$video.actor} </div>
+                                        <div class="section-title text-[var(--color-primary)] text-md pt-3 py-2">简介</div>
+                                        <div class="text-sm text-ellipsis overflow-hidden">
+                                            {$video.content}
+                                        </div>
+                                    </div>
+                                </div>
+
+
+                                {loop:$video[play_data] $p}
+                                <div class="w-full flex flex-row"> 
+                                    <div id="videoSourceTrack" class="flex flex-1 items-center gap-2 overflow-x-scroll hide-scrollbar overscroll-none"> 
+                                        <a href="{$p.url}" id="vodSource-{$p.n}" class="hover-effect cursor-pointer style_radioOptionCard__ON4rV style_selectedOptionCard__gDNFU">
+                                            <div class="flex flex-row gap-1 items-center">
+                                                <div class="w-6 h-6 flex justify-center items-center">
+                                                <img alt="" width="21" height="20" loading="lazy" src="{$path_tpl}images/playsource.svg" style="padding-right: 2px;"></div><span class="whitespace-nowrap text-sm">{$p.name}</span>
+                                            </div>
+                                        </a>
+                                    </div> 
+                                </div>
+                                <div class="flex flex-col space-y-1" style="max-height: 300px;">
+                                     
+                                    <div id="mobileModalVideoWrap" class="flex flex-wrap no-scrollbar" style="overflow-y: scroll; min-height: 150px; max-height: 300px;">
+                                        {loop:$p[info] $i}
+                                        <div class="py-1 mobileVideoItem" style="margin-right: 0.4rem; height: fit-content; min-width: 4.5rem; max-width: 11rem;">
+                                            <div class="style_radioOptionCard__ON4rV style_unselectedOptionCard__xcEwl" style="justify-content: center;">
+                                                <label>
+                                                    <a href="{$i.url}" class="text-sm text-white/80 cursor-pointer">{$i.name}</a>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        {/loop}
+                                    </div>
+                                </div>
+                                {/loop} 
+                            </div>
+                             
+                        </div>
+                               
+
+                            </div>
+                        </div>
+                             
+                            
+                        
+                        <div class="flex justify-center">
+                            <div class="lg:w-[100%] w-[90%]">
+                                <div class="mt-8 mb-3"><span class="section-title text-xl font-semibold text-[var(--text-primary)]">相关推荐</span></div>
+                                <div class="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-5 pb-8 animate-on-scroll">
+                                             
+                                     {inc:public/vod_like.html}
+                                    
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="lg:flex hidden flex-col space-y-4" style="width: 300px;">
+                        
+                        <div class="style_vodMetaContainer__TFb8U">
+                            <div class="p-4 space-y-4"><span class="text-lg text-[var(--color-primary)]">热搜总榜</span> 
+                                 {block:vod_top cid="" n="15"} 
+													  		{loop:$data $v} 
+                                                         <a class="flex flex-row space-x-4 items-center cursor-pointer hover-effect" href="{$v.url}">
+                                                            <span class="{if:($v['n']<4)}text-hot-{$v[n]}{else}text-hot-4{/if}">{$v.n}</span>
+                                                    <span class="text-sm flex-1">{$v.name}</span>
+                                                    </a> 
+													{/loop}
+													{/block} 
+                            </div>
+                        </div>
+                        <div class="style_vodMetaContainer__TFb8U">
+                            <div class="p-4 space-y-3">
+                                <span class="text-lg text-[var(--color-primary)]">猜你喜欢</span>
+                                {block:vod_rand n="6"}
+                                {loop:$data $v}
+                                <a href="{$v.url}" class="flex items-center gap-3 group">
+                                    <img src="{$v.pic}" alt="{$v.name}" loading="lazy" class="w-10 h-14 rounded object-cover flex-shrink-0">
+                                    <div class="flex-1 min-w-0">
+                                        <span class="text-sm text-[var(--text-secondary)] group-hover:text-[var(--color-primary)] transition-colors line-clamp-1">{$v.name}</span>
+                                        <span class="text-xs text-[var(--text-tertiary)]">{$v.year} {if:!empty($v['area'])}{$v.area}{/if}</span>
+                                    </div>
+                                </a>
+                                {/loop}
+                                {/block}
+                            </div>
+                        </div>
+                    </div>
+                
+                </div>
+            </div>
+        </div> 
+        {inc:public/foot.html}
+</body>
+</html>

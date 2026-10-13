@@ -1,0 +1,148 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg></div>
+                <h3 class="card-title">站群设置</h3>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#batchSiteModal">批量添加</button>
+                    <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#cate-post">添加站点</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>域名</th>
+                                <th>网站名称</th>
+                                <th>模板</th>
+                                <th>网站重写</th>
+                                <th class="text-center" style="width:160px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($site as $key => $item){ $row_form = 'edit_' . xn_h($item['site_domain']); ?>
+                            <tr>
+                                <td>
+                                    <input form="<?php echo $row_form; ?>" class="form-control form-control-sm" type="text" name="site_domain" value="<?php echo xn_h($item['site_domain']);;?>">
+                                    <input form="<?php echo $row_form; ?>" type="hidden" name="old_site_domain" value="<?php echo xn_h($item['site_domain']);;?>">
+                                </td>
+                                <td><input form="<?php echo $row_form; ?>" class="form-control form-control-sm" type="text" name="site_name" value="<?php echo xn_h($item['site_name']);;?>"></td>
+                                <td>
+                                    <select form="<?php echo $row_form; ?>" class="form-control form-control-sm" name="path">
+                                        <?php foreach ($tmpllist as $dir=>$t) { ?>
+                                        <option value="<?php echo xn_h($dir);;?>" <?php if($dir==$item['path']) echo 'selected';?>><?php echo xn_h($t['name']);;?></option>
+                                        <?php } ?>
+                                    </select>
+                                </td>
+                                <td>
+                                    <select form="<?php echo $row_form; ?>" class="form-control form-control-sm" name="site_rewrite">
+                                        <?php foreach ($rewrite as $rk=>$t) { ?>
+                                        <option value="<?php echo xn_h($rk);?>" <?php if($rk==$item['site_rewrite']) echo 'selected';?>><?php echo xn_h($t);?></option>
+                                        <?php } ?>
+                                    </select>
+                                </td>
+                                <td class="text-center">
+                                    <button form="<?php echo $row_form; ?>" class="btn btn-sm btn-primary" type="submit">保存</button>
+                                    <button type="submit" form="del_<?php echo xn_h($item['site_domain']);;?>" class="btn btn-sm btn-danger" onclick="return confirm('确定删除？')">删除</button>
+                                </td>
+                            </tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php foreach ($site as $key => $item){ ?>
+                <!-- 行编辑表单：form 不能直接挂在 <tr> 下（HTML 解析器会把 form 提升到表格之前、且立即出栈，
+                     导致该行字段不再属于任何表单、保存按钮提交不到内容）——按 HTML5 form= 关联写法放在表格外，
+                     控件用 form="edit_域名" 指回来，jQuery serialize() 走 form.elements 仍能收齐字段。 -->
+                <form id="edit_<?php echo xn_h($item['site_domain']);;?>" method="post" class="ajaxform" action="<?php echo url('set-domain', '', TRUE);?>">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                </form>
+                <form id="del_<?php echo xn_h($item['site_domain']);;?>" method="post" action="<?php echo url('set-domain_del',array(),TRUE);?>" class="d-none">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                    <input type="hidden" name="site_domain" value="<?php echo xn_h($item['site_domain']);;?>">
+                </form>
+                <?php } ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量添加 Modal -->
+    <div class="modal fade" id="batchSiteModal" tabindex="-1">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">批量添加站点</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form action="<?php echo url('set-domain_add', '', TRUE);?>" method="post" class="ajaxform" id="batchForm">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">请输入站点数据（每行一条，用 <code>|</code> 分隔）</label>
+                            <p class="text-muted small">格式：<strong>site_domain|site_name|path|site_rewrite</strong></p>
+                            <textarea class="form-control" name="batch_sites" rows="12" placeholder="示例：
+a.com|牛牛CMS影院||
+b.com|神策影院|default|1"><?php echo xn_h(isset($batch_sites) ? $batch_sites : '');?></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-primary" form="batchForm">提交添加</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加站点 Modal -->
+    <div class="modal fade" id="cate-post">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title">添加站点</h6>
+                    <button class="btn-close" data-bs-dismiss="modal" aria-label="Close">×</button>
+                </div>
+                <div class="modal-body">
+                    <form action="<?php echo url('set-domain', '', TRUE);?>" method="post" class="ajaxform" id="formp">
+                        <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                        <div class="mb-3">
+                            <label class="form-label">域名</label>
+                            <input type="text" class="form-control" name="site_domain">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">网站名称</label>
+                            <input type="text" class="form-control" name="site_name">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">网站重写</label>
+                            <select class="form-control" name="site_rewrite">
+                                <?php foreach ($rewrite as $rk=>$t) { ?>
+                                <option value="<?php echo xn_h($rk);?>"><?php echo xn_h($t);?></option>
+                                <?php } ?>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">模板</label>
+                            <select class="form-control" name="path">
+                                <?php foreach ($tmpllist as $dir=>$t) { ?>
+                                <option value="<?php echo xn_h($dir);;?>"><?php echo xn_h($t['name']);;?></option>
+                                <?php } ?>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-success mt-2">提交</button>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=0'>
+    <meta name="theme-color" content="#0a0a0a">
+    <meta name="robots" content="noindex,nofollow">
+    <title>{$lang.user_login} - {$nncms.site_name}</title>
+    <link rel="shortcut icon" href="/template/default/images/favicon.png" type="image/x-icon">
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="{$path_tpl}css/user-login.css">
+    <!--{hook user_login_head_end.php}-->
+</head>
+<body>
+    <div class="login-card">
+        <div class="text-center" style="margin-bottom:32px;">
+            <a href="/"><img src="/template/default/images/logo.png" alt="{$nncms.site_name}" style="height:40px; margin-bottom:16px;"></a>
+            <h4 style="margin:0 0 6px; font-weight:700; color:var(--nn-text-primary); font-size:20px;">欢迎回来</h4>
+            <p style="margin:0; color:var(--nn-text-tertiary); font-size:13px;">登录您的账号以继续</p>
+        </div>
+
+        <form action="{$form_action}" method="post" id="form">
+            <input type="hidden" name="safe_token" value="{$safe_token}">
+            <input type="hidden" name="referer" value="{$referer}">
+            <div style="margin-bottom:16px;">
+                <label style="display:block; margin-bottom:6px; color:var(--nn-text-secondary); font-size:13px; font-weight:500;">邮箱 / 用户名</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fe fe-user"></i></span>
+                    <input type="text" class="form-control" placeholder="请输入邮箱或用户名" id="email" name="email" required autofocus style="border-radius:0 var(--nn-radius-md) var(--nn-radius-md) 0;">
+                </div>
+            </div>
+            <div style="margin-bottom:24px;">
+                <label style="display:block; margin-bottom:6px; color:var(--nn-text-secondary); font-size:13px; font-weight:500;">密码</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="fe fe-lock"></i></span>
+                    <input type="password" class="form-control" placeholder="请输入密码" id="password" name="password" required style="border-radius:0 var(--nn-radius-md) var(--nn-radius-md) 0;">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary w-100" id="submit" data-loading-text="登录中...">
+                <i class="fe fe-log-in me-1"></i> 登 录
+            </button>
+        </form>
+
+        <p class="text-center" style="margin:24px 0 0; color:var(--nn-text-tertiary); font-size:12px;">
+            <a href="/">{$nncms.site_name}</a>
+        </p>
+    </div>
+
+    <script src="/static/js/jquery.min.js"></script>
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script src="{$path_tpl}js/user-login.js"></script>
+</body>
+</html>

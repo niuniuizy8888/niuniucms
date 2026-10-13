@@ -1,0 +1,165 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
+                <h2 class="card-title">播放器设置</h2>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#cate-post">添加播放器</button>
+                </div>
+                <!-- 添加播放器 Modal -->
+                <div class="modal fade" id="cate-post">
+                    <div class="modal-dialog" role="document">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h6 class="modal-title">添加播放器</h6>
+                                <button class="btn-close" data-bs-dismiss="modal" aria-label="Close">×</button>
+                            </div>
+                            <div class="modal-body">
+                                <form action="<?php echo url('set-player_add','', TRUE);?>" method="post" id="formp">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">名称 <span class="text-danger">*</span></label>
+                                            <input type="text" name="player_name" class="form-control" placeholder="名称">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">代码 <span class="text-danger">*</span></label>
+                                            <input type="text" name="player_code" class="form-control" placeholder="代码">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">排序 <span class="text-danger">*</span></label>
+                                            <input type="text" name="player_rank" class="form-control" placeholder="排序">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">URL</label>
+                                            <input type="text" name="player_url" class="form-control" placeholder="留空 = 站内本地播放器">
+                                            <div class="form-text">留空即用站内本地播放器（artplayer + 弹幕，不外链）；也可填站内路径（以 / 开头）或第三方解析站完整地址。</div>
+                                        </div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary mt-3" id="submitp">提交</button>
+                                </form>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">关闭</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:80px;">排序</th>
+                                <th class="text-center">名称</th>
+                                <th class="text-center">代码</th>
+                                <th>URL</th>
+                                <th class="text-center" style="width:120px;">管理</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php $page_modals = ''; ?>
+                            <?php if ($arrlist) { foreach($arrlist as $key => &$val) { ?>
+                            <tr align="center" rowid="<?php echo xn_h($val['from']);; ?>">
+                                <td class="text-center">
+                                    <input type="text" class="form-control form-control-sm" name="rank" value="<?php echo xn_h($val['sort']);; ?>" rank="<?php echo xn_h($val['sort']);;?>" id="<?php echo xn_h($val['from']);;?>" placeholder="排序" style="width:70px;">
+                                </td>
+                                <td><?php echo xn_h($val['show']);;?></td>
+                                <td><?php echo xn_h($val['from']);;?></td>
+                                <td class="text-start" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;"><?php echo $val['parse'] !== '' ? xn_h($val['parse']) : '<span class="badge bg-success">站内本地播放器</span>'; ?></td>
+                                <td class="text-center">
+                                    <button type="button" class="icon-btn" data-bs-toggle="modal" data-bs-target="#player-<?php echo xn_h($val['from']);;?>" title="编辑"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+                                    <a data-href="<?php echo url('set-player', array('from'=>$val['from']), TRUE);?>" class="icon-btn danger delete" role="button" title="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a>
+                                </td>
+                            </tr>
+                            <?php
+                            ob_start();
+                            ?>
+                            <!-- 编辑 Modal -->
+                            <div class="modal fade" id="player-<?php echo xn_h($val['from']);;?>" tabindex="-1">
+                                <div class="modal-dialog" role="document">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h6 class="modal-title">编辑</h6>
+                                            <button class="btn-close" data-bs-dismiss="modal" aria-label="Close">×</button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <form action="<?php echo url('set-player_add','', TRUE);?>" method="post">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                                                <div class="row g-3">
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">名称 <span class="text-danger">*</span></label>
+                                                        <input type="text" name="player_name" class="form-control" value="<?php echo xn_h($val['show']);;?>">
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">代码 <span class="text-danger">*</span></label>
+                                                        <input type="text" name="player_code" class="form-control" value="<?php echo xn_h($val['from']);;?>">
+                                                    </div>
+                                                    <div class="col-md-4">
+                                                        <label class="form-label">排序 <span class="text-danger">*</span></label>
+                                                        <input type="text" name="player_rank" class="form-control" value="<?php echo xn_h($val['sort']);;?>">
+                                                    </div>
+                                                    <div class="col-12">
+                                                        <label class="form-label">URL</label>
+                                                        <input type="text" name="player_url" class="form-control" value="<?php echo xn_h($val['parse']);;?>" placeholder="留空 = 站内本地播放器">
+                                                        <div class="form-text">留空即用站内本地播放器（artplayer + 弹幕，不外链）；采集接口「导入分类」不会覆写站内播放器地址。</div>
+                                                    </div>
+                                                </div>
+                                                <button type="submit" class="btn btn-primary mt-3">提交</button>
+                                            </form>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">关闭</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php $page_modals .= ob_get_clean(); ?>
+                            <?php } } else { ?>
+                            <tr><td colspan="5"><div class="empty-state">暂无数据</div></td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="text-center mt-3">
+                    <button class="btn btn-primary rank">保存排序</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php echo $page_modals; ?>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var body = $('body');
+var saveToken = '<?php echo $safe_token_save ?? ''; ?>';
+body.on('click', 'a.delete', function() {
+    if (window.confirm('确定删除吗？')) {
+        var href = $(this).data('href');
+        $.xpost(href, {type:0, safe_token: saveToken}, function(code, message) {
+            if(code == 0) { window.location.reload(); }
+            else { $.alert(message); }
+        });
+    }
+    return false;
+});
+body.on('click', 'button.rank', function () {
+    var rankarr = new Array();
+    $('input[name="rank"]').each(function(){
+        var id = $(this).attr('id');
+        var oldrank = parseInt($(this).attr('rank'), 10);
+        var rank = parseInt($(this).val(), 10);
+        rankarr.push({id:id,oldrank:oldrank,rank:rank});
+    });
+    $.xpost(xn.url('set-player','', true), {type:2, data:rankarr, safe_token: saveToken}, function (code, message) {
+        if (code == 0) {
+            $.alert(message);
+            setTimeout(function() { window.location.reload(); }, 1000);
+        } else { $.alert(message); }
+    });
+});
+</script>

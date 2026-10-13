@@ -1,0 +1,259 @@
+/* component.css - portal page component styles (danmu/like/player/slide) extracted from inline <style> */
+
+@keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(-10px) scale(1);
+            }
+        }
+        #pauseAdContainer {
+            backdrop-filter: blur(5px);
+        }
+        #pauseAdContainer img {
+            transition: all 0.3s ease;
+        }
+        #pauseAdContainer img:hover {
+            transform: scale(1.02);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+        }
+        #closeAdButton {
+            font-family: 'Arial', sans-serif;
+            line-height: 1;
+        }
+        @media (max-width: 768px) {
+            #artplayer {
+                margin-bottom: 80px !important;
+            }
+        }
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  color: #666;
+  transition: color 0.2s ease;
+}
+
+.action-btn:focus {
+  outline: 3px solid rgba(0,126,255,0.12);
+  outline-offset: 2px;
+}
+
+.action-btn.disabled {
+  opacity: 0.6;
+  cursor: progress;
+  pointer-events: none;
+}
+.action-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.16s ease;
+}
+
+.action-count {
+  min-width: 20px;
+  text-align: left;
+  color: inherit;
+}
+.like-btn[data-state="unlike"] {
+  color: #e0245e; /* 已点赞：红色 */
+}
+
+.like-btn[data-state="like"] {
+  color: #8a8f96; /* 未点赞：灰色 */
+}
+
+.like-btn[data-state="unlike"] .action-icon {
+  transform: scale(1.08);
+}
+
+/* 收藏按钮特定样式 */
+.fav-btn[data-state="unfavorite"] {
+  color: #f6b300; /* 已收藏：金色 */
+}
+
+.fav-btn[data-state="favorite"] {
+  color: #8a8f96; /* 未收藏：灰色 */
+}
+
+.fav-btn[data-state="unfavorite"] .action-icon {
+  transform: scale(1.08);
+}
+
+/* 通用Toast样式 */
+.action-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 14px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  z-index: 99999;
+}
+
+.action-toast.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.action-toast .close {
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+/* 动画效果 */
+.pop {
+  animation: pop 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.25); }
+  60% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.login-dialog {
+  background: var(--bg-elevated, #1a1a1a);
+  border: 1px solid var(--border-subtle, rgba(255,255,255,0.06));
+  padding: 40px 30px;
+  border-radius: var(--radius-lg, 16px);
+  text-align: center;
+  max-width: 320px;
+  width: 90%;
+  box-shadow: var(--shadow-xl, 0 16px 48px rgba(0,0,0,0.6));
+  animation: zoomIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes zoomIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.login-dialog h2 {
+  color: var(--text-primary, #f5f5f5);
+  margin: 0 0 10px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.login-dialog p {
+  color: var(--text-secondary, #a0a0a0);
+  margin: 0 0 24px;
+  font-size: 15px;
+}
+
+.login-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.login-btn,
+.register-btn {
+  display: inline-block;
+  text-decoration: none;
+  border-radius: var(--radius-full, 9999px);
+  padding: 12px 24px;
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 120px;
+  text-align: center;
+  color: #fff;
+  transition: all 0.2s ease;
+}
+.login-btn {
+  background: var(--color-primary, #FAC33D);
+  color: var(--bg-base, #0a0a0a);
+}
+.login-btn:hover {
+  background: var(--color-primary-hover, #FFD700);
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(250, 195, 61, 0.4);
+}
+.register-btn {
+  background: var(--bg-overlay, #222);
+  border: 1px solid var(--border-default, rgba(255,255,255,0.1));
+  color: var(--text-primary, #f5f5f5);
+}
+.register-btn:hover {
+  background: var(--bg-hover, #2a2a2a);
+  border-color: var(--border-strong, rgba(255,255,255,0.15));
+  transform: translateY(-1px);
+}
+@media (max-width: 480px) {
+  .login-dialog {
+    padding: 30px 20px;
+  }
+  .login-btn,
+  .register-btn {
+    width: 100%;
+  }
+}
+
+.banner-pagination .swiper-pagination-bullet {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.4);
+    opacity: 1;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+.banner-pagination .swiper-pagination-bullet-active {
+    width: 24px;
+    border-radius: 4px;
+    background: var(--color-primary);
+    box-shadow: 0 0 8px var(--color-primary-glow);
+}
+.bannerSwiper:hover .banner-arrow {
+    opacity: 1;
+}
+.banner-arrow:hover {
+    background: rgba(0,0,0,0.7) !important;
+}

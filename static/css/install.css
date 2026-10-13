@@ -1,0 +1,282 @@
+/* ===== 牛牛CMS 安装向导公共样式（本地资源，无外部依赖） ===== */
+:root {
+  --inst-primary: #4e6ef2;
+  --inst-primary-dark: #3b5bf0;
+  --inst-violet: #7c5cf0;
+  --inst-success: #15803d;
+  --inst-danger: #b91c1c;
+  --inst-warn: #a16207;
+}
+
+body {
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f7ff 40%, #fdf2f8 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  color: #334155;
+}
+
+/* 卡片 */
+.install-card {
+  border: 0;
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 1.25rem 3rem rgba(78, 110, 242, 0.14);
+  overflow: hidden;
+}
+
+.install-card-head {
+  background: linear-gradient(120deg, #4e6ef2, #7c5cf0);
+  color: #fff;
+  padding: 1.6rem 2rem 1.4rem;
+  text-align: center;
+}
+
+.install-card-head h2 {
+  margin: 0.75rem 0 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 1px;
+}
+
+.install-card-body {
+  padding: 1.75rem 2.25rem 2.25rem;
+}
+
+/* Logo */
+.install-logo {
+  display: inline-block;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 0.5rem 1.25rem rgba(31, 45, 120, 0.28);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.install-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* 步骤条 */
+.install-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem 0.25rem;
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #94a3b8;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.step-dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.step-item.active .step-dot {
+  background: linear-gradient(120deg, #4e6ef2, #7c5cf0);
+  color: #fff;
+  box-shadow: 0 0.25rem 0.75rem rgba(78, 110, 242, 0.35);
+}
+
+.step-item.active {
+  color: #334155;
+  font-weight: 600;
+}
+
+.step-item.done .step-dot {
+  background: #16a34a;
+  color: #fff;
+}
+
+.step-item.done {
+  color: #64748b;
+}
+
+.step-line {
+  flex: 1;
+  max-width: 64px;
+  height: 2px;
+  background: #e2e8f0;
+  margin: 0 0.75rem;
+  border-radius: 2px;
+}
+
+.step-line.done {
+  background: #16a34a;
+}
+
+/* 检测表格 */
+.install-table th {
+  background: #f1f5f9 !important;
+  color: #475569;
+  font-weight: 600;
+  border-color: #e2e8f0 !important;
+}
+
+.install-table td {
+  color: #334155;
+  border-color: #e2e8f0 !important;
+}
+
+.install-table .table-secondary {
+  background: #f8fafc !important;
+  color: #475569;
+}
+
+.badge-pass {
+  background: #dcfce7;
+  color: #15803d;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.4em 0.9em;
+}
+
+.badge-warn {
+  background: #fef9c3;
+  color: #a16207;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.4em 0.9em;
+}
+
+.badge-fail {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.4em 0.9em;
+}
+
+/* 按钮 */
+.btn-install {
+  min-width: 140px;
+  padding: 0.55rem 1.5rem;
+  border-radius: 0.6rem;
+  font-weight: 600;
+  background: linear-gradient(120deg, #4e6ef2, #7c5cf0);
+  border: 0;
+  color: #fff;
+}
+
+.btn-install:hover {
+  color: #fff;
+  filter: brightness(1.06);
+}
+
+.btn-install:disabled {
+  opacity: 0.55;
+}
+
+.btn-install-outline {
+  min-width: 140px;
+  padding: 0.55rem 1.5rem;
+  border-radius: 0.6rem;
+  font-weight: 600;
+  border: 1px solid #cbd5e1;
+  color: #475569;
+  background: #fff;
+}
+
+.btn-install-outline:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+/* 表单 */
+.install-form .form-label {
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.35rem;
+}
+
+.install-form .form-control {
+  border-radius: 0.6rem;
+  border-color: #e2e8f0;
+  padding: 0.55rem 0.9rem;
+}
+
+.install-form .form-control:focus {
+  border-color: #4e6ef2;
+  box-shadow: 0 0 0 0.2rem rgba(78, 110, 242, 0.15);
+}
+
+.install-form .form-check-input:checked {
+  background-color: #4e6ef2;
+  border-color: #4e6ef2;
+}
+
+.install-form fieldset {
+  border: 1px dashed #cbd5e1;
+  border-radius: 0.75rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.install-form legend {
+  width: auto;
+  padding: 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #4e6ef2;
+  margin: 0;
+}
+
+/* 消息页 */
+.install-msg-icon {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+.install-msg-icon.ok { color: #16a34a; }
+.install-msg-icon.fail { color: #dc2626; }
+
+/* 安装完成页图标 */
+.install-done-icon {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  margin: 0 auto 1.25rem;
+  background: linear-gradient(120deg, #16a34a, #4ade80);
+  color: #fff;
+  font-size: 2.6rem;
+  line-height: 84px;
+  box-shadow: 0 0.5rem 1.5rem rgba(22, 163, 74, 0.35);
+  animation: done-breathe 2s ease-in-out infinite;
+}
+
+@keyframes done-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+/* 页脚 */
+.install-footer {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  padding: 1rem 0 1.25rem;
+  letter-spacing: 0.5px;
+}

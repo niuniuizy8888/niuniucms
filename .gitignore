@@ -1,0 +1,50 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local tooling artifacts
+graphify-out/
+.graphifyignore
+
+# Runtime / caches / logs
+runtime/*
+!runtime/.gitkeep
+!runtime/backup/
+!runtime/cache/
+!runtime/log/
+!runtime/throttle/
+runtime/backup/*
+!runtime/backup/.gitkeep
+runtime/cache/*
+!runtime/cache/.gitkeep
+runtime/log/*
+!runtime/log/.gitkeep
+runtime/throttle/*
+!runtime/throttle/.gitkeep
+
+# Local environment files
+.user.ini
+.htaccess
+404.html
+index.html
+core/install.lock
+core/config/config.php
+core/config/database.php
+
+# Local maintenance records
+.skills/更新记录.md
+.skills/claude.md
+
+# Optional package directories
+vendor/
+node_modules/
+
+# Temporary archives / backups
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.bak
+*.tmp

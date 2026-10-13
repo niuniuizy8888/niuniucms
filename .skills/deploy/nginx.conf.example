@@ -1,0 +1,313 @@
+# ============================================================================
+# NiuNiuCms Nginx 生产部署完整示例（2026-10-07 安全审查修复轮更新）
+# 使用前按实际环境替换：example.com / <站点根> / <FPM 套接字>（本文件不写宿主绝对路径）
+# 相对 2026-08-29 版差异（本轮来自 OCR 安全审查 + 生产实测）：
+#   1. 扩展名封禁补 dic（core/dict/base_dic_full.dic 实测 8.4MB 可直下）；
+#   2. 新增 graphify-out/ 整体 404（graphify 建图产物含全量源码结构，实测
+#      graph.json 3.16MB 可直下）；
+#   3. 新增根入口 install.php 的「按 install.lock 动态锁」——旧清单只封 install 目录，
+#      本站布局是根 install.php + core/install/，根入口此前可匿名访问安装向导；
+#   4. 主 server 块内补 path-info 拒绝（原只在附录片段里）；
+#   5. 补「宝塔场景落点」实操结论：规则要写进 extension/<域名>/*.conf（见下方注释）；
+#   6. 附录中两条未注释的 location 片段已注释——它们原先是 http 上下文里的裸片段，
+#      整份文件 include 会 nginx -t 报错；现已全注释，整份可作为 vhost 片段 include
+#      （实测 `nginx -t` 通过）。落地时仍建议按需取用：server 块 + 需要的附录配方。
+# ============================================================================
+
+server {
+    listen       80;
+    server_name  example.com;
+    return       301 https://$host$request_uri;   # HTTP 强制跳转 HTTPS
+}
+
+server {
+    listen       443 ssl http2;
+    server_name  example.com;
+
+    # ---------- TLS（证书路径按实际修改） ----------
+    ssl_certificate      <证书目录>/example.com.pem;
+    ssl_certificate_key  <证书目录>/example.com.key;
+    ssl_protocols        TLSv1.2 TLSv1.3;
+    ssl_ciphers          HIGH:!aNULL:!MD5;
+    ssl_session_cache    shared:SSL:10m;
+    ssl_session_timeout  10m;
+
+    # ---------- 站点根目录 ----------
+    root   <站点根>;
+    index  index.php index.html;
+    error_page 404 /404.html;
+    location = /404.html { internal; }
+
+    # ---------- 伪静态（三选一，与后台「路由设置」保持一致） ----------
+    # 伪静态1：list-1.html（对应 url_rewrite_on=1；=0 查询串模式 index.php?0=xxx 无需此规则）
+    location / {
+        if (!-e $request_filename) {
+            rewrite ^((.*)/)?(.*)\.html$ $1/index.php last;
+        }
+    }
+    # 伪静态2/3：video/1.html 或 video/1（与伪静态1 互斥，取消上面注释并启用下面）
+    #location / {
+    #    if (!-e $request_filename) {
+    #        rewrite ^((.*)/) /index.php last;
+    #    }
+    #}
+
+    # ---------- 安全基线（敏感目录/文件禁止访问） ----------
+    # 【2026-08-29】必须声明在 PHP-FPM location 之前（正则 location 先到先得），
+    # 否则 /core/*.php、/task/* 会先命中 PHP/静态 location 被执行/下载。
+    # 【2026-09-02 上线前审计实测教训】宝塔面板生成的 vhost 把 enable-php-*.conf
+    # include 在本段之前时，受保护目录下的全部 .php 仍会被执行（实测
+    # /core/config/config.php 200、/core/admin/admin.func.php 直接抛栈）。
+    # 手工部署时务必把本段上移到 PHP-FPM include 之前。
+    # 【2026-10-07 生产实操结论】宝塔环境不要改 vhost 主体（面板重存站点配置会覆盖），
+    # 落点是 include 更早的 extension 目录：
+    #     <宝塔 vhost 目录>/extension/<域名>/10-security-baseline.conf
+    # （vhost 里 `include <宝塔 vhost 目录>/extension/<域名>/*.conf;` 位于
+    #   enable-php-*.conf 之前 ⇒ 正则 location 先到先得，本段规则才真正生效。）
+    # 目录清单较旧版补 task（Go 调度器源码）与 .skills（内部维护手册/部署基线）；
+    # 【2026-10-08】原清单里的 .agent 目录已废弃删除，内容归口到 .skills/，故条目改用 .skills。
+    # 【2026-09-02】补 .domian（应用商店接口目录，实际目录名带点；未配 mall_api_token
+    # 时虽 fail-closed，仍不建议暴露）。
+    location ~* ^/(config|core|lang|model|route|runtime|deploy|dev|install|tests|task|\.skills|\.domian|\.git|\.svn)(/|$) {
+        deny all;
+    }
+    # 【2026-10-10 文档整合轮实测】**本段不是可选项，是目录级必需项**：
+    # 主 vhost **没有** `location ~ \.php$` 兜底块，PHP 执行是宝塔按目录挂的
+    # （enable-php-85.conf 内每个 `location ~ [^/]\.php(/|$)` 各自 fastcgi_pass）。
+    # 实测：新建 docs/ 放探针 → `GET /docs/.probe.php` 返回 **200 且输出**；
+    # 而 `/core/.probe.php` → 404、`/plugins/.probe.php` → 403 —— **全靠本段规则在挡**。
+    # ⇒ 任何新增顶层目录前先加 deny；内部文档一律归口 .skills/（`.` 开头 + 本段命中）。
+    # 【2026-09-02】模板源码保护：主题的 html/ 子目录是服务端编译源文件（含 {inc:} 结构），
+    # 直连即源码泄露；主题 css/js/images 静态资源不受影响。
+    location ~* ^/template/[^/]+/html/ {
+        deny all;
+    }
+    # 【2026-09-03 插件系统改造】plugins/（W0 由 addons/ 改名）下 PHP 禁止直访：hook/*.php / setting.php /
+    # install.php / bootstrap.php 等仅允许经编译管线（_include）或后台入口执行；作者漏写 `<?php exit;` 头的
+    # hook 文件此前可被 URL 直接触发。插件静态资源（icon.png 等）不受影响。
+    # 必须位于 PHP-FPM location 之前（正则 location 先到先得）。
+    location ~* ^/plugins/.+\.(php|phtml|phar)$ {
+        deny all;
+    }
+    # 【复核批次 R29 实测缺口】插件「服务端模板源」保护：plugins/<插件>/template/*.html 只经服务端
+    # _file() 编译（实测此前可被公网 200 直下，暴露模板结构与内部注释）；**注意保留
+    # plugins/<插件>/player/**——live 插件的公开播放器页 player_url 默认就指向
+    # /plugins/live/player/player.html（deny 它会打断直播播放器）**。
+    location ~* ^/plugins/[^/]+/template/ {
+        deny all;
+    }
+    # 上传目录禁止执行 PHP
+    location ^~ /upload/ {
+        autoindex off;
+        location ~ \.(php|phtml|phar)$ { deny all; }
+    }
+    # 【2026-08-29】隐藏文件/目录一律 404（.git .svn .ht* .env .user.ini 等）
+    location ~ /\. {
+        deny all;
+    }
+    # 备份/缓存/日志/源码/产物禁止下载（【2026-08-29】补 go|env|sh|py|key|pem|crt；
+    # 【2026-10-07】补 dic——core/dict/base_dic_full.dic 实测 8.4MB 可被直接下载）
+    location ~* \.(bak|old|tmp|swp|sql|log|lock|md|rdb|tar|gz|zip|json|ini|go|env|sh|py|key|pem|crt|dic)$ {
+        deny all;
+    }
+    # 【2026-10-07】graphify 建图产物整体封禁：graph.json/graph.html 含全量文件路径、
+    # 符号名与调用关系（实测 3.16MB 可直下），等于把源码地图交给攻击者。
+    # 需要对外看图时再单独放行，或把产物移出 web 根目录。
+    location ^~ /graphify-out/ {
+        deny all;
+    }
+    # 【2026-10-07】path-info 形态一律拒（本站零 PATH_INFO 用法）：
+    # 未加此条时 /install.php/x 会被拆成 SCRIPT_NAME=/install.php 并执行（生产实测 200）。
+    # 配合 php.ini 的 cgi.fix_pathinfo=0 使用，web 层与 PHP 层各一道。
+    location ~* \.php/ {
+        deny all;
+    }
+    # 【2026-10-07】根入口 install.php：装完自动锁死。
+    # 旧清单只封 install 目录，而本站布局是「根 install.php + core/install/」，
+    # 根入口在安装完成前可被任何人访问并抢先建库/抢注管理员。
+    # install.lock 由安装器在安装成功时写入（core/install/index.php），存在即 404。
+    # 注意：exact location 优先于下方正则 PHP location，但不会「落回」它，
+    #      因此必须在此重复一份 fastcgi 配置（内容与下方 PHP location 保持一致）。
+    location = /install.php {
+        if (-f <站点根>/core/install.lock) { return 404; }
+        try_files      $uri =404;
+        fastcgi_pass   127.0.0.1:9000;
+        fastcgi_index  index.php;
+        fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include        fastcgi_params;
+        fastcgi_param  PHP_VALUE "upload_max_filesize=20M post_max_size=24M max_execution_time=120";
+        fastcgi_read_timeout 300;
+    }
+    # 配置文件精确封禁（config/ 已被目录规则覆盖，双保险）
+    location = /config/config.php    { deny all; }
+    location = /config/database.php  { deny all; }
+
+    # ---------- PHP-FPM ----------
+    location ~ \.php$ {
+        try_files      $uri =404;
+        fastcgi_pass   127.0.0.1:9000;
+        fastcgi_index  index.php;
+        fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include        fastcgi_params;
+        fastcgi_param  PHP_VALUE "upload_max_filesize=20M post_max_size=24M max_execution_time=120";
+        fastcgi_read_timeout 300;
+    }
+
+    # ---------- SVG 直出安全（M4 加固 2026-08-10）----------
+    # SVG 直出可执行内嵌 <script>（存储型 XSS 面）；img 引用不受 CSP 影响
+    # 注意：必须声明在下方静态 location 之前（正则 location 按声明顺序匹配）
+    location ~* \.svg$ {
+        expires 7d;
+        access_log off;
+        add_header Cache-Control "public, max-age=604800";
+        add_header X-Content-Type-Options nosniff always;
+        add_header Content-Security-Policy "script-src 'none'" always;
+    }
+
+    # ---------- 静态资源直接由 Nginx 服务并缓存 ----------
+    location ~* \.(jpg|jpeg|png|gif|webp|ico|svg|css|js|woff|woff2|ttf|eot)$ {
+        expires 7d;
+        access_log off;
+        add_header Cache-Control "public, max-age=604800";
+        # location 内出现 add_header 后，server 级安全头不再继承，需在此重复声明
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # ---------- 通用安全响应头 ----------
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # ---------- 限制与日志 ----------
+    client_max_body_size 24m;          # 与 PHP_VALUE post_max_size 一致
+    access_log  <日志目录>/example.com.log;
+    error_log   <日志目录>/example.com.error.log;
+
+    # ---------- 【2026-08-29 提示】后台入口与 cron ----------
+    # 1) 后台入口随机改名后（如 3x9k2m.php），可对其加来源 IP 白名单：
+    #location = /3x9k2m.php { allow 1.2.3.4; deny all; }
+    # 2) api.php cron URL 含 auth_key，会明文进入本机 access_log；
+    #    对调度 IP 可关闭该路径日志（自行评估取舍）：
+    #location = /api.php { access_log off; fastcgi_pass ... }（需复制完整 PHP location）
+}
+
+# ============================================================================
+# 【2026-09-02 性能轮】前台 L0 页面缓存（匿名 GET 免 PHP）——生产 perf.conf 的修正版配方
+#
+# ⚠️ 成对实施，缺一即引入问题（2026-09-02 实测教训）：
+#   线上 perf.conf 现状 = 只加 fastcgi_hide_header Set-Cookie 而 ignore_headers 缺 Set-Cookie
+#   ⇒ upstream 匿名 GET 仍带 Set-Cookie（会话启动）⇒ nginx 存储判定在 hide 之前 ⇒ 恒拒存
+#   ⇒ L0 从未生效（缓存目录 0 文件、恒 MISS），1357 rps 实际全靠 PHP 层 page_cache+APCu。
+#   ① fastcgi_ignore_headers 必须包含 Set-Cookie（解锁存储）；
+#   ② 必须同步排除内嵌会话令牌的页面（user/member 路由）：登录页的 safe_token 绑定会话，
+#      缓存 30s 内跨会话提交=登录恒「非法操作」。
+#   ③ HEAD 必须移出可缓存集（2026-09-05 部署轮实测修正）：本 nginx（宝塔/openresty）上
+#      location 内 fastcgi_cache_methods GET; 拦不住 HEAD 存储——HEAD 以 MISS 存 0 字节条目、
+#      后续同 URI GET 命中空白页 30s（投毒实测复现）。有效修复=isget map 去掉 HEAD 0，
+#      令 HEAD 走 skipcache=1→418→@nncms_php 非缓存回源；fastcgi_cache_methods GET; 保留为纵深。
+# 已验证行为不变式：已登录（带 cookie）恒 bypass；POST/HEAD/非 GET 恒 bypass；后台/api 不受影响。
+# ============================================================================
+
+# http 上下文（与 vhost 同级引入；00_nncms_fastcgi_cache.conf 对应物）
+# fastcgi_cache_path <nginx 缓存目录>/nncms levels=1:2 keys_zone=nncmsfront:64m max_size=1500m inactive=30m use_temp_path=off;
+# map $http_cookie $nncms_hascookie { default 1; "" 0; }
+# map $request_method $nncms_isget { GET 0; default 1; }   # ③ HEAD 不写 0——HEAD 分流 418 回源（2026-09-05 实测修正）
+# 【成对修复②】令牌页面路由排除：user/member 的 GET 也动态回源
+# map $request_uri $nncms_nocache_uri { default 0; "~*^/index\.php\?.*0=(user|member)" 1; }
+# map "$nncms_hascookie$nncms_isget$nncms_nocache_uri" $nncms_skipcache { default 1; "000" 0; }
+
+# server 内（替代原 index.php location）：
+# location ~ ^/index\.php(/|$) {
+#     if ($nncms_skipcache = 1) { return 418; }
+#     try_files $uri =404;
+#     fastcgi_pass unix:<FPM 套接字>;
+#     fastcgi_index index.php;
+#     include fastcgi.conf;
+#     include pathinfo.conf;
+#     fastcgi_param NNCMS_L0 "1";
+#     fastcgi_cache nncmsfront;
+#     fastcgi_cache_methods GET;   # ③ 纵深（主修复=isget map 分流 HEAD，见上）
+#     fastcgi_cache_valid 200 30s;
+#     fastcgi_cache_valid any 1s;
+#     fastcgi_cache_key "$scheme$host$request_uri";
+#     fastcgi_cache_lock on;
+#     fastcgi_cache_lock_timeout 5s;
+#     fastcgi_cache_use_stale updating error timeout;
+#     # 【成对修复①】三要素全忽略，缺 Set-Cookie 即恒拒存（2026-09-02 实测根因）
+#     fastcgi_ignore_headers Cache-Control Expires Set-Cookie;
+#     fastcgi_hide_header Set-Cookie;
+#     add_header X-FastCGI-Cache $upstream_cache_status always;
+#     add_header X-L0 "cachedloc" always;
+# }
+# error_page 418 = @nncms_php;
+# location @nncms_php {
+#     fastcgi_pass unix:<FPM 套接字>;
+#     fastcgi_index index.php;
+#     include fastcgi.conf;
+#     include pathinfo.conf;
+#     fastcgi_intercept_errors off;   # 部署项 k（2026-09-05）：全局 intercept on 会把 PHP 品牌 404 页换成 openresty 原生页
+#     add_header X-L0 "nocacheloc" always;
+# }
+# 上线验证：同一匿名 URL 连打两次，第二次 X-FastCGI-Cache: HIT；
+#          /index.php?0=user&1=login 恒 MISS（令牌面排除生效）；带登录 cookie 恢复 bypass。
+
+# ============================================================
+# 【rw_sticky Set-Cookie 透传验证】（第十七批补强配套，开 rw_split 前执行）
+# 读写分离跨请求粘滞依赖写响应的 nncms_rw_sticky cookie 到达浏览器再被带回。
+# 结构已核实：POST 绕过 L0（return 418 → @nncms_php，无 hide_header）⇒ Set-Cookie 正常透传；
+# 匿名可缓存 GET 的响应被 fastcgi_hide_header 剥 Set-Cookie ⇒ 匿名 view 计数等写无粘滞（可接受：
+# 缓存页本身 30s TTL 旧内容，不存在 read-your-writes 期望）。若未来在非 L0 location 加
+# proxy_hide_header/fastcgi_hide_header Set-Cookie，会静默剥离登录用户写后的粘滞 cookie。
+#
+# 验证步骤（PHP 侧）：
+#   1. 后台 POST 响应带 Set-Cookie: nncms_rw_sticky=1（HttpOnly; SameSite=Lax）：
+#      curl -is -X POST 'https://站点/admin.php?0=user&1=login' -d '...' | grep -i 'set-cookie: nncms_rw_sticky'
+#      （需 config 先置 rw_split=1 或 rw_shadow=1 + rw_sticky_seconds>0，否则不下发——开关全关=零行为）
+#   2. 弹幕发送 POST（同源 route）同上核验；
+#   3. 前端 AJAX 均同源（jQuery $.ajax / fetch credentials:'same-origin'），无跨域丢 cookie 面。
+# 代理/CDN 层（若引入）：确认未配置全局 strip Set-Cookie（部分 CDN「忽略源站 Cookie」开关会全剥）；
+#   POST 响应不被缓存（CDN 默认不缓存 POST，核实未显式开启）。
+# PHP 侧自证：runtime 日志 rw_sticky 通道出现「headers already sent at write time」= 存在无输出
+#   缓冲的渲染中写（cookie 下发不了），需为对应入口补 ob_start 或接受该路径无跨请求粘滞。
+
+# ============================================================================
+# 【2026-09-05 发布前检查部署轮】增补配方（已在生产 www.example.com/store.example.com 落地并实测）
+#
+# 一、主站 hardening.conf 追加（部署项 g/l，置于既有 deny 之后）：
+# location ~* \.(zip|tar|gz|tgz|rar|7z|lock|ini|map)$ { deny all; }
+# 上线前终检（N-02/H-02）：主题/插件目录 php 直访 deny——**取消注释**并改 pathinfo 免疫。
+# 旧写法 `.*\.php$` 后缀锚定，被 `/template/x/uninstall.php/a.jpg` 绕过（实测生产曾 200 执行）。
+# 【2026-10-07】以下两条已在主 server 块内落地（见上）。2026-10-10 审计 S-8：解除注释，
+#               使本片段可直接复制到其他 vhost（location 指令只能放 server/location 上下文，
+#               勿整份 include 本文件）。php 直访与 pathinfo 封禁属红线 §7 三层防线之一，必须生效。
+location ~* ^/(template|plugins|runtime)/.*\.php(/|$) { deny all; }
+location ~* \.php/.+ { deny all; }   # 任何 pathinfo 形态一律拒（本站零 PATH_INFO 用法）
+# location ~* \.svg$ {
+#     add_header X-Content-Type-Options nosniff always;
+#     add_header Content-Security-Policy "script-src 'none'" always;
+# }
+#
+# 二、状态端点（部署项 e）：allow 127.0.0.1; 后必须跟 deny all;（access 模块无匹配默认放行）。
+#
+# 三、商店服务端 vhost 硬化模板（部署项 c；extension/<store>/store_hardening.conf，
+#     include 先于 enable-php ⇒ regex deny 先到先得）：
+# location ~* \.(go|zip|service|sh|env|md)$ { deny all; }          # 源码/归档/服务文件直下 deny
+# location ~* ^/(config|model|route|rsync_task|deploy|html|admin|template)/ { deny all; }  # 后端代码/模板目录
+# location ~* ^/upload/.*\.(php|phtml|phar)$ { deny all; }
+# allow 127.0.0.1;
+# allow 192.0.2.0/24;                                            # 来源限制：消费方=本机 CMS+LAN 管理端
+# deny all;
+# 注意：商店在售 zip（如 template/mytemp.zip）保留磁盘文件、禁 URL 直连——分发一律走
+#       ?api=download 由 PHP 读盘（nginx deny 不影响内部 readfile；sha256 与 manifest 一致性已实测）。
+#
+# 四、令牌日志脱敏（部署项 h；http 上下文 + vhost access_log 换 nncms_masked 格式）：
+# map $request_uri $nncms_masked_uri {
+#     default $request_uri;
+#     "~*^(?<mpre>.*[\?&]token=)[^&\"]*(?<mpost>.*)$" "$mpre***$mpost";
+# }
+# log_format nncms_masked '$remote_addr - $remote_user [$time_local] "$request_method $nncms_masked_uri $server_protocol" '
+#                         '$status $body_bytes_sent "$http_referer" "$http_user_agent"';
+# access_log <日志目录>/<site>.log nncms_masked;
+# ============================================================================

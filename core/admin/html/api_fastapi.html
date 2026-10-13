@@ -1,0 +1,82 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+                <h3 class="card-title">快速采集</h3>
+                <div class="card-actions">
+                    <a href="<?php echo url('api-batch', array(), TRUE); ?>" class="btn btn-info btn-sm">采集批次</a>
+                    <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#helpModal">使用帮助</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <?php if (empty($batch_tables_ready)) { ?>
+                <div class="alert alert-warning">
+                    <?php echo htmlspecialchars($batch_tables_hint, ENT_QUOTES, 'UTF-8'); ?>
+                </div>
+                <?php } ?>
+                <form action="<?php echo url('api-fastdb', '', TRUE); ?>" method="post" id="form">
+                    <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($safe_token, ENT_QUOTES, 'UTF-8'); ?>">
+                    <input type="hidden" name="stage" value="preview">
+                    <input type="hidden" name="update_mode" value="skip">
+                    <input type="hidden" name="update_scope" value="all">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-6">
+                            <label class="form-label">选择资源</label>
+                            <select class="form-control" name="code">
+                                <?php foreach($arrlist as $key => $val){?>
+                                    <?php if(!empty($val['fast_type'])) { ?>
+                                    <option value="<?php echo xn_h($val['code']);?>"><?php echo xn_h($val['name']);?>-<?php echo xn_h($val['type']);?></option>
+                                    <?php }?>
+                                <?php }?>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">每页条数</label>
+                            <select class="form-control" name="limit">
+                                <option value="1000">1000</option>
+                                <option value="5000" selected>5000</option>
+                                <option value="10000">10000</option>
+                                <option value="20000">20000</option>
+                                <option value="30000">30000</option>
+                                <option value="50000">50000</option>
+                            </select>
+                            <small class="text-muted">根据服务器性能选择，默认5000</small>
+                        </div>
+                        <div class="col-md-2">
+                            <button type="submit" class="btn btn-primary w-100" <?php echo empty($batch_tables_ready) ? 'disabled' : ''; ?>>预览导入</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 帮助 Modal -->
+    <div class="modal fade" id="helpModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header"><h5>使用说明</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    1. 仅支持首次使用，不支持重复导入<br>
+                    2. 先下载 json 文件到 runtime 目录<br>
+                    3. 填写 json 文件名（不含 .json 后缀）<br>
+                    4. 选择每页条数<br>
+                    5. 点击导入按钮开始<br>
+                    6. 导入完成后返回列表页<br>
+                    7. 导入完成后建议清理缓存<br>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <?php foreach($arrlist as $key => $val){?>
+                        <?php if(!empty($val['fast_type'])) { ?>
+                        <a href="<?php echo xn_url_h($val['fast_down']);?>" target="_blank" class="btn btn-danger btn-sm"><?php echo xn_h($val['name']);?></a>
+                        <?php }?>
+                        <?php }?>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

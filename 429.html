@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>429 - 访问过于频繁</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f1218;color:#e8ecf3;font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+.box{text-align:center;padding:40px 24px;max-width:460px;width:100%;box-sizing:border-box}
+.code{font-size:96px;font-weight:700;line-height:1;background:linear-gradient(90deg,#ff8a3d,#ff4d4f);-webkit-background-clip:text;background-clip:text;color:transparent}
+.msg{margin:16px 0 4px;font-size:18px}
+.sub{color:#8a93a6;font-size:14px;margin-bottom:24px}
+.count{font-size:15px;color:#c8d0de;margin-bottom:10px}
+.count b{font-size:30px;font-weight:700;color:#ffb454;vertical-align:-2px;margin-right:2px;font-variant-numeric:tabular-nums}
+.bar{height:6px;border-radius:3px;background:#1c2230;overflow:hidden;margin:0 auto 26px;max-width:320px}
+.bar i{display:block;height:100%;width:0;border-radius:3px;background:linear-gradient(90deg,#ff8a3d,#ff4d4f);transition:width .25s linear}
+.acts{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+a{display:inline-block;padding:10px 26px;border-radius:8px;background:#5b8cff;color:#fff;text-decoration:none;font-size:15px}
+a:hover{background:#4a7aee}
+a.ghost{background:transparent;border:1px solid #2c3444;color:#aab3c5}
+a.ghost:hover{background:#181d27}
+.note{margin-top:24px;color:#6f7889;font-size:12px;line-height:1.8}
+.note em{font-style:normal;color:#4d5567}
+</style>
+</head>
+<body>
+<div class="box">
+<div class="code">429</div>
+<div class="msg">访问过于频繁，请稍后再试</div>
+<div class="sub">{{SITENAME}} 已触发访问频率保护，稍后自动恢复</div>
+<div class="count"><b id="nn-sec">{{SECONDS}}</b>秒后自动刷新</div>
+<div class="bar"><i id="nn-bar"></i></div>
+<div class="acts">
+<a href="" id="nn-retry">立即重试</a>
+<a class="ghost" href="/">返回首页</a>
+</div>
+<div class="note">
+短时间内请求过于密集（例如连续按刷新）会触发本保护，请勿持续刷新。<br>
+若持续出现本页，请等待倒计时结束或稍后再试。<em>T{{REASON}}</em>
+</div>
+</div>
+<script>
+(function () {
+    var total = {{SECONDS}};
+    if (!(total > 0)) total = 60;
+    var deadline = Date.now() + total * 1000;
+    var sec = document.getElementById('nn-sec');
+    var bar = document.getElementById('nn-bar');
+    var baseTitle = document.title;
+    function tick() {
+        var left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+        if (sec) sec.textContent = left;
+        if (bar) bar.style.width = (100 * (total - left) / total).toFixed(1) + '%';
+        document.title = '(' + left + 's) ' + baseTitle;
+        if (left <= 0) { location.reload(); return; }
+        setTimeout(tick, 250);
+    }
+    tick();
+})();
+</script>
+<noscript><meta http-equiv="refresh" content="{{SECONDS}}"><p class="note">已禁用 JavaScript：请手动刷新本页。</p></noscript>
+</body>
+</html>

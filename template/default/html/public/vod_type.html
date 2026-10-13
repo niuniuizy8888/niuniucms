@@ -1,0 +1,46 @@
+<div class="bg-[var(--bg-elevated)] pt-2 screen-list">
+    <div class="transition-all duration-500 md:h-fit md:visible md:py-2 ease-out h-[280px] py-2 flex flex-col container md:flex md:opacity-100">
+        <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-x-auto">
+                 <a href="" class="filter-item {if:$cid==''}active{/if}">
+                <span class="truncate">全部分类</span>
+            </a>
+                {loop:$sonlist $s}
+                <a href="{$s.type_url}" class="filter-item {if:$cid==$s['cid']}active{/if}">
+                <span class="truncate">{$s.name}</span>
+                </a>
+                {/loop}
+        </div>
+        <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-x-auto">
+            <a href="{$pageurl}" class="filter-item {if:$req_area==''}active{/if}">
+                <span class="truncate">地区</span>
+            </a>
+            {loop:$type_urls['area'] $v}
+            <a href="{$v.url}" class="filter-item {if:$req_area==$v['name']}active{/if}">
+                <span class="truncate">{$v.name}</span>
+            </a>
+            {/loop}
+        </div>
+
+        <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-x-auto">
+            <a href="#" class="filter-item {if:$req_year==''}active{/if}">
+                <span class="truncate">年份</span>
+            </a>
+            {loop:$type_urls['year'] $v}
+            <a href="{$v.url}" class="filter-item {if:$req_year==$v['name']}active{/if}">
+                <span class="truncate">{$v.name}</span>
+            </a>
+            {/loop}
+        </div>
+
+        <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-x-auto">
+            <a href="#" class="filter-item {if:$req_lang==''}active{/if}">
+                <span class="truncate">语言</span>
+            </a>
+            {loop:$type_urls['lang'] $v}
+            <a href="{$v.url}" class="filter-item {if:$req_lang==$v['name']}active{/if}">
+                <span class="truncate">{$v.name}</span>
+            </a>
+            {/loop}
+        </div>
+    </div>
+</div>

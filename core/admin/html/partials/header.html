@@ -1,0 +1,90 @@
+<!-- app-Header -->
+<div class="app-header header sticky">
+    <div class="d-flex align-items-center w-100">
+        <!-- 侧栏切换按钮 -->
+        <a aria-label="Hide Sidebar" class="app-sidebar__toggle" data-toggle="sidebar" href="javascript:void(0)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </a>
+        <!-- 搜索框 -->
+        <div class="main-header-center ms-3 d-none d-lg-block">
+            <div class="input-group" style="max-width:280px;">
+                <input type="text" id="keyword" class="form-control" name="keyword" placeholder="搜索内容..." value="<?php if(!empty($keyword)) { ?><?php echo xn_h($keyword);?> <?php } ?>">
+                <button class="btn btn-secondary" id="search">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                </button>
+            </div>
+        </div>
+        <!-- 右侧图标区 -->
+        <div class="header-right-icons">
+            <!-- 主题切换 -->
+            <a class="nav-link theme-toggle" href="javascript:void(0)" title="切换深浅色" data-theme-toggle>
+                <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            </a>
+            <!-- 全屏 -->
+            <a class="nav-link full-screen-button" href="javascript:void(0)" title="全屏">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            </a>
+            <!-- 通知 -->
+            <div class="dropdown">
+                <a class="nav-link" data-bs-toggle="dropdown" href="javascript:void(0)" title="通知">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                </a>
+                <div class="dropdown-menu dropdown-menu-end" style="min-width:280px;">
+                    <div class="p-3 border-bottom">
+                        <h6 class="mb-0 fs-14 fw-semibold">最新替换信息</h6>
+                    </div>
+                    <div style="max-height:300px;overflow-y:auto;">
+                        <?php
+                        // 旧版把 replist **全量**塞进下拉（实测商店 55 条：同一站点重复刷屏、面板被灌满）。
+                        // 改：只列最近 8 条 + 底部「查看全部 N 条」入口（完整列表在「地址替换」页）。
+                        $rep_all = is_array($nnzs['replist'] ?? NULL) ? $nnzs['replist'] : array();
+                        $rep_top = array_slice($rep_all, 0, 8);
+                        ?>
+                        <?php if($rep_top) { foreach($rep_top as &$_rep) { ?>
+                        <?php /* 修复死链：原 href="/api.php?route=rep&…" ——CMS 的 api.php 只有
+                                 api/cron/rsync/store_push 四个路由，route=rep 落到 exit('unknown route')，
+                                 点通知必然报错。替换记录的唯一管理面就是后台「替换信息」页，改指它。 */ ?>
+                        <a class="dropdown-item" href="<?php echo url('set-rep', '', TRUE);?>">
+                            <div class="fw-semibold fs-13"><?php echo htmlspecialchars($_rep['sitename'] ?? '', ENT_QUOTES, 'UTF-8');?></div>
+                            <small class="text-muted"><?php echo htmlspecialchars($_rep['addtime'] ?? '', ENT_QUOTES, 'UTF-8');?></small>
+                        </a>
+                        <?php }} else { ?>
+                        <div class="px-3 py-2 text-muted fs-13"><?php echo NULL === ($nnzs ?? NULL) ? '商店暂不可达，未能同步' : '暂无相关数据'; ?></div>
+                        <?php } ?>
+                        <a class="dropdown-item text-center fw-semibold fs-13 border-top" href="<?php echo url('set-rep', '', TRUE);?>">
+                            查看全部<?php echo count($rep_all) > 0 ? ' ' . count($rep_all) . ' 条' : ''; ?>替换记录
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <!-- 用户头像下拉 -->
+            <div class="dropdown">
+                <a href="javascript:void(0)" data-bs-toggle="dropdown" class="d-flex align-items-center gap-2 text-decoration-none nav-link" style="color:var(--nn-text);padding:0 8px;">
+                    <img src="/static/images/users/21.jpg" alt="profile" style="width:32px;height:32px;border-radius:50%;object-fit:cover;">
+                    <span class="d-none d-md-inline fs-13 fw-500"><?php echo htmlspecialchars($user['username'] ?? '', ENT_QUOTES, 'UTF-8');?></span>
+                </a>
+                <div class="dropdown-menu dropdown-menu-end" style="min-width:200px;">
+                    <div class="p-3 text-center border-bottom">
+                        <div class="fs-14 fw-semibold"><?php echo htmlspecialchars($user['username'] ?? '', ENT_QUOTES, 'UTF-8');?></div>
+                        <small class="text-muted">管理员</small>
+                    </div>
+                    <a class="dropdown-item" href="/" target="_blank">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                        网站主页
+                    </a>
+                    <a class="dropdown-item" target="_blank" href="<?php echo ($conf['url_rewrite_on'] < 2 ? '../' : ''),url('member', '', 2);?>">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        会员中心
+                    </a>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item text-danger" href="<?php echo url('index-logout', array('safe_token' => bull_token_set($uid, 'admin_logout')), TRUE);?>">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                        退出登录
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- /app-Header -->

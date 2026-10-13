@@ -1,0 +1,28 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{$seo.t}</title>
+<meta name="keywords" content="{$seo.k}" />
+<meta name="description" content="{$seo.d}" />
+{if:isset($seo['robots']) && !empty($seo['robots'])}<meta name="robots" content="{$seo.robots}" />{/if}
+{if:isset($seo['url']) && !empty($seo['url'])}<link rel="canonical" href="{$seo.url}" />{/if}
+<meta property="og:title" content="{$seo.t}" />
+<meta property="og:description" content="{$seo.d}" />
+<meta property="og:type" content="{if:isset($video)}video{else}website{/if}" />
+<meta property="og:site_name" content="{$nncms.site_name}" />
+{if:isset($seo['url']) && !empty($seo['url'])}<meta property="og:url" content="{$seo.url}" />{/if}
+{if:isset($seo['image']) && !empty($seo['image'])}<meta property="og:image" content="{$seo.image}" />{/if}
+<meta name="theme-color" content="#0a0a0a" />
+<link rel="shortcut icon" href="{$path_tpl}images/favicon.png" type="image/x-icon" />
+<link rel="stylesheet" type="text/css" href="{$path_tpl}css/style.css"/>
+<link rel="stylesheet" type="text/css" href="{$path_tpl}css/swiper.css"/>
+<script type="text/javascript" src="/static/js/jquery.min.js"></script>
+<script type="text/javascript" src="{$path_tpl}js/swiper.js"></script>
+<script type="text/javascript" src="{$path_tpl}js/lazyload.js"></script>
+<script type="text/javascript" src="{$path_tpl}js/common.js"></script>
+<script type="text/javascript" src="/static/js/app.js"></script>
+<link rel="stylesheet" type="text/css" href="{$path_tpl}css/theme.css"/>
+<link rel="stylesheet" type="text/css" href="{$path_tpl}css/component.css"/>
+<script type="text/javascript" src="{$path_tpl}js/portal.js"></script>
+<!--{hook head_end.php}-->
+
+ 

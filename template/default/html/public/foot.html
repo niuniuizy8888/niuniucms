@@ -1,0 +1,57 @@
+<!--{hook foot_start.php}-->
+<!-- 移动端底部导航 -->
+<div class="w-full mobile" style="padding-bottom: 70px;">
+    <div class="fixed bottom-0 w-full z-40">
+        <div class="bottom-nav w-full pt-2 pb-2">
+            <div class="flex justify-around">
+                <a href="/" class="bottom-nav-item active">
+                    <div class="relative">
+                        <img decoding="async" alt="首页" width="22" height="23" src="{$path_tpl}images/home.svg">
+                        <div class="absolute -top-1 -right-1 w-2 h-2 bg-[var(--color-primary)] rounded-full opacity-0 transition-opacity duration-200"></div>
+                    </div>
+                    <span>首页</span>
+                </a>
+                <a href="{$pku_url}" class="bottom-nav-item">
+                    <div class="relative">
+                        <img decoding="async" alt="片库" width="22" height="23" src="{$path_tpl}images/list.svg">
+                    </div>
+                    <span>片库</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 桌面端页脚 -->
+<footer class="desktop w-full bg-[var(--bg-surface)] border-t border-[var(--border-subtle)]">
+    <div class="container mx-auto px-4 py-10">
+        <div class="flex flex-col items-center text-center">
+            <!-- 品牌信息 -->
+            <div class="max-w-md">
+                <div class="flex items-center justify-center gap-3 mb-3">
+                    <img decoding="async" alt="{$nncms.site_name}" width="120" height="33" src="{$path_tpl}images/logo.png" class="opacity-80">
+                </div>
+                <p class="text-[var(--text-secondary)] text-sm mb-3 leading-relaxed">
+                    {$nncms.site_name}内容均来自互联网，不提供存储/录制/上传。
+                </p>
+                <p class="text-[var(--text-disabled)] text-xs">
+                    Copyright &copy; 2026 {$nncms.site_url} All Rights Reserved
+                </p>
+                {if:isset($sitemap_url) && !empty($sitemap_url)}
+                <p class="mt-2"><a href="{$sitemap_url}" rel="nofollow" class="text-xs text-[var(--text-disabled)] hover:text-[var(--color-primary)] transition-colors duration-200">站点地图</a></p>
+                {/if}
+                {if:defined("DEBUG") && DEBUG > 0 && DEBUG < 3 && function_exists('xn_debug_info')}
+                <div class="text-xs text-[var(--text-disabled)] mt-2 font-mono">{$nncms.debug_mode}</div>
+                {@xn_debug_info()}
+                {/if}
+            </div>
+        </div>
+    </div>
+</footer>
+
+<!-- 回到顶部 -->
+<button id="backTop" class="d-none pointer-cursor fixed bottom-20 right-4 rounded-full z-30 bg-[var(--bg-overlay)]/90 backdrop-blur-md p-3 shadow-lg hover:bg-[var(--bg-hover)] hover:shadow-xl transition-all duration-300 transform hover:scale-110 active:scale-95 border border-[var(--border-subtle)]">
+    <img decoding="async" alt="返回顶部" width="24" height="24" src="{$path_tpl}images/backtop.svg" class="opacity-80">
+</button>
+
+<!--{hook foot_end.php}-->

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    {inc:public/include.html}
+</head>
+<body class="overflow-x-hidden">
+       <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
+         <div class="mobile z-50 sticky top-0 w-screen">
+            <div class="flex items-center justify-center cursor-pointer py-3.5 sticky top-0 w-full z-[999] bg-[var(--bg-surface)]">
+                <span class="flex backPage" style="position: absolute; left: 12px;"><svg aria-hidden="true" focusable="false"
+                        data-prefix="fas" data-icon="angle-left" class="svg-inline--fa fa-angle-left " role="img"
+                        xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512">
+                        <path fill="currentColor"
+                            d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z">
+                        </path>
+                    </svg></span><span class="flex">片库</span>
+            </div>
+        </div>
+
+         <div class="desktop z-50 sticky top-0 w-screen">
+        {inc:public/head.html}
+        </div>
+    <div class="w-full grow flex justify-center">
+            <div class="flex flex-1 justify-start flex-col">
+                <div class="flex w-screen flex-col items-center">
+                    <div class="w-screen p-1 z-10 top-[48px] md:static sticky bg-[var(--bg-elevated)]">
+                        {inc:public/vod_screen.html}
+                    </div>
+                    
+                  </div>
+                       <div class="w-screen flex flex-1 flex-col">
+                        <div class="container grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-5 py-4 animate-on-scroll">  
+        				{inc:public/vod_box.html} 
+                     </div>
+                     {inc:public/page.html}
+                </div>    
+            </div>
+        </div> 
+        
+        {inc:public/foot.html}
+        
+</div>  
+</body>
+</html>

@@ -1,0 +1,55 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg></div>
+                <h2 class="card-title"><?php echo lang('user_create');?></h2>
+            </div>
+            <div class="card-body">
+                <form action="<?php echo url('user-create', '', TRUE);?>" method="post" id="form" class="row g-3" style="max-width:760px;">
+                    <?php echo $input['safe_token'];?>
+                    <div class="col-12">
+                        <label class="form-label"><?php echo lang('email');?></label>
+                        <?php echo $input['email'];?>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label"><?php echo lang('username');?></label>
+                        <?php echo $input['username'];?>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label"><?php echo lang('password');?></label>
+                        <?php echo $input['password'];?>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label"><?php echo lang('user_group');?></label>
+                        <?php echo $input['_gid'];?>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-primary" id="submit" data-loading-text="<?php echo lang('submiting');?>..."><?php echo lang('confirm');?></button>
+                        <a role="button" class="btn btn-secondary ms-2" href="javascript:history.back();"><?php echo lang('back');?></a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var jform = $('#form');
+jform.on('submit', function() {
+    jform.reset();
+    var jthis = $(this);
+    var jsubmit = jthis.find('#submit');
+    jsubmit.button('loading');
+    var postdata = jform.serialize();
+    $.xpost(jform.attr('action'), postdata, function(code, message) {
+        if(code == 0) { $.alert(message); jsubmit.text(message).delay(1000).location(xn.url('user-list', '', true)); }
+        else if(xn.is_number(code)) { $.alert(message); jsubmit.button('reset'); }
+        else { jform.find('[name="'+code+'"]').fieldAlert(message).focus(); jsubmit.button('reset'); }
+    });
+    return false;
+});
+</script>

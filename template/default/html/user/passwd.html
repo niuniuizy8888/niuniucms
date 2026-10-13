@@ -1,0 +1,53 @@
+{inc:user/head.html}
+{inc:user/header.html}
+{inc:user/sidebar.html}
+
+<div class="main-content app-content" style="margin-top:0;">
+    <div class="side-app">
+        <div class="main-container container-fluid" style="max-width:800px; margin:0 auto; padding:24px 20px;">
+
+            <div class="nn-card">
+                <div style="margin-bottom:24px;">
+                    <h5 style="margin:0 0 6px; font-size:18px; font-weight:700; color:var(--nn-text-primary);">
+                        <i class="fe fe-lock me-2" style="color:var(--nn-color-primary);"></i>{$lang.update_password}
+                    </h5>
+                    <p style="margin:0; color:var(--nn-text-tertiary); font-size:13px;">修改密码后请妥善保管，确保账号安全</p>
+                </div>
+
+                <form action="{$passwd_url}" method="post" id="form">
+                    <input type="hidden" name="safe_token" value="{$safe_token}">
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block; margin-bottom:6px; color:var(--nn-text-secondary); font-size:13px; font-weight:500;">{$lang.password_old}</label>
+                        <div class="input-group">
+                            <span class="input-group-text" style="border-radius:var(--nn-radius-md) 0 0 var(--nn-radius-md);"><i class="fe fe-lock"></i></span>
+                            <input type="password" class="form-control" id="password_old" name="password_old" placeholder="请输入当前密码" required style="border-radius:0 var(--nn-radius-md) var(--nn-radius-md) 0;">
+                        </div>
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block; margin-bottom:6px; color:var(--nn-text-secondary); font-size:13px; font-weight:500;">{$lang.password_new}</label>
+                        <div class="input-group">
+                            <span class="input-group-text" style="border-radius:var(--nn-radius-md) 0 0 var(--nn-radius-md);"><i class="fe fe-lock"></i></span>
+                            <input type="password" class="form-control" id="password_new" name="password_new" placeholder="请输入新密码" required style="border-radius:0 var(--nn-radius-md) var(--nn-radius-md) 0;">
+                        </div>
+                    </div>
+                    <div style="margin-bottom:24px;">
+                        <label style="display:block; margin-bottom:6px; color:var(--nn-text-secondary); font-size:13px; font-weight:500;">{$lang.password_new_repeat}</label>
+                        <div class="input-group">
+                            <span class="input-group-text" style="border-radius:var(--nn-radius-md) 0 0 var(--nn-radius-md);"><i class="fe fe-lock"></i></span>
+                            <input type="password" class="form-control" id="password_new_repeat" name="password_new_repeat" placeholder="请再次输入新密码" required style="border-radius:0 var(--nn-radius-md) var(--nn-radius-md) 0;">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100" id="submit" data-loading-text="{$lang.submiting}..." style="padding:10px; font-size:15px;">
+                        <i class="fe fe-check me-1"></i> {$lang.update_password}
+                    </button>
+                </form>
+            </div>
+
+        </div>
+    </div>
+</div>
+</div>
+
+{inc:user/footer.html}
+{inc:user/foot.html}
+<script src="{$path_tpl}js/user-passwd.js"></script>

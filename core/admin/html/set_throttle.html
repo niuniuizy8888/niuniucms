@@ -1,0 +1,167 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+                <h3 class="card-title">全局限流</h3>
+            </div>
+            <div class="card-body">
+                <form action="<?php echo url('set-throttle', '', TRUE);?>" method="post" id="form">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??'';?>">
+
+                    <?php /* ：默认关闭；开启时的红色风险提示（用户要求"红色字体显示"） */ ?>
+                    <?php if (array_value($throttle, 'enable', 0)) { ?>
+                    <div class="alert alert-danger" role="alert">
+                        <b>⚠️ 限流当前处于「开启」状态</b>：可能影响<b>异步采集</b>——商店 rsync-task worker 会**逐页回调**本站
+                        <code>api.php?route=rsync</code>（一次采集数百上千页）。若把窗口设得过小、或关掉了
+                        <code>api_token_exempt</code>（令牌豁免），回调会拿到 <b>HTTP 429</b>，worker 重试 10 次后记
+                        <code>page fail</code>，任务转为<b>异常（error）</b>（历史症状：<code>page 31: http 429 | page fail</code>）。
+                        建议保持 <code>api_token_exempt=开启</code>，且 <code>api_limit</code> 不低于 30 / 600 秒。
+                    </div>
+                    <?php } else { ?>
+                    <div class="alert alert-warning" role="alert">
+                        <b>限流当前「关闭」</b>（出厂默认）：所有请求不做频率限制。开启前请先读下方红色提示——
+                        <b>开限流有可能影响异步采集</b>。
+                    </div>
+                    <?php } ?>
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">限流总开关</label>
+                        <div><?php echo $input['enable']; ?></div>
+                        <small class="text-muted">开启后，将对全局请求进行频率限制</small>
+                        <div class="text-danger mt-2" style="font-weight:600">
+                            ⚠️ 开启限流可能影响异步采集：商店 worker 逐页回调本站 api.php，窗口过小／未豁免令牌会出现
+                            <code>page fail</code> → 任务<b>异常（error）</b>。下方 <b>api.php 机器通道</b> 三项请保持默认。
+                        </div>
+                    </div>
+
+                    <h5 class="mt-4 mb-3 fw-semibold">Session 限流</h5>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">单 Session 最大请求数</label>
+                            <?php echo $input['session_limit']; ?>
+                            <small class="text-muted">时间窗口内的最大请求次数</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">时间窗口（秒）</label>
+                            <?php echo $input['session_window']; ?>
+                            <small class="text-muted">计数器重置周期，默认 60 秒</small>
+                        </div>
+                    </div>
+
+                    <h5 class="mt-4 mb-3 fw-semibold">IP 限流</h5>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">单 IP 最大请求数</label>
+                            <?php echo $input['ip_limit']; ?>
+                            <small class="text-muted">时间窗口内的最大请求次数</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">时间窗口（秒）</label>
+                            <?php echo $input['ip_window']; ?>
+                            <small class="text-muted">计数器重置周期，默认 600 秒</small>
+                        </div>
+                    </div>
+
+                    <h5 class="mt-4 mb-3 fw-semibold">api.php 机器通道（异步采集 / 计划任务 / 商店推送）</h5>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <label class="form-label">令牌豁免</label>
+                            <?php echo $input['api_token_exempt']; ?>
+                            <small class="text-muted">持<b>有效 wire 令牌</b>的机器流量不限流。<b>强烈建议开启</b>：关掉后商店 rsync-task worker 的逐页回调会撞 429，任务转 <code>异常（error）</code>。</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">无 / 错令牌窗口 · 请求数</label>
+                            <?php echo $input['api_limit']; ?>
+                            <small class="text-muted">匿名与错令牌的洪水闸，默认 30</small>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">无 / 错令牌窗口 · 秒</label>
+                            <?php echo $input['api_window']; ?>
+                            <small class="text-muted">默认 600（10 分钟 30 次）</small>
+                        </div>
+                    </div>
+
+                    <h5 class="mt-4 mb-3 fw-semibold">登录限流</h5>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">登录最大尝试次数</label>
+                            <?php echo $input['login_max']; ?>
+                            <small class="text-muted">时间窗口内最大登录尝试次数</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">登录时间窗口（秒）</label>
+                            <?php echo $input['login_window']; ?>
+                            <small class="text-muted">计数器重置周期，默认 300 秒</small>
+                        </div>
+                    </div>
+
+                    <h5 class="mt-4 mb-3 fw-semibold">注册限流</h5>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">注册最大尝试次数</label>
+                            <?php echo $input['register_max']; ?>
+                            <small class="text-muted">时间窗口内最大注册次数</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">注册时间窗口（秒）</label>
+                            <?php echo $input['register_window']; ?>
+                            <small class="text-muted">计数器重置周期，默认 3600 秒</small>
+                        </div>
+                    </div>
+
+                    <h5 class="mt-4 mb-3 fw-semibold">安全策略</h5>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">黑名单检查</label>
+                            <div><?php echo $input['verify_blacklist']; ?></div>
+                            <small class="text-muted">启用 IP 黑名单检查</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">爬虫验证</label>
+                            <div><?php echo $input['verify_robot']; ?></div>
+                            <small class="text-muted">启用搜索引擎爬虫验证</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">爬虫 User-Agent 白名单</label>
+                        <?php echo $input['bot_list']; ?>
+                        <small class="text-muted">每行一个，这些 User-Agent 不受限流限制</small>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label fw-semibold">URL 前缀白名单</label>
+                        <?php echo $input['url_prefix_allow']; ?>
+                        <small class="text-muted">逗号分隔，这些 URL 前缀不受限流限制</small>
+                    </div>
+
+                    <div class="mt-4">
+                        <button type="submit" class="btn btn-primary" id="submit" data-loading-text="保存中...">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var jform = $('#form');
+jform.on('submit', function() {
+    jform.reset();
+    var jthis = $(this);
+    var jsubmit = jthis.find('#submit');
+    jsubmit.button('loading');
+    $.xpost(jthis.attr('action'), jthis.serialize(), function(code, message) {
+        jsubmit.button('reset');
+        if (code == 0) {
+            showToast('保存成功', 'success');
+        } else {
+            showToast(message || '保存失败', 'error');
+        }
+    });
+    return false;
+});
+</script>

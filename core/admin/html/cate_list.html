@@ -1,0 +1,206 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <div class="modal fade" id="cate-post">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h6 class="modal-title">添加分类</h6>
+                        <button class="btn-close" data-bs-dismiss="modal" aria-label="Close">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <form action="<?php echo url('cate-create');?>" method="post" id="formp">
+                            <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="form-label">分类名称 <span class="required">*</span></label>
+                                        <input type="text" name="name" class="form-control" placeholder="分类名称">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="form-label">URL别名 <span class="required">*</span></label>
+                                        <input type="text" name="alias" class="form-control" placeholder="URL别名">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="form-label">类型</label>
+                                        <select name="model" class="form-control">
+                                            <option value="0" selected>视频</option>
+                                            <option value="1">文章</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-group">
+                                        <label class="form-label">上级分类</label>
+                                        <select name="category" class="form-control">
+                                            <option value="0" selected>顶级分类</option>
+                                            <?php if ($arrlist) { foreach($arrlist as $_cid=>$_cate) { ?>
+                                            <option value="<?php echo $_cid;?>"><?php echo $_cate['name'];?></option>
+                                            <?php }} ?>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">导航显示</label>
+                                    <div class="d-flex gap-3 mt-1">
+                                        <label><input type="radio" name="nav_display" value="1" checked> 是</label>
+                                        <label><input type="radio" name="nav_display" value="0"> 否</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-success mt-3 w-100" id="submitp">提交</button>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">关闭</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+                <h3 class="card-title">分类列表</h3>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#cate-post">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        添加分类
+                    </button>
+                    <div class="dropdown d-inline">
+                        <button class="btn btn-secondary" data-bs-toggle="dropdown">导入 ▼</button>
+                        <div class="dropdown-menu dropdown-menu-end">
+                            <form action="<?php echo url('api-intov', '', TRUE); ?>" method="post" class="d-inline">
+                                <input type="hidden" name="safe_token" value="<?php echo $import_token; ?>">
+                                <button type="submit" class="dropdown-item">导入影视分类</button>
+                            </form>
+                            <form action="<?php echo url('api-intox', '', TRUE); ?>" method="post" class="d-inline">
+                                <input type="hidden" name="safe_token" value="<?php echo $import_token; ?>">
+                                <button type="submit" class="dropdown-item">导入X分类</button>
+                            </form>
+                        </div>
+                    </div>
+                    <form action="<?php echo url('api-del', '', TRUE); ?>" method="post" class="d-inline" onsubmit="return cateClearGuard(this);">
+                        <input type="hidden" name="safe_token" value="<?php echo $del_token; ?>">
+                        <input type="hidden" name="force" value="0">
+                        <button type="submit" class="btn btn-outline-danger">清空分类</button>
+                    </form>
+                    <script>
+                    // 与「采集接口」页同一套防误删确认：本按钮打的是同一个后端动作（清空整张栏目表）
+                    var XN_CATE_TOTAL = <?php echo intval($cate_total ?? 0); ?>;
+                    var XN_VOD_TOTAL = <?php echo intval($vod_total ?? 0); ?>;
+                    var XN_ART_TOTAL = <?php echo intval($art_total ?? 0); ?>;
+                    function cateClearGuard(form) {
+                        if (!window.confirm('「清空分类」是全站级操作，不是删除当前这一条：\n\n・栏目 ' + XN_CATE_TOTAL + ' 个 → 全部删除\n・视频 ' + XN_VOD_TOTAL + ' 个、文章 ' + XN_ART_TOTAL + ' 篇的分类归属会同时失效\n・前台表现为：详情页 500、播放/列表页 404\n\n系统会先在 runtime/backup/ 生成一份可回灌的备份（写不进备份就不会执行）。\n只想调整个别栏目请改用下面的「删除」，不要点这个按钮。')) return false;
+                        var typed = window.prompt('最后一道确认：请输入两个字「' + '清空' + '」');
+                        if (String(typed).replace(/\s/g, '') !== '清空') {
+                            window.alert('已取消：未输入「清空」。');
+                            return false;
+                        }
+                        form.force.value = '1';
+                        return true;
+                    }
+                    </script>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <form action="<?php echo url('cate-rank', '', TRUE);?>" method="post" id="form">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                    <div class="table-responsive" style="margin:0;padding:0;">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th class="text-center" style="width:80px;">排序</th>
+                                    <th>分类名称</th>
+                                    <th class="text-center" style="width:80px;">导航</th>
+                                    <th class="text-center" style="width:80px;">编辑</th>
+                                    <th class="text-center" style="width:80px;">删除</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if ($arrlist) { foreach($arrlist as $_cid=>$_cate) { ?>
+                                <input type="hidden" name="cid[<?php echo $_cid;?>]" value="<?php echo $_cate['cid']; ?>">
+                                <?php if (1 == $_cate['category']) { ?>
+                                <tr cid="<?php echo $_cate['cid']; ?>">
+                                    <td class="text-center"><input type="text" class="form-control form-control-sm" name="rank[<?php echo $_cid;?>]" value="<?php echo $_cate['rank']; ?>" style="width:60px;display:inline-block;"></td>
+                                    <td><span class="fw-bold"><?php echo $_cate['name'];?></span> <span class="badge bg-primary text-xs">频道</span></td>
+                                    <td class="text-center"><?php if ($_cate['nav_display']) echo '<span class="badge bg-success">是</span>'; else echo '<span class="badge bg-secondary">否</span>'; ?></td>
+                                    <td class="text-center">
+                                        <?php if (isset($_cate['sonlist']) && count($_cate['sonlist'])==0) { ?>
+                                        <a href="<?php echo url('cate-update', array('cid' => $_cate['cid']), TRUE);?>" class="icon-btn" title="编辑"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
+                                        <?php } ?>
+                                    </td>
+                                    <td class="text-center"><a data-href="<?php echo url('cate-del', array('cid' => $_cate['cid']), TRUE);?>" href="javascript:void(0);" class="icon-btn danger delete" title="删除"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a></td>
+                                </tr>
+                                <?php if (isset($_cate['sonlist'])) { foreach($_cate['sonlist'] as $son_cid=>$_son) { ?>
+                                <input type="hidden" name="cid[<?php echo $son_cid;?>]" value="<?php echo $_son['cid']; ?>">
+                                <tr cid="<?php echo $_son['cid']; ?>">
+                                    <td class="text-center"><input type="text" class="form-control form-control-sm" name="rank[<?php echo $son_cid;?>]" value="<?php echo $_son['rank']; ?>" style="width:60px;display:inline-block;"></td>
+                                    <td class="ps-4"><span class="text-muted me-1">├</span> <?php echo $_son['name']; ?></td>
+                                    <td class="text-center"><?php if ($_son['nav_display']) echo '<span class="badge bg-success">是</span>'; else echo '<span class="badge bg-secondary">否</span>'; ?></td>
+                                    <td class="text-center"><a href="<?php echo url('cate-update', array('cid' => $_son['cid']), TRUE);?>" class="icon-btn" title="编辑"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a></td>
+                                    <td class="text-center"><a data-href="<?php echo url('cate-del', array('cid' => $_son['cid']), TRUE);?>" href="javascript:void(0);" class="icon-btn danger delete" title="删除"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a></td>
+                                </tr>
+                                <?php }} ?>
+                                <?php } else { ?>
+                                <tr cid="<?php echo $_cate['cid']; ?>">
+                                    <td class="text-center"><input type="text" class="form-control form-control-sm" name="rank[<?php echo $_cid;?>]" value="<?php echo $_cate['rank']; ?>" style="width:60px;display:inline-block;"></td>
+                                    <td class="fw-bold"><?php echo $_cate['name']; ?></td>
+                                    <td class="text-center"><?php if ($_cate['nav_display']) echo '<span class="badge bg-success">是</span>'; else echo '<span class="badge bg-secondary">否</span>'; ?></td>
+                                    <td class="text-center"><a href="<?php echo url('cate-update', array('cid' => $_cate['cid']), TRUE);?>" class="icon-btn" title="编辑"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a></td>
+                                    <td class="text-center"><a data-href="<?php echo url('cate-del', array('cid' => $_cate['cid']), TRUE);?>" href="javascript:void(0);" class="icon-btn danger delete" title="删除"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a></td>
+                                </tr>
+                                <?php } ?>
+                                <?php } } else { ?>
+                                <tr><td colspan="5">
+                                    <div class="empty-state">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                        <h4>暂无分类</h4>
+                                        <p>点击上方"添加分类"按钮创建第一个分类</p>
+                                    </div>
+                                </td></tr>
+                                <?php } ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <?php if ($arrlist) { ?>
+                    <div class="text-center py-3 border-top">
+                        <button type="submit" class="btn btn-primary" id="submit" data-loading-text="提交中...">保存排序</button>
+                    </div>
+                    <?php } ?>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var jform = $("#form");
+jform.on('submit', function(){
+    jform.reset();
+    var postdata = jform.serialize();
+    var jsubmit = $(this).find('#submit');
+    jsubmit.button('loading');
+    $.xpost(jform.attr('action'), postdata, function(code, message) {
+        if(code == 0) { $.alert(message); jsubmit.text(message).delay(1000).location(); }
+        else { $.alert(message); jsubmit.button('reset'); }
+    });
+    return false;
+});
+$('table').on('click', 'a.delete', function() {
+    var jthis = $(this);
+    var href = $(this).data('href');
+    var jtr = jthis.parents('tr');
+    $.xpost(href, {safe_token: '<?php echo $safe_token??''; ?>'}, function (code, message) {
+        if (code == 0) { jtr.remove(); }
+        else { $.alert(message); }
+    });
+    return false;
+});
+</script>

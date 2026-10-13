@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    {inc:public/include.html}
+</head>
+<body class="overflow-x-hidden">
+    <div class="relative w-full min-h-screen flex flex-col overflow-x-hidden scroll-pt-[6px]" style="align-items: center;">
+        <div class="z-50 sticky top-0 w-screen">
+            {inc:public/head.html}
+        </div>
+        <div class="w-full grow flex justify-center pt-4 pb-6">
+            <div class="w-full container mx-auto max-w-6xl px-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h1 class="text-xl md:text-2xl font-bold">{$lv_page_name}</h1>
+                    <span class="text-xs text-[var(--text-tertiary)]">赛程/比分/直播流由播放器实时获取，本站不做数据缓存</span>
+                </div>
+                <div class="rounded-xl overflow-hidden bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-sm">
+                    <iframe
+                        id="lvPlayer"
+                        src="{$lv_player_src}"
+                        frameborder="0"
+                        allowfullscreen
+                        referrerpolicy="no-referrer"
+                        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+                        title="{$lv_page_name}"
+                        data-w="{$lv_player_width}"
+                        style="display:block;width:{$lv_player_width};max-width:100%;height:{$lv_player_height}px;border:0;background:#0a0c10;margin:0 auto"
+                    ></iframe>
+                </div>
+                <script>
+                /* 形态修复：桌面沿用后台设定高度；移动端改为视口自适应（播放器左侧面板+视频在小屏固定
+                   640px 会撑出滚动/比例失衡），并锁定不随内容二次缩放。*/
+                (function () {
+                    var f = document.getElementById('lvPlayer');
+                    if (!f) return;
+                    var desk = {$lv_player_height};
+                    var fit = function () {
+                        f.style.height = (window.innerWidth <= 768)
+                            ? Math.max(420, Math.round(window.innerHeight * 0.72)) + 'px'
+                            : desk + 'px';
+                    };
+                    fit();
+                    window.addEventListener('resize', fit);
+                })();
+                </script>
+                <p class="text-xs text-[var(--text-disabled)] mt-3 leading-relaxed">
+                    提示：播放器内左侧面板可按「全部 / 足球 / 篮球」切换并搜索赛事；若出现无法播放，多为直播源临时波动，请稍后刷新页面重试。
+                </p>
+            </div>
+        </div>
+        {inc:public/foot.html}
+    </div>
+</body>
+</html>

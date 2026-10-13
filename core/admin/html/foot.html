@@ -1,0 +1,102 @@
+    </div>
+    <?php include _include(ADMIN_PATH.'html/partials/footer.html');?>
+    <script src="/static/js/jquery.min.js?v=<?php echo filemtime(APP_PATH.'static/js/jquery.min.js');?>"></script>
+    <script src="/static/js/bootstrap.bundle.min.js?v=<?php echo filemtime(APP_PATH.'static/js/bootstrap.bundle.min.js');?>"></script>
+    <script src="/static/js/app.js?v=<?php echo filemtime(APP_PATH.'static/js/app.js');?>"></script>
+    <script>
+        /* Toast 通知辅助 */
+        (function(){
+            var container = document.getElementById('toastContainer');
+            if (!container) return;
+            window.showToast = function(message, type, duration) {
+                type = type || 'info'; duration = duration || 3500;
+                var icons = {success:'✓',error:'✕',warning:'!',info:'i'};
+                var colors = {success:'var(--nn-success)',error:'var(--nn-danger)',warning:'var(--nn-warning)',info:'var(--nn-info)'};
+                var toast = document.createElement('div');
+                toast.className = 'toast toast-' + type;
+                toast.innerHTML = '<span class="toast-icon" style="color:'+colors[type]+';font-weight:700;font-size:14px;">'+icons[type]+'</span><span class="toast-body"></span><button class="toast-close">×</button>';
+                /* 文案走 textContent，防消息含 HTML 注入 */
+                toast.querySelector('.toast-body').textContent = String(message == null ? '' : message);
+                container.appendChild(toast);
+                var close = toast.querySelector('.toast-close');
+                var timer = setTimeout(function(){ removeToast(toast); }, duration);
+                close.addEventListener('click', function(){ clearTimeout(timer); removeToast(toast); });
+            };
+            function removeToast(el) {
+                el.classList.add('toast-leaving');
+                setTimeout(function(){ el.remove(); }, 250);
+            }
+        })();
+    </script>
+    <script>
+        var debug = DEBUG = <?php echo DEBUG; ?>;
+        var cid = <?php echo isset($cid) ? intval($cid) : 0; ?>;
+        var admin_route = <?php echo isset($route) ? json_encode($route) : '""'; ?>;
+        var admin_action = <?php echo isset($action) ? json_encode($action) : '""'; ?>;
+        var url_rewrite_on = <?php echo intval($conf['url_rewrite_on'] ?? 0);?>;
+        var url_access = true;
+        var admin_entry = <?php echo json_encode((string)($conf['admin_entry'] ?? 'admin.php'), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE); ?>;
+        var url_path = <?php echo json_encode((string)($conf['path'] ?? ''), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE); ?>;
+    </script>
+    <script>
+    /* 全局：带 class="ajaxform" 的表单改为 AJAX 提交 + 模态提示，不再跳转到独立消息页 */
+    (function(){
+        function parseMsg(raw){
+            if (typeof raw !== 'string') return { text: String(raw == null ? '' : raw), url: '' };
+            var m = raw.match(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+            if (m) return { text: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1] };
+            /* 修复：正则中的 script 闭合标签字面量会终止内联 script 元素（HTML 解析器按 lt-slash-script 截断），
+               导致本段脚本 SyntaxError、form.ajaxform 全部回退原生提交（裸 JSON 页）——改为 RegExp 构造 + 字符串拼接避开 */
+            var t = raw.replace(new RegExp('<script[\\s\\S]*?</scr' + 'ipt>', 'gi'), '').replace(/<[^>]*>/g, '').trim();
+            return { text: t, url: '' };
+        }
+        /* 防开放重定向：消息里的链接只允许站内相对地址；绝对地址必须与当前站点同源，
+           javascript:/data: 一律丢弃。服务端 jump() 已有外部链接确认页，这里是客户端侧兜底。 */
+        function safeNav(url){
+            if (typeof url !== 'string') return '';
+            /* 归一化：浏览器解析 URL 时会丢弃 C0 控制字符/制表/换行，并把反斜杠当斜杠；
+               所以 'java\tscript:' 与 '\\\\evil.com' 必须先归一化再判断（回归扫描发现的两个绕过）。 */
+            var u = url.replace(/[\u0000-\u0020\u007f]+/g, '').replace(/\\/g, '/');
+            if (u === '') return '';
+            if (/^[a-z][a-z0-9+.\-]*:/i.test(u)) {
+                if (!/^https?:/i.test(u)) return '';
+                try {
+                    var q = new URL(u, location.href);
+                    if (q.origin !== location.origin) return '';
+                    return q.pathname + q.search + q.hash;
+                } catch (e) { return ''; }
+            }
+            if (u.indexOf('//') === 0) return '';
+            return u;
+        }
+        function isFileForm(jf){
+            return jf.find('input[type=file]').length > 0 || (jf.attr('enctype') || '').indexOf('multipart') !== -1;
+        }
+        $(document).on('submit', 'form.ajaxform', function(){
+            var jf = $(this);
+            if (isFileForm(jf)) return true;
+            var act = jf.attr('action') || location.href;
+            var jbtn = jf.find('[type=submit]').first();
+            var orig = jbtn.text();
+            jbtn.prop('disabled', true);
+            jf.data('loading') && jbtn.text(jf.data('loading'));
+            $.xpost(act, jf.serialize(), function(code, message){
+                jbtn.prop('disabled', false); jbtn.text(orig);
+                var pm = parseMsg(message);
+                var type  = (code === 0 || code === '0') ? 'success' : ((typeof code === 'number' && code < 0) ? 'danger' : 'warning');
+                var title = type === 'success' ? '操作成功' : (type === 'danger' ? '操作失败' : '提示');
+                var modal = $.modal(type, title, pm.text || (type === 'success' ? '操作成功' : '操作失败'), { confirmText: '关闭' });
+                if (type === 'success') {
+                    var nav = safeNav(pm.url);
+                    if (nav) { setTimeout(function(){ location.href = nav; }, 1000); }
+                    else if (jf.data('reload')) { setTimeout(function(){ location.reload(); }, 1000); }
+                    else if (modal && modal.close) { setTimeout(function(){ modal.close(); }, 1500); }
+                }
+            });
+            return false;
+        });
+    })();
+    </script>
+    <!--{hook admin_foot_end.php}-->
+</body>
+</html>

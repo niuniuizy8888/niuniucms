@@ -1,0 +1,48 @@
+ 
+<!--
+  播放器依赖一律走本站本地资源，不引用任何公共 CDN。
+
+  原因（供应链投毒面）：公共 CDN 一旦被投毒/劫持/DNS 污染，攻击者即可在前台任意页面
+  执行 JS（本站所有播放页都加载这些脚本），等同全站 XSS；本地文件与会话同源，且受
+  nginx 的 static/ 目录规则保护，风险面显著更小。
+
+  原实现存在一段 `danmu.cdn == 0` 的公共 CDN 分支
+  （cdn.jsdelivr.net / cdnjs.cloudflare.com / code.jquery.com），已整体移除。
+  被移除分支引用的版本与下列本地文件完全一致，行为无差异：
+    artplayer 5.3.0 / artplayer-plugin-danmuku 5.2.0 / artplayer-plugin-ads 1.0.6
+    hls.js 1.6.15 / jQuery 3.6.0
+  本注释在模板编译期由 view.php 压缩档位剔除（compress=1/2 均剥 HTML 注释），不进产物。
+-->
+<script src="/static/danmuku/artplayer/dist/artplayer.js"></script>
+<script src="/static/danmuku/artplayer-plugin-danmuku/dist/artplayer-plugin-danmuku.js"></script>
+<script src="/static/danmuku/artplayer-plugin-ads/dist/artplayer-plugin-ads.js"></script>
+<script src="/static/danmuku/hls.js/dist/hls.min.js"></script>
+<script src="/static/js/jquery.min.js"></script>
+<div id="artplayer" style="height: 500px;margin-top:15px"></div>
+  
+        <script>
+        window.__DANMU_CONFIG__ = {
+            danmu_toggle: {$conf['danmu']['danmu_toggle']},
+            pause_ad: {$conf['danmu']['pause_ad']},
+            select_col: {$conf['danmu']['selec_col']},
+            ep: {$ep},
+            vid: "{$vid}",
+            danmu_list: "{$danmu_list}",
+            danmu_send: "{$danmu_send}",
+            danmu_token: "{$danmu_token}",
+            // 令牌现签端点（POST）：匿名访客命中的是 L0 缓存页、拿不到会话 Cookie，
+            // 页面内嵌令牌对其浏览器那份会话无效 —— 播放器首次发弹幕前需在此端点取一次
+            danmu_token_api: "{$danmu_token_api}",
+            start_ad_on: {$conf['danmu']['start_ad_on']},
+            start_ad: {$conf['danmu']['start_ad']},
+            start_img_ad: "{$conf['danmu']['start_img_ad']}",
+            start_mp4_ad: "{$conf['danmu']['start_mp4_ad']}",
+            start_ad_url: "{$conf['danmu']['start_ad_url']}",
+            start_close_time: {$conf['danmu']['start_close_time']},
+            start_all_time: {$conf['danmu']['start_all_time']},
+            stop_ad: "{$conf.danmu.stop_ad}",
+            stop_ad_url: "{$conf.danmu.stop_ad_url}"
+        };
+    </script>
+    <script type="text/javascript" src="/static/js/danmu-player.js"></script>
+ 

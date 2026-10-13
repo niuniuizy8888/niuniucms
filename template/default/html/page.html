@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    {inc:public/include.html}
+</head>
+<body class="overflow-y-auto overflow-x-hidden">
+    <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
+        <div class="z-50 w-screen sticky top-0">
+            {inc:public/head.html}
+        </div>
+        <div class="w-full grow flex justify-center">
+            <div class="flex flex-col w-full">
+                <div class="container mx-auto px-4 py-4">
+                    <h1 class="text-2xl font-bold text-[var(--text-primary)] mb-4">{$cate.name}</h1>
+                    <article class="prose-article mt-4 text-[var(--text-secondary)] leading-relaxed">
+                        {if:isset($cate['content']) && !empty($cate['content'])}{$cate.content}{else}<p>{$cate.seo_des}</p>{/if}
+                    </article>
+                </div>
+            </div>
+        </div>
+        {inc:public/foot.html}
+    </div>
+</body>
+</html>

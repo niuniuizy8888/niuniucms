@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh_cn" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=0'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <script>/* 主题防闪烁：首帧前恢复用户偏好 */try{if(localStorage.getItem('nncms_theme')==='dark')document.documentElement.setAttribute('data-theme','dark')}catch(e){}</script>
+    <title><?php echo xn_h(isset($header['title']) && $header['title'] !== '' ? $header['title'] : APP_NAME);?>-<?php echo xn_h(APP_NAME);?></title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link href="/static/css/bootstrap.min.css?v=<?php echo filemtime(APP_PATH.'static/css/bootstrap.min.css');?>" rel="stylesheet">
+    <link href="/static/css/app.css?v=<?php echo filemtime(APP_PATH.'static/css/app.css');?>" rel="stylesheet">
+<!--{hook admin_head_end.php}-->
+</head>
+<body>
+    <?php include _include(ADMIN_PATH.'html/partials/header.html');?>
+    <?php include _include(ADMIN_PATH.'html/partials/sidebar.html');?>
+    <div class="app-sidebar__overlay" data-toggle="sidebar"></div>
+    <!-- Toast 通知容器 -->
+    <div class="toast-container" id="toastContainer"></div>

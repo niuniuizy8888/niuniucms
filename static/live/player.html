@@ -1,0 +1,1573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OK直播-高速播放器</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #0a0c10;
+      --surface: #111318;
+      --surface2: #181c24;
+      --border: #222633;
+      --accent: #00d4ff;
+      --accent2: #ff6b2b;
+      --live: #ff3b3b;
+      --good: #30d158;
+      --text: #e8eaf0;
+      --text2: #7b8299;
+      --text3: #4a5168;
+      --panel-w: 320px;
+      --header-h: 48px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(1.3);
+      }
+    }
+
+    .toggle-panel-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
+    .toggle-panel-btn:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .toggle-panel-btn svg {
+      width: 15px;
+      height: 15px;
+    }
+
+    .art-panel-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .art-panel-toggle svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .art-panel-toggle.on {
+
+      background: rgba(0, 212, 255, 0.14);
+      color: var(--accent);
+    }
+
+    .art-chip-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 26px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 12px;
+      line-height: 1;
+      user-select: none;
+    }
+
+    .art-chip-toggle svg {
+      width: 15px;
+      height: 15px;
+      flex: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .art-chip-toggle.on {
+      background: rgba(0, 212, 255, 0.14);
+      color: var(--accent);
+    }
+    .main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+    .player-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: margin-right 0.3s ease;
+    }
+
+    .player-area.panel-open {
+      margin-right: 0;
+    }
+
+    .player-wrapper {
+      position: relative;
+      width: 100%;
+      flex: 1;
+      background: #000;
+      overflow: hidden;
+      transition: margin-right 0.3s ease;
+    }
+
+    .player-wrapper.panel-open {
+      margin-right: var(--panel-w);
+    }
+
+    .floating-toggle-panel-btn {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 25;
+      background: rgba(17, 19, 24, 0.75);
+      backdrop-filter: blur(6px);
+      border-color: rgba(255, 255, 255, 0.12);
+      padding: 6px 10px;
+      max-width: calc(100% - 24px);
+      overflow: hidden;
+    }
+
+    .floating-toggle-panel-btn .btn-text {
+      display: none;
+    }
+
+    .player-live-indicator {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(6px);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .player-live-indicator.hide {
+      display: none;
+    }
+
+    .player-live-indicator .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--live);
+      animation: pulse 1.2s ease-in-out infinite;
+      box-shadow: 0 0 0 3px rgba(255, 59, 59, 0.18);
+    }
+
+    #art-player {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* 错误提示层 */
+    .error-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 20;
+      backdrop-filter: blur(4px);
+    }
+
+    .error-overlay.show {
+      display: flex;
+    }
+
+    .error-icon {
+      font-size: 48px;
+    }
+
+    .error-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .error-sub {
+      font-size: 13px;
+      color: var(--text2);
+    }
+
+    /* 底部比赛信息条 */
+    .match-info-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-height: 64px;
+      flex-shrink: 0;
+    }
+
+    .match-teams {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .team-block {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .team-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: contain;
+      padding: 3px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid var(--border);
+    }
+
+    .team-logo-placeholder {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      color: var(--text3);
+    }
+
+    .team-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      max-width: 120px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .score-block {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 16px;
+      background: var(--surface2);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .score-num {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text);
+      min-width: 20px;
+      text-align: center;
+    }
+
+    .score-sep {
+      font-size: 16px;
+      color: var(--text3);
+      font-weight: 300;
+    }
+
+    .match-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: flex-end;
+    }
+
+    .match-league {
+      font-size: 11px;
+      color: var(--accent);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      background: rgba(0, 212, 255, 0.08);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 212, 255, 0.2);
+    }
+
+    .match-status {
+      font-size: 11px;
+      color: var(--text2);
+    }
+
+    .match-status.live-status {
+      color: var(--good);
+      font-weight: 600;
+    }
+    .match-status.upcoming-status {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .match-status.end-status {
+      color: var(--text2);
+    }
+
+    .no-match {
+      font-size: 14px;
+      color: var(--text3);
+    }
+
+    /*侧边赛事面板*/
+    .side-panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: var(--panel-w);
+      height: 100%;
+      background: linear-gradient(180deg, rgba(17, 19, 24, 0.98), rgba(10, 12, 16, 0.98));
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      z-index: 50;
+      box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45);
+    }
+
+    .side-panel.open {
+      transform: translateX(0);
+    }
+
+    .panel-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: linear-gradient(180deg, rgba(17, 19, 24, 0.96), rgba(17, 19, 24, 0.72));
+      backdrop-filter: blur(10px);
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      flex: 1;
+    }
+
+    .panel-count {
+      font-size: 11px;
+      color: var(--text);
+      font-weight: 700;
+      background: var(--surface2);
+      padding: 2px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .close-panel-btn {
+      background: none;
+      border: none;
+      color: var(--live);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 8px;
+      display: flex;
+      transition: color 0.2s, background 0.2s, transform 0.2s;
+    }
+
+    .close-panel-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .close-panel-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.06);
+      transform: translateY(-1px);
+    }
+
+    .panel-search {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      position: sticky;
+      top: 56px;
+      z-index: 2;
+      background: linear-gradient(180deg, rgba(17, 19, 24, 0.92), rgba(17, 19, 24, 0.72));
+      backdrop-filter: blur(10px);
+    }
+
+    .panel-search input {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    }
+
+    .panel-search input:focus {
+      border-color: rgba(0, 212, 255, 0.6);
+      box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.12);
+    }
+
+    .panel-search input::placeholder {
+      color: var(--text3);
+    }
+
+    .panel-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 0 12px;
+    }
+
+    .panel-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .panel-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .panel-list::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .match-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      grid-template-rows: auto auto;
+      align-items: center;
+      column-gap: 10px;
+      row-gap: 6px;
+      padding: 10px 12px;
+      margin: 6px 10px;
+      cursor: pointer;
+      border: 1px solid rgba(34, 38, 51, 0.7);
+      border-radius: 12px;
+      background: rgba(24, 28, 36, 0.55);
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      position: relative;
+    }
+
+    .match-item:hover {
+      background: rgba(24, 28, 36, 0.85);
+      border-color: rgba(0, 212, 255, 0.25);
+      transform: translateY(-1px);
+    }
+
+    .match-item.active {
+      background: rgba(0, 212, 255, 0.08);
+      border-color: rgba(0, 212, 255, 0.38);
+    }
+
+    .match-item-logos {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      grid-column: 1 / 2;
+      grid-row: 1 / 2;
+    }
+
+    .mi-logo {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      object-fit: contain;
+      padding: 2px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .mi-logo-placeholder {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 12px;
+    }
+
+    .mi-team-name {
+      font-size: 12px;
+      color: var(--text);
+      font-weight: 500;
+      max-width: 110px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mi-vs {
+      font-size: 10px;
+      color: var(--text3);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .match-item-info {
+      min-width: 0;
+      grid-column: 1 / 3;
+      grid-row: 2 / 3;
+      opacity: 0.92;
+    }
+
+    .mi-teams {
+      font-size: 12px;
+      color: var(--text);
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mi-league {
+      font-size: 11px;
+      color: var(--text3);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .match-item-right {
+      grid-column: 2 / 3;
+      grid-row: 1 / 2;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+    }
+
+    .mi-score {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .mi-status {
+      font-size: 10px;
+      color: var(--text3);
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      white-space: nowrap;
+      min-width: 44px;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .mi-status.live {
+      color: var(--good);
+      border-color: rgba(48, 209, 88, 0.22);
+      background: rgba(48, 209, 88, 0.10);
+    }
+    .mi-status.upcoming {
+      color: var(--accent);
+      border-color: rgba(0, 212, 255, 0.20);
+      background: rgba(0, 212, 255, 0.08);
+    }
+    .mi-status.end {
+      color: var(--text2);
+      border-color: rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .panel-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      flex-direction: column;
+      gap: 12px;
+      color: var(--text3);
+      font-size: 13px;
+    }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* 切换直播加载遮罩 */
+    .stream-loading {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 15;
+      backdrop-filter: blur(2px);
+    }
+
+    .stream-loading.show {
+      display: flex;
+    }
+
+    .stream-loading .spinner {
+      width: 40px;
+      height: 40px;
+    }
+
+    @media (max-width: 600px) {
+      :root {
+        --panel-w: min(92vw, 420px);
+      }
+
+      .match-info-bar {
+        padding: 10px 10px;
+        gap: 8px;
+        min-height: 0;
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .match-teams {
+        width: 100%;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .team-block {
+        min-width: 0;
+        flex: 1 1 0;
+      }
+
+      .team-block:last-child {
+        justify-content: flex-end;
+      }
+
+      .team-logo,
+      .team-logo-placeholder {
+        width: 26px;
+        height: 26px;
+      }
+
+      .team-logo {
+        padding: 2px;
+      }
+
+      .team-name {
+        max-width: none;
+        font-size: 13px;
+      }
+
+      .score-block {
+        padding: 4px 10px;
+        border-radius: 10px;
+      }
+
+      .score-num {
+        font-size: 18px;
+        min-width: 16px;
+      }
+
+      .score-sep {
+        font-size: 14px;
+      }
+
+      .match-meta {
+        width: 100%;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .match-league {
+        max-width: 70%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 999px;
+      }
+
+      .match-status {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+        white-space: nowrap;
+      }
+
+      .toggle-panel-btn .btn-text {
+        display: none;
+      }
+
+      .player-wrapper.panel-open {
+        margin-right: 0;
+      }
+
+      .match-item {
+        margin: 6px 8px;
+        padding: 10px 10px;
+      }
+
+      .mi-team-name {
+        max-width: none;
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        line-height: 1.15;
+      }
+
+      .match-item-logos {
+        display: grid;
+        grid-template-columns: 22px 1fr auto 22px 1fr;
+        column-gap: 6px;
+        row-gap: 2px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="main">
+    <div class="player-area" id="playerArea">
+      <div class="player-wrapper" id="playerWrapper">
+        <button class="toggle-panel-btn floating-toggle-panel-btn" id="togglePanelBtn" aria-label="赛事列表">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M15 3v18" />
+          </svg>
+          <span class="btn-text">赛事列表</span>
+        </button>
+        <div id="art-player"></div>
+
+        <div class="player-live-indicator hide" id="playerLiveIndicator">
+          <span class="dot"></span>
+          <span class="text">LIVE</span>
+        </div>
+
+        <div class="stream-loading" id="streamLoading">
+          <div class="spinner"></div>
+        </div>
+
+        <div class="error-overlay" id="errorOverlay"> 
+          <div class="error-title">暂时无法播放</div>
+          <div class="error-sub">请切换其他赛事继续观看</div>
+        </div>
+      </div>
+
+      <div class="match-info-bar" id="matchInfoBar">
+        <div class="no-match" id="noMatchText">请从右侧选择赛事</div>
+      </div>
+    </div>
+
+    <!-- 侧边赛事面板 -->
+    <div class="side-panel" id="sidePanel">
+      <div class="panel-header">
+        <span class="panel-title" id="panelTitle">正在直播</span>
+        <span class="panel-count" id="panelCount">--</span>
+        <button class="close-panel-btn" id="closePanelBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="panel-search">
+        <input type="text" id="searchInput" placeholder="搜索赛事、球队、联赛…">
+      </div>
+      <div class="panel-list" id="panelList">
+        <div class="panel-loading">
+          <div class="spinner"></div>
+          加载赛事中…
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 播放器（ArtPlayer） -->
+  <script src="/node_modules/artplayer/dist/artplayer.js"></script>
+  <!-- HLS.js -->
+  <script src="/node_modules/hls.js/dist/hls.min.js"></script>
+  <!-- flv.js -->
+  <script src="/node_modules/flv.js/dist/flv.min.js"></script>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // ── 状态 ──────────────────────────────────────
+      let art = null;
+      let footballMatches = [];
+      let basketballMatches = [];
+      let filteredMatches = [];
+      let viewMode = 'football';
+      let currentMatchId = null;
+      let panelOpen = false;
+      let hlsInstance = null;
+      let flvInstance = null;
+      let loadingGuard = null;
+      let matchIndex = new Map();
+
+      // ── DOM 引用 ───────────────────────────────────
+      const playerArea = document.getElementById('playerArea');
+      const sidePanel = document.getElementById('sidePanel');
+      const toggleBtn = document.getElementById('togglePanelBtn');
+      const closeBtn = document.getElementById('closePanelBtn');
+      const panelList = document.getElementById('panelList');
+      const panelCount = document.getElementById('panelCount');
+      const panelTitle = document.getElementById('panelTitle');
+      const searchInput = document.getElementById('searchInput');
+      const matchInfoBar = document.getElementById('matchInfoBar');
+      const noMatchText = document.getElementById('noMatchText');
+      const errorOverlay = document.getElementById('errorOverlay');
+      const streamLoading = document.getElementById('streamLoading');
+      const playerLive = document.getElementById('playerLiveIndicator');
+      const playerWrapper = document.getElementById('playerWrapper');
+      const mainEl = document.querySelector('.main');
+
+      // ── 面板开关 ───────────────────────────────
+      function syncPanelMetrics() {
+        if (!sidePanel || !playerWrapper || !mainEl) return;
+        const mainRect = mainEl.getBoundingClientRect();
+        const wrapRect = playerWrapper.getBoundingClientRect();
+        const top = Math.max(0, wrapRect.top - mainRect.top);
+        sidePanel.style.top = top + 'px';
+        sidePanel.style.height = wrapRect.height - 60 + 'px';
+      }
+
+      function syncPanelToggleUi() {
+        const el = document.getElementById('artPanelToggle');
+        const bb = document.getElementById('artBasketballToggle');
+        if (!el) return;
+        el.classList.toggle('on', panelOpen && viewMode === 'football');
+        el.setAttribute('aria-label', (panelOpen && viewMode === 'football') ? '关闭足球赛事' : '打开足球赛事');
+        if (bb) {
+          bb.classList.toggle('on', panelOpen && viewMode === 'basketball');
+          bb.setAttribute('aria-label', (panelOpen && viewMode === 'basketball') ? '关闭篮球赛事' : '打开篮球赛事');
+        }
+      }
+
+      function setPanel(open) {
+        panelOpen = open;
+        sidePanel.classList.toggle('open', open);
+        playerArea.classList.toggle('panel-open', open);
+        if (playerWrapper) playerWrapper.classList.toggle('panel-open', open);
+        syncPanelToggleUi();
+        syncPanelMetrics();
+      }
+      toggleBtn.addEventListener('click', () => setPanel(!panelOpen));
+      closeBtn.addEventListener('click', () => setPanel(false));
+
+      (function () {
+        syncPanelMetrics();
+        window.addEventListener('resize', syncPanelMetrics);
+        if (window.ResizeObserver && playerWrapper) {
+          const ro = new ResizeObserver(syncPanelMetrics);
+          ro.observe(playerWrapper);
+          if (mainEl) ro.observe(mainEl);
+        }
+      })();
+
+      function setPlayerLive(show) {
+        if (!playerLive) return;
+        playerLive.classList.toggle('hide', !show);
+      }
+
+      // ── 初始化 ArtPlayer ─────────────────────────────
+      function initPlayer() {
+        art = new Artplayer({
+          container: '#art-player',
+          url: '',
+          muted: false,
+          screenshot: true,
+          setting: true,
+          loop: false,
+          flip: true,
+          playbackRate: true,
+          aspectRatio: true,
+          fullscreen: true,
+          fullscreenWeb: true,
+          subtitleOffset: true,
+          miniProgressBar: true,
+          mutex: true,
+          backdrop: true,
+          playsInline: true,
+          autoPlayback: true,
+          airplay: true,
+          lang: 'zh-cn',
+          volume: 0.8,
+          autoplay: false,
+          hotkey: true,
+          theme: '#00d4ff',
+          controls: [
+            {
+              name: '足球',
+              position: 'right',
+              index: 10,
+              tooltip: '切换足球赛事',
+              html: `
+            <span id="artPanelToggle" class="art-chip-toggle" aria-label="打开足球赛事">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5"></circle>
+                <path d="M12 7.2 8.8 9.4l1.2 3.7h4l1.2-3.7L12 7.2Z"></path>
+                <path d="M8.8 9.4 6.7 8.5 4.9 11.4l1.8 3 3.3-.2"></path>
+                <path d="M15.2 9.4 17.3 8.5l1.8 2.9-1.8 3-3.3-.2"></path>
+                <path d="M10 13.1 8.2 15.6 12 18.3l3.8-2.7-1.8-2.5"></path>
+              </svg>
+              <span>足球</span>
+            </span>
+          `,
+              style: { marginRight: '8px' },
+              click: function () {
+                if (viewMode !== 'football') {
+                  viewMode = 'football';
+                  applyFilters();
+                  setPanel(true);
+                } else {
+                  setPanel(!panelOpen);
+                }
+              },
+            },
+            {
+              name: '篮球',
+              position: 'right',
+              index: 11,
+              tooltip: '篮球赛事',
+              html: `
+            <span id="artBasketballToggle" class="art-chip-toggle" aria-label="打开篮球赛事">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.5"></circle>
+                <path d="M12 3.5c-2.3 2.1-3.6 5.1-3.6 8.5s1.3 6.4 3.6 8.5"></path>
+                <path d="M12 3.5c2.3 2.1 3.6 5.1 3.6 8.5s-1.3 6.4-3.6 8.5"></path>
+                <path d="M4 9.2c2.3 1.2 5.1 1.8 8 1.8s5.7-.6 8-1.8"></path>
+                <path d="M4 14.8c2.3-1.2 5.1-1.8 8-1.8s5.7.6 8 1.8"></path>
+              </svg>
+              <span>篮球</span>
+            </span>
+          `,
+              style: { marginRight: '8px' },
+              click: function () {
+                if (viewMode !== 'basketball') {
+                  viewMode = 'basketball';
+                  applyFilters();
+                  setPanel(true);
+                } else {
+                  setPanel(!panelOpen);
+                }
+              },
+            },
+          ],
+          customType: {
+            m3u8: function (video, url) {
+              playHls(video, url);
+            },
+            flv: function (video, url) {
+              playFlv(video, url);
+            }
+          }
+        });
+        syncPanelToggleUi();
+        syncPanelMetrics();
+      }
+
+      function playHls(video, url) {
+        if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+        if (flvInstance) { flvInstance.destroy(); flvInstance = null; }
+        if (isMixedContentBlocked(url)) {
+          showError('HTTPS 页面禁止加载 HTTP 直播源', '请切换到 HLS 或使用 HTTPS 的直播地址');
+          return;
+        }
+        if (Hls.isSupported()) {
+          hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true });
+          hlsInstance.loadSource(url);
+          hlsInstance.attachMedia(video);
+          hlsInstance.on(Hls.Events.ERROR, function (event, data) {
+            if (data.fatal) {
+              showError();
+            }
+          });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+        } else {
+          showError();
+        }
+      }
+
+      function playFlv(video, url) {
+        if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+        if (flvInstance) { flvInstance.destroy(); flvInstance = null; }
+        if (isMixedContentBlocked(url)) {
+          showError('HTTPS 页面禁止加载 HTTP 直播源', '请切换到 HLS 或使用 HTTPS 的直播地址');
+          return;
+        }
+        if (window.flvjs && flvjs.isSupported()) {
+          flvInstance = flvjs.createPlayer({ type: 'flv', url: url, isLive: true });
+          flvInstance.attachMediaElement(video);
+          flvInstance.on(flvjs.Events.ERROR, function () {
+            showError();
+          });
+          flvInstance.load();
+          Promise.resolve(flvInstance.play()).catch(function () { });
+        } else {
+          video.src = url;
+        }
+      }
+
+      // ── 错误 / 加载 UI ─────────────────────────
+      function showError(title, sub) {
+        if (loadingGuard) { clearTimeout(loadingGuard); loadingGuard = null; }
+        streamLoading.classList.remove('show');
+        if (errorOverlay) {
+          const t = errorOverlay.querySelector('.error-title');
+          const s = errorOverlay.querySelector('.error-sub');
+          if (t && typeof title === 'string' && title.trim()) t.textContent = title.trim();
+          if (s && typeof sub === 'string' && sub.trim()) s.textContent = sub.trim();
+        }
+        errorOverlay.classList.add('show');
+      }
+      function hideError() {
+        errorOverlay.classList.remove('show');
+      }
+      function showLoading() {
+        if (loadingGuard) { clearTimeout(loadingGuard); loadingGuard = null; }
+        streamLoading.classList.add('show');
+        hideError();
+        loadingGuard = setTimeout(() => {
+          if (streamLoading.classList.contains('show') && !errorOverlay.classList.contains('show')) {
+            showError();
+          }
+        }, 12000);
+      }
+      function hideLoading() {
+        if (loadingGuard) { clearTimeout(loadingGuard); loadingGuard = null; }
+        streamLoading.classList.remove('show');
+        hideError();
+      }
+
+      // ── 检测直播流可用性 ──────────────────
+      async function checkStream(url) {
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve(false), 8000);
+          if (Hls.isSupported()) {
+            const testHls = new Hls();
+            testHls.loadSource(url);
+            testHls.on(Hls.Events.MANIFEST_PARSED, () => {
+              clearTimeout(timeout);
+              testHls.destroy();
+              resolve(true);
+            });
+            testHls.on(Hls.Events.ERROR, (e, d) => {
+              if (d.fatal) {
+                clearTimeout(timeout);
+                testHls.destroy();
+                resolve(false);
+              }
+            });
+            // 绑定到临时 video
+            const v = document.createElement('video');
+            testHls.attachMedia(v);
+          } else {
+            resolve(true); // can't check, try anyway
+          }
+        });
+      }
+
+      // ── 切换比赛 ───────────────────────────────
+      let switchSeq = 0;
+      async function switchMatch(match) {
+        if (currentMatchId === match.matchId) return;
+        const seq = ++switchSeq;
+        currentMatchId = match.matchId;
+
+        // 列表高亮
+        document.querySelectorAll('.match-item').forEach(el => {
+          el.classList.toggle('active', el.dataset.id === String(match.matchId));
+        });
+
+        // 更新底部信息条
+        updateInfoBar(match);
+
+        // 显示加载
+        showLoading();
+
+        const st = getPreferredStream(match);
+        if (!st || !st.url) {
+          hideLoading();
+          showError();
+          return;
+        }
+
+        if (!art) return;
+
+        const bindReadyHandlers = () => {
+          const v = art.video;
+          if (!v) return;
+          const onReady = () => {
+            if (seq !== switchSeq) return;
+            hideLoading();
+          };
+          v.addEventListener('playing', onReady, { once: true });
+          v.addEventListener('canplay', onReady, { once: true });
+          v.addEventListener('loadeddata', onReady, { once: true });
+        };
+
+        const setStream = (next) => {
+          if (seq !== switchSeq) return;
+          art.url = next.url;
+          art.type = next.type;
+          bindReadyHandlers();
+          Promise.resolve(art.play()).catch(function () { });
+        };
+
+        const tryFallback = () => {
+          if (seq !== switchSeq) return false;
+          if (st.type === 'flv') {
+            const m3u8 = getM3u8Url(match);
+            if (m3u8) {
+              setStream({ type: 'm3u8', url: m3u8 });
+              return true;
+            }
+          } else if (st.type === 'm3u8') {
+            const flv = getFlvUrl(match);
+            if (flv && !isMixedContentBlocked(flv) && window.flvjs && flvjs.isSupported()) {
+              setStream({ type: 'flv', url: flv });
+              return true;
+            }
+          }
+          return false;
+        };
+
+        art.once('error', () => {
+          if (seq !== switchSeq) return;
+          if (tryFallback()) return;
+          hideLoading();
+          showError();
+        });
+
+        setStream(st);
+      }
+
+      // ── 底部信息条 ───────────────────────────────────
+      function updateInfoBar(match) {
+        const isLive = isInPlay(match);
+        const homeScore = match.home.score ?? 0;
+        const awayScore = match.away.score ?? 0;
+        setPlayerLive(isLive);
+        const statusMeta = getStatusMeta(match);
+
+        matchInfoBar.innerHTML = `
+      <div class="match-teams">
+        <div class="team-block">
+          ${teamLogo(match.home.logo, match.home.name)}
+          <span class="team-name">${match.home.name}</span>
+        </div>
+        <div class="score-block">
+          <span class="score-num">${homeScore}</span>
+          <span class="score-sep">:</span>
+          <span class="score-num">${awayScore}</span>
+        </div>
+        <div class="team-block">
+          <span class="team-name">${match.away.name}</span>
+          ${teamLogo(match.away.logo, match.away.name)}
+        </div>
+      </div>
+      <div class="match-meta">
+        <span class="match-league">${match.leagueName}</span>
+        <span class="match-status ${statusMeta.infoClass}">${statusMeta.text}</span>
+      </div>
+    `;
+      }
+
+      function teamLogo(src, name) {
+        if (src) {
+          return `<img class="team-logo" src="${src}" alt="${name}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'team-logo-placeholder',textContent:'⚽'}))">`;
+        }
+        return `<div class="team-logo-placeholder">⚽</div>`;
+      }
+
+      function miniLogo(src) {
+        if (src) {
+          return `<img class="mi-logo" src="${src}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'mi-logo mi-logo-placeholder',textContent:'⚽'}))">`;
+        }
+        return `<div class="mi-logo mi-logo-placeholder">⚽</div>`;
+      }
+
+      function getKickoffLabel(match) {
+        const raw = String(match && match.matchTimeText || '').trim();
+        if (!raw) return '';
+        const hm = raw.match(/(\d{1,2}:\d{2})$/);
+        if (hm) return hm[1];
+        return raw;
+      }
+
+      function formatStatus(match) {
+        const raw = (match && match.status != null) ? String(match.status).trim() : '';
+        if (raw && /^\d+$/.test(raw)) return '进行中';
+        if (raw === '中') return '中场';
+        if (raw === '完') return '已结束';
+        if (raw) return raw;
+        const id = Number(match && match.statusId);
+        if (id === 1) return '直播';
+        if (id === 2) return '中场';
+        if (id === 3) return '进行中';
+        if (id === 4) return '已结束';
+        if (id === 5) return '已结束';
+        return '';
+      }
+
+      function isEnded(match) {
+        if (!match) return false;
+        const id = Number(match.statusId);
+        if (id === 4 || id === 5) return true;
+        const raw = (match.status != null) ? String(match.status).trim() : '';
+        if (!raw) return false;
+        if (raw === '完') return true;
+        const s = raw.toLowerCase();
+        return raw.includes('结束') || raw.includes('完场') || s === 'ft' || s === 'finished' || s === 'ended';
+      }
+
+      function getStatusMeta(match) {
+        const text = formatStatus(match);
+        if (isInPlay(match)) {
+          return { text: text || '直播中', itemClass: 'live', infoClass: 'live-status' };
+        }
+        if (isEnded(match)) {
+          return { text: text || '已结束', itemClass: 'end', infoClass: 'end-status' };
+        }
+        const kickoff = getKickoffLabel(match);
+        return { text: text || kickoff || '未开赛', itemClass: 'upcoming', infoClass: 'upcoming-status' };
+      }
+
+      function isInPlay(match) {
+        if (!match) return false;
+        const id = Number(match.statusId);
+        if (id === 1 || id === 2 || id === 3) return true;
+        const raw = (match.status != null) ? String(match.status).trim() : '';
+        if (!raw) return false;
+        if (/^\d{1,3}(?:\+\d{1,2})?\s*['′’]?$/.test(raw)) return true;
+        if (/^\d+$/.test(raw)) return true;
+        if (raw === '中') return true;
+        if (raw.includes('直播') || raw.includes('进行') || raw.includes('上半场') || raw.includes('下半场') || raw.includes('中场') || raw.includes('半场')) return true;
+        const s = raw.toLowerCase();
+        if (s === 'ht' || s === 'live' || s === 'playing' || s === 'inplay' || s === 'in-play') return true;
+        return false;
+      }
+
+      function isMixedContentBlocked(url) {
+        return (window.location && window.location.protocol === 'https:') && /^http:\/\//i.test(String(url || ''));
+      }
+
+      function getFlvUrl(match) {
+        if (!match) return '';
+        const direct = match.live_flv_url || match.liveFlvUrl || match.flv || match.flvUrl;
+        if (typeof direct === 'string' && direct.trim()) return direct.trim();
+        const v = match.video;
+        if (v && Array.isArray(v.flv) && v.flv.length) {
+          const u = v.flv.find(x => typeof x === 'string' && x.trim());
+          if (u) return u.trim();
+          const obj = v.flv.find(x => x && typeof x === 'object');
+          if (obj) {
+            const uu = obj.url || obj.src || obj.playUrl || obj.play_url;
+            if (typeof uu === 'string' && uu.trim()) return uu.trim();
+          }
+        }
+        return '';
+      }
+
+      function getM3u8Url(match) {
+        if (!match) return '';
+        const direct = match.live_m3u8_url || match.liveM3u8Url || match.m3u8 || match.m3u8Url;
+        if (typeof direct === 'string' && direct.trim()) return direct.trim();
+        const v = match.video;
+        if (v && Array.isArray(v.m3u8) && v.m3u8.length) {
+          const u = v.m3u8.find(x => typeof x === 'string' && x.trim());
+          if (u) return u.trim();
+          const obj = v.m3u8.find(x => x && typeof x === 'object');
+          if (obj) {
+            const uu = obj.url || obj.src || obj.playUrl || obj.play_url;
+            if (typeof uu === 'string' && uu.trim()) return uu.trim();
+          }
+        }
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        return '';
+      }
+
+      function isPC() {
+        const ua = String(navigator.userAgent || '').toLowerCase();
+        const isMobileUA = /android|iphone|ipad|ipod|mobile|windows phone|mobi|tablet/.test(ua);
+        if (isMobileUA) return false;
+        if ('maxTouchPoints' in navigator && navigator.maxTouchPoints > 1) return false;
+        return true;
+      }
+
+      function getPreferredStream(match) {
+        const m3u8 = getM3u8Url(match);
+        const flv = getFlvUrl(match);
+        if (isPC()) {
+          if (flv && !isMixedContentBlocked(flv) && window.flvjs && flvjs.isSupported()) return { type: 'flv', url: flv };
+          if (m3u8 && !isMixedContentBlocked(m3u8)) return { type: 'm3u8', url: m3u8 };
+        } else {
+          if (m3u8 && !isMixedContentBlocked(m3u8)) return { type: 'm3u8', url: m3u8 };
+          if (flv && !isMixedContentBlocked(flv) && window.flvjs && flvjs.isSupported()) return { type: 'flv', url: flv };
+        }
+        if (m3u8) return { type: 'm3u8', url: m3u8 };
+        if (flv && !isMixedContentBlocked(flv) && (!window.Hls || !Hls.isSupported())) return { type: 'flv', url: flv };
+        if (flv) return { type: 'flv', url: flv };
+        return null;
+      }
+
+      function normalizeMatch(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        const matchId = String(raw.matchId ?? raw.match_id ?? raw.id ?? '').trim();
+        if (!matchId) return null;
+        const statusId = Number(raw.statusId ?? raw.status_id ?? raw.status_id_str ?? 0) || 0;
+        const matchTime = Number(raw.matchTime ?? raw.match_time ?? 0) || 0;
+        const matchTimeText = String(raw.matchTimeText ?? raw.match_time_text ?? raw.match_time_str ?? '') || '';
+        const leagueName = String(raw.leagueName ?? raw.league_name ?? raw.league_name_zh ?? raw.league ?? '') || '';
+        const status = (raw.status != null) ? String(raw.status) : (raw.status_text != null ? String(raw.status_text) : '');
+        const gameType = Number(raw.gameType ?? raw.game_type ?? raw.type ?? 0) || 0;
+
+        const homeRaw = raw.home && typeof raw.home === 'object' ? raw.home : raw.homeTeam || raw.home_team || null;
+        const awayRaw = raw.away && typeof raw.away === 'object' ? raw.away : raw.awayTeam || raw.away_team || null;
+
+        const homeName = String((homeRaw && (homeRaw.name ?? homeRaw.name_zh ?? homeRaw.teamName)) ?? raw.home_name ?? raw.home_name_zh ?? '') || '';
+        const awayName = String((awayRaw && (awayRaw.name ?? awayRaw.name_zh ?? awayRaw.teamName)) ?? raw.away_name ?? raw.away_name_zh ?? '') || '';
+
+        const homeLogo = String((homeRaw && (homeRaw.logo ?? homeRaw.logoUrl ?? homeRaw.logo_url)) ?? raw.home_logo ?? '') || '';
+        const awayLogo = String((awayRaw && (awayRaw.logo ?? awayRaw.logoUrl ?? awayRaw.logo_url)) ?? raw.away_logo ?? '') || '';
+
+        const homeScore = Number((homeRaw && (homeRaw.score ?? homeRaw.goals)) ?? raw.home_score ?? 0);
+        const awayScore = Number((awayRaw && (awayRaw.score ?? awayRaw.goals)) ?? raw.away_score ?? 0);
+
+        const video = (raw.video && typeof raw.video === 'object') ? raw.video : {
+          flv: raw.flv ? [raw.flv] : [],
+          m3u8: raw.m3u8 ? [raw.m3u8] : [],
+          h5: raw.h5 ? [raw.h5] : [],
+        };
+
+        const m = {
+          matchId,
+          gameType,
+          statusId,
+          status,
+          matchTime,
+          matchTimeText,
+          leagueName,
+          home: { name: homeName, logo: homeLogo, score: Number.isFinite(homeScore) ? homeScore : 0 },
+          away: { name: awayName, logo: awayLogo, score: Number.isFinite(awayScore) ? awayScore : 0 },
+          video,
+        };
+        m.live_flv_url = getFlvUrl(raw) || getFlvUrl(m);
+        m.live_m3u8_url = getM3u8Url(raw) || getM3u8Url(m);
+        return m;
+      }
+
+      // ── 渲染赛事列表 ──────────────────────────
+      function renderList(matches) {
+        if (!matches.length) {
+          panelList.innerHTML = '<div class="panel-loading" style="color:#4a5168">没有找到相关赛事</div>';
+          return;
+        }
+        panelList.innerHTML = matches.map(m => {
+          const statusMeta = getStatusMeta(m);
+          const hScore = m.home.score ?? 0;
+          const aScore = m.away.score ?? 0;
+          return `
+      <div class="match-item ${currentMatchId === m.matchId ? 'active' : ''}"
+           data-id="${m.matchId}"
+           onclick='window.__switchMatchById(${JSON.stringify(m.matchId)})'>
+        <div class="match-item-logos">
+          ${miniLogo(m.home.logo)}
+          <span class="mi-team-name">${m.home.name}</span>
+          <span class="mi-vs">VS</span>
+          ${miniLogo(m.away.logo)}
+          <span class="mi-team-name">${m.away.name}</span>
+        </div>
+        <div class="match-item-info">
+          <div class="mi-league">${m.leagueName} · ${m.matchTimeText}</div>
+        </div>
+        <div class="match-item-right">
+          <div class="mi-score">${hScore} - ${aScore}</div>
+          <div class="mi-status ${statusMeta.itemClass}">${statusMeta.text}</div>
+        </div>
+      </div>`;
+        }).join('');
+      }
+
+      window.__switchMatchById = function (id) {
+        const match = matchIndex.get(id);
+        if (match) switchMatch(match);
+      };
+
+      function applyFilters() {
+        const base = viewMode === 'basketball' ? basketballMatches : footballMatches;
+        const q = searchInput.value.trim().toLowerCase();
+        if (!q) {
+          filteredMatches = base;
+        } else {
+          filteredMatches = base.filter(m =>
+            m.home.name.toLowerCase().includes(q) ||
+            m.away.name.toLowerCase().includes(q) ||
+            m.leagueName.toLowerCase().includes(q)
+          );
+        }
+        panelCount.textContent = base.length + ' 场';
+        if (panelTitle) panelTitle.textContent = (viewMode === 'basketball') ? '篮球赛事' : '足球赛事';
+        renderList(filteredMatches);
+        if (filteredMatches.length && !filteredMatches.some(m => m.matchId === currentMatchId)) {
+          switchMatch(filteredMatches[0]);
+        }
+        syncPanelToggleUi();
+      }
+
+      // ── 搜索 ─────────────────────────────────────
+      searchInput.addEventListener('input', () => {
+        applyFilters();
+      });
+
+      // ── 拉取数据 ─────────────────────────────────
+      async function fetchMatches() {
+        panelList.innerHTML = '<div class="panel-loading"><div class="spinner"></div>加载赛事中…</div>';
+        const loadLiveMatches = async () => {
+          const url = 'https://api.okzhibo.live/live/api/live/';
+          try {
+            const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+            if (!res.ok) throw new Error('bad status');
+            const json = await res.json();
+            if (json && json.code === 0 && json.data && Array.isArray(json.data.list)) {
+              return json.data.list
+                .map(normalizeMatch)
+                .filter(Boolean);
+            }
+          } catch (e) { }
+          throw new Error('bad response');
+        };
+
+        try {
+          const allLiveMatches = await loadLiveMatches();
+          footballMatches = allLiveMatches.filter(m => m.gameType === 1 || m.gameType === 0);
+          basketballMatches = allLiveMatches.filter(m => m.gameType === 18);
+        } catch (e) {
+          const fallbackMatches = (window.__FALLBACK_DATA__ || [])
+            .map(normalizeMatch)
+            .filter(Boolean)
+            .filter(isInPlay);
+          footballMatches = fallbackMatches.filter(m => m.gameType === 1 || m.gameType === 0);
+          basketballMatches = fallbackMatches.filter(m => m.gameType === 18);
+        }
+
+        const sortLiveFirst = (arr) => {
+          arr.sort((a, b) => {
+            const al = isInPlay(a);
+            const bl = isInPlay(b);
+            if (al && !bl) return -1;
+            if (bl && !al) return 1;
+            return a.matchTime - b.matchTime;
+          });
+        };
+        sortLiveFirst(footballMatches);
+        sortLiveFirst(basketballMatches);
+
+        matchIndex = new Map();
+        footballMatches.forEach(m => matchIndex.set(m.matchId, m));
+        basketballMatches.forEach(m => matchIndex.set(m.matchId, m));
+
+        applyFilters();
+
+        // 自动选中首场直播
+        const base = viewMode === 'basketball' ? basketballMatches : footballMatches;
+        if (base.length) switchMatch(base[0]);
+      }
+
+
+      // ── 启动 ───────────────────────────────────────
+      initPlayer();
+      fetchMatches();
+      if (window.innerWidth > 768) {
+        setTimeout(() => setPanel(true), 100);
+      }
+
+    })();
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,6 @@
+<?php
+// 后台侧边栏（容器方案 P3.2：菜单注册表化）
+// 菜单数据与渲染收敛于 AdminMenuService（items 结构化 + App::fire('admin.menu.items') 过滤 + 机械渲染）；
+// 与原硬编码模板逐字节等价（.tests/admin_menu_smoke.php 以基准夹具回归）。
+// 插件追加菜单：App::listen('admin.menu.items', function (array $items) { $items[] = array(...); return $items; });
+echo \App\Service\Admin\AdminMenuService::sidebar();

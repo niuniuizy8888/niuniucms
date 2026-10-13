@@ -1,0 +1,129 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+                <h3 class="card-title">SEO 设置</h3>
+            </div>
+            <div class="card-body p-0">
+                <div class="p-3">
+                    <ul class="nav nav-tabs" role="tablist">
+                        <li class="nav-item"><a class="nav-link active" href="#index" data-bs-toggle="tab" role="tab">首页</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#list" data-bs-toggle="tab" role="tab">视频列表</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#type" data-bs-toggle="tab" role="tab">视频筛选</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#vod" data-bs-toggle="tab" role="tab">视频</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#play" data-bs-toggle="tab" role="tab">播放页</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#art_list" data-bs-toggle="tab" role="tab">文章列表</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#art" data-bs-toggle="tab" role="tab">文章详情</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#tag" data-bs-toggle="tab" role="tab">Tag</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#tag_list" data-bs-toggle="tab" role="tab">Tag列表</a></li>
+                        <li class="nav-item"><a class="nav-link" href="#searchs" data-bs-toggle="tab" role="tab">搜索</a></li>
+                    </ul>
+                </div>
+                <div class="p-3">
+                    <div class="tab-content">
+                        <?php if($conf['seo']){ foreach($conf['seo'] as $k => $_v) { ?>
+                        <div class="tab-pane <?php if($k=='index') echo 'active show';?>" id="<?php echo xn_h($k);?>" role="tabpanel">
+                            <form class="ajax-submit" action="<?php echo url('set-seo', array('type' => 'list'), TRUE);?>" method="post" id="form">
+                                <input type="hidden" name="safe_token" value="<?php echo $safe_token;?>">
+                                <?php foreach($_v as $key => $_seo) { ?>
+                                <div class="mb-3">
+                                    <label class="form-label"><?php echo lang($key);?></label>
+                                    <div class="mb-2 d-flex flex-wrap gap-1">
+                                        <?php if($k=='index'||$k=='tag_list'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <?php }?>
+                                        <?php if($k=='list'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$page}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <?php }?>
+                                        <?php if($k=='art_list'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$page}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <?php }?>
+                                        <?php if($k=='type'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$page}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$lang}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$area}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$year}</span>
+                                        <?php }?>
+                                        <?php if($k=='vod'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$remarks}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$cate_name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$des}</span>
+                                        <?php }?>
+                                        <?php if($k=='art'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$cate_name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$des}</span>
+                                        <?php }?>
+                                        <?php if($k=='play'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$play_name}</span>
+                                        <?php }?>
+                                        <?php if($k=='tag'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$page}</span>
+                                        <?php }?>
+                                        <?php if($k=='searchs'){?>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$sitename}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo $k;?>_<?php echo $key;?>">{$name}</span>
+                                        <span class="badge bg-primary clickable" data-target="#<?php echo xn_h($k);?>_<?php echo xn_h($key);?>">{$num}</span>
+                                        <?php }?>
+                                    </div>
+                                    <input type="hidden" name="page" value="<?php echo xn_h($k);?>">
+                                    <input type="text" id="<?php echo xn_h($k);?>_<?php echo xn_h($key);?>" name="<?php echo xn_h($key);?>" class="form-control" value="<?php echo xn_h($_seo); ?>">
+                                </div>
+                                <?php }?>
+                                <button type="submit" class="btn btn-primary" data-loading-text="提交中...">保存</button>
+                            </form>
+                        </div>
+                        <?php }} ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+$(document).ready(function () {
+    $('.clickable').on('click', function () {
+        var value = $(this).text();
+        var target = $(this).data('target');
+        var $input = $(target)[0];
+        if (!$input) return;
+        var start = $input.selectionStart;
+        var end = $input.selectionEnd;
+        var currentVal = $input.value;
+        var newVal = currentVal.substring(0, start) + value + currentVal.substring(end);
+        $input.value = newVal;
+        var newPos = start + value.length;
+        $input.setSelectionRange(newPos, newPos);
+        $input.focus();
+    });
+});
+$('form.ajax-submit').on('submit', function (e) {
+    e.preventDefault();
+    var jform = $(this);
+    var postdata = jform.serialize();
+    var jsubmit = jform.find('button[type=submit]');
+    jsubmit.prop('disabled', true).text('提交中...');
+    $.xpost(jform.attr('action'), postdata, function (code, message) {
+        if (code == 0) { $.alert(message); setTimeout(() => window.location.reload(), 1000); }
+        else { $.alert(message); jsubmit.prop('disabled', false).text('提交'); }
+    });
+});
+</script>

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh_cn">
+<head>
+    <meta charset="UTF-8">
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=0'>
+    <script>/* 主题防闪烁：首帧前恢复用户偏好 */try{if(localStorage.getItem('nncms_theme')==='dark')document.documentElement.setAttribute('data-theme','dark')}catch(e){}</script>
+    <title>用户登录 - <?php echo APP_NAME;?></title>
+    <link href="/static/css/bootstrap.min.css?v=<?php echo filemtime(APP_PATH.'static/css/bootstrap.min.css');?>" rel="stylesheet">
+    <link href="/static/css/app.css?v=<?php echo filemtime(APP_PATH.'static/css/app.css');?>" rel="stylesheet">
+    <!--{hook admin_login_head_end.php}-->
+</head>
+<body class="login-page">
+    <div class="login-bg-shapes">
+        <div class="login-shape login-shape-1"></div>
+        <div class="login-shape login-shape-2"></div>
+        <div class="login-shape login-shape-3"></div>
+    </div>
+
+    <div class="login-shell">
+        <!-- 品牌区：与后台深色侧栏/靛蓝主色同源（Design System v4） -->
+        <div class="login-brand">
+            <div class="login-brand-top">
+                <div class="login-brand-logo">
+                    <img src="/static/logo.png" alt="logo">
+                    <span class="login-brand-name"><?php echo APP_NAME;?></span>
+                </div>
+                <p class="login-brand-sub">牛牛CMS 内容管理系统</p>
+            </div>
+            <div class="login-brand-points">
+                <div class="login-brand-point"><span class="dot"></span>视频 / 文章 / 采集一体化管理</div>
+                <div class="login-brand-point"><span class="dot"></span>模板主题 · 播放器 · 弹幕生态</div>
+                <div class="login-brand-point"><span class="dot"></span>多级用户组与安全审计</div>
+            </div>
+            <p class="login-brand-foot">Copyright &copy; <span id="year"></span> NiuNiuCms · All rights reserved.</p>
+        </div>
+
+        <!-- 表单区 -->
+        <div class="login-form">
+            <h2 class="login-form-title">欢迎回来</h2>
+            <p class="login-form-sub">请使用后台管理员账号登录</p>
+            <form action="<?php echo url('index-login', '', TRUE);?>" method="post" id="form">
+                <input type="hidden" name="safe_token" value="<?php echo $safe_token; ?>">
+                <div class="mb-3">
+                    <label class="form-label">邮箱 / 用户名</label>
+                    <div class="input-icon-wrap">
+                        <span class="input-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></span>
+                        <input type="text" class="form-control" placeholder="请输入邮箱或用户名" id="email" name="email" required autofocus>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="form-label">密码</label>
+                    <div class="input-icon-wrap">
+                        <span class="input-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+                        <input type="password" class="form-control" placeholder="请输入密码" id="password" name="password" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg w-100" id="submit" data-loading-text="登录中...">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                    登 录
+                </button>
+            </form>
+            <p class="login-form-tip">如忘记密码，请联系系统管理员重置</p>
+        </div>
+    </div>
+
+    <script src="/static/js/jquery.min.js?v=<?php echo filemtime(APP_PATH.'static/js/jquery.min.js');?>"></script>
+    <script src="/static/js/bootstrap.bundle.min.js?v=<?php echo filemtime(APP_PATH.'static/js/bootstrap.bundle.min.js');?>"></script>
+    <script src="/static/js/app.js?v=<?php echo filemtime(APP_PATH.'static/js/app.js');?>"></script>
+    <script>
+    var jform = $('#form');
+    jform.on('submit', function() {
+        jform.reset();
+        var jsubmit = jform.find('#submit');
+        jsubmit.button('loading');
+        var postdata = jform.serializeObject();
+        $.xpost(jform.attr('action'), postdata, function(code, message, res) {
+            if(code == 0) {
+                jsubmit.button(message);
+                /* 登录成功后的跳转：服务端 message(jump()) 把跳转脚本放在 res.jump_script
+                   （URL 已在 core/func/misc.php::message() 做站内白名单校验）。
+                   原实现无参调用 .location() 只是 reload 登录页 →「登录成功却回到登录表单」；
+                   有 jump_script 就执行它（$().append 会自动执行脚本），否则退回当前入口地址。 */
+                if (res && res.jump_script) {
+                    $('body').append(res.jump_script);
+                } else {
+                    jsubmit.delay(1000).location(window.location.pathname);
+                }
+            }
+            else { $.alert(message); jsubmit.button('reset'); }
+        });
+        return false;
+    });
+    </script>
+</body>
+</html>

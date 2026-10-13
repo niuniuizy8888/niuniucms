@@ -1,0 +1,205 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></div>
+                <h3 class="card-title">ES 设置</h3>
+                <div class="card-actions">
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#es_help">安装说明</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#es_manage">设置ES</button>
+                </div>
+            </div>
+
+            <?php if(isset($conf['es']['host']) && $conf['es']['host']): ?>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>属性</th>
+                                <th>值</th>
+                                <th>属性</th>
+                                <th>值</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="fw-bold">集群名称</td>
+                                <td><?php echo $cluster_name ? xn_h($cluster_name) : '-'; ?></td>
+                                <td class="fw-bold">索引名称</td>
+                                <td><?php echo xn_h($conf['es']['index']); ?></td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">集群状态</td>
+                                <td>
+                                    <?php if($cluster_status == 'green'): ?><span class="text-success">健康</span>
+                                    <?php elseif($cluster_status == 'yellow'): ?><span class="text-warning">警告</span>
+                                    <?php elseif($cluster_status == 'red'): ?><span class="text-danger">危险</span>
+                                    <?php else: ?>-<?php endif; ?>
+                                </td>
+                                <td class="fw-bold">ES主机</td>
+                                <td><?php echo xn_h($conf['es']['host']); ?></td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">服务状态</td>
+                                <td><?php if($health == '正常'): ?><span class="text-success">正常</span><?php else: ?><span class="text-danger">异常</span><?php endif; ?></td>
+                                <td class="fw-bold">文档数量</td>
+                                <td><?php echo intval($doc_count ?? 0); ?></td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">索引数量</td>
+                                <td><?php echo intval($indices_count ?? 0); ?></td>
+                                <td class="fw-bold">节点数量</td>
+                                <td><?php echo intval($node_count ?? 0); ?></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex gap-2 flex-wrap mt-3">
+                    <?php $es_token = bull_token_set($uid, 'admin_set_es'); ?>
+                    <?php $es_on_token = bull_token_set($uid, 'admin_set_es_on'); ?>
+                    <?php if($conf['es_on'] == '1'){ ?>
+                    <form method="post" action="<?php echo url('set-es_on', '', TRUE); ?>" style="display:inline;">
+                        <input type="hidden" name="safe_token" value="<?php echo $es_on_token; ?>">
+                        <input type="hidden" name="es_on" value="0">
+                        <button type="submit" class="btn btn-success btn-sm">当前状态：开启</button>
+                    </form>
+                    <?php } else { ?>
+                    <form method="post" action="<?php echo url('set-es_on', '', TRUE); ?>" style="display:inline;">
+                        <input type="hidden" name="safe_token" value="<?php echo $es_on_token; ?>">
+                        <input type="hidden" name="es_on" value="1">
+                        <button type="submit" class="btn btn-danger btn-sm">当前状态：关闭</button>
+                    </form>
+                    <?php } ?>
+                    <form method="post" action="<?php echo url('set-escreate', '', TRUE); ?>" style="display:inline;">
+                        <input type="hidden" name="safe_token" value="<?php echo $es_token; ?>">
+                        <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('确认创建ES索引？')">创建索引</button>
+                    </form>
+                    <form method="post" action="<?php echo url('set-esdel', '', TRUE); ?>" style="display:inline;">
+                        <input type="hidden" name="safe_token" value="<?php echo $es_token; ?>">
+                        <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('确认删除ES索引？此操作不可逆！')">删除索引</button>
+                    </form>
+                    <form method="post" action="<?php echo url('set-es_bulk', '', TRUE); ?>" style="display:inline;">
+                        <input type="hidden" name="safe_token" value="<?php echo $es_token; ?>">
+                        <button type="submit" class="btn btn-primary btn-sm" onclick="return confirm('确认批量写入？可能耗时较长')">批量写入</button>
+                    </form>
+                </div>
+            </div>
+            <?php else: ?>
+            <div class="card-body">
+                <div class="empty-state">
+                    <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M12 3a9 9 0 0 1 9 9"/><path d="M12 8v8"/><path d="M15 12l3 7"/><circle cx="8" cy="8" r="0.5"/><circle cx="8" cy="14" r="0.5"/></svg>
+                    <h4>尚未配置 ES 主机</h4>
+                    <p class="mb-0">点击右上角「设置ES」配置 Elasticsearch 连接后即可管理索引</p>
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- ES 安装说明 Modal -->
+    <div class="modal fade" id="es_help" tabindex="-1" aria-labelledby="es_help_label" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="es_help_label">ES 安装说明</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        牛牛CMS 这套 ES 功能只用来做站内搜索加速。推荐先把 Elasticsearch 服务单独跑起来，确认可访问后，再回到本页填写连接信息。
+                    </div>
+
+                    <h6>一、推荐环境</h6>
+                    <ul class="mb-3">
+                        <li>Elasticsearch 7.x 或 8.x</li>
+                        <li>站点机能访问 ES 主机地址，例如 <code>http://127.0.0.1:9200</code></li>
+                        <li>如果开启认证，准备好账号密码，或 API Key</li>
+                    </ul>
+
+                    <h6>二、Docker 快速启动示例</h6>
+                    <p class="text-muted small mb-2">单机测试可先用下面这条命令启动：</p>
+                    <pre class="bg-light border rounded p-3 small"><code>docker run -d --name nncms-es \
+  -p 9200:9200 -p 9300:9300 \
+  -e "discovery.type=single-node" \
+  -e "xpack.security.enabled=false" \
+  -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
+  elasticsearch:8.14.3</code></pre>
+
+                    <h6>三、本页该怎么填</h6>
+                    <ul class="mb-3">
+                        <li><strong>ES主机</strong>：例如 <code>http://127.0.0.1:9200</code></li>
+                        <li><strong>ES索引</strong>：建议用站点专属索引名，例如 <code>nncms_vod</code></li>
+                        <li><strong>ES用户名 / ES密码</strong>：开启账号认证时填写</li>
+                        <li><strong>API Key</strong>：如果你走 API Key，就填这里；和账号密码二选一即可</li>
+                    </ul>
+
+                    <h6>四、接入顺序</h6>
+                    <ol class="mb-3 ps-3">
+                        <li>点「设置ES」保存主机、索引和认证信息</li>
+                        <li>点「创建索引」初始化索引结构</li>
+                        <li>点「批量写入」把现有视频标题灌入 ES</li>
+                        <li>确认无误后，再把当前状态切到“开启”</li>
+                    </ol>
+
+                    <h6>五、常见排查</h6>
+                    <ul class="mb-0">
+                        <li>主机不可达：先在服务器上确认 ES 端口能连通</li>
+                        <li>账号认证失败：检查用户名、密码或 API Key 是否正确</li>
+                        <li>创建索引失败：确认 ES 账号具备创建索引权限</li>
+                        <li>批量写入后搜不到：确认已经执行过「批量写入」，并且 ES 开关已开启</li>
+                    </ul>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">我知道了</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ES 设置 Modal -->
+    <div class="modal fade" id="es_manage" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">ES 设置</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form action="<?php echo url('set-es', array(), TRUE); ?>" method="post" class="ajaxform">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                        <div class="mb-3">
+                            <label class="form-label">ES主机</label>
+                            <input type="text" class="form-control" name="host" value="<?php echo xn_h($conf['es']['host']); ?>">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">ES索引</label>
+                            <input type="text" class="form-control" name="index" value="<?php echo xn_h($conf['es']['index']); ?>">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">ES用户名</label>
+                            <input type="text" class="form-control" name="user" value="<?php echo xn_h($conf['es']['user']); ?>">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">ES密码</label>
+                            <input type="password" class="form-control" name="pass" value="<?php echo xn_h($conf['es']['pass']); ?>" autocomplete="new-password">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">API Key（可选）</label>
+                            <input type="password" class="form-control" name="apikey" value="<?php echo xn_h($conf['es']['api_key']); ?>" autocomplete="new-password">
+                        </div>
+                        <div class="modal-footer px-0 pb-0">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

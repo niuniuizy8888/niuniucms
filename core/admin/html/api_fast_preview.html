@@ -1,0 +1,182 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+                <h3 class="card-title">导入前预览</h3>
+                <div class="card-actions">
+                    <a href="<?php echo url('api-fastapi', array(), TRUE); ?>" class="btn btn-light btn-sm">返回快速采集</a>
+                    <a href="<?php echo url('api-batch', array(), TRUE); ?>" class="btn btn-info btn-sm">采集批次</a>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-4">
+                    <div class="col-md-3"><div class="border rounded p-3">总条数<br><strong><?php echo intval($preview['total'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-3"><div class="border rounded p-3 text-success">可导入<br><strong><?php echo intval($preview['importable'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-2"><div class="border rounded p-3 text-primary">可更新<br><strong><?php echo intval($preview['updatable'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-2"><div class="border rounded p-3 text-warning">无变化<br><strong><?php echo intval($preview['unchanged'] ?? 0); ?></strong></div></div>
+                    <div class="col-md-2"><div class="border rounded p-3 text-danger">未绑定分类<br><strong><?php echo intval($preview['unbound'] ?? 0); ?></strong></div></div>
+                </div>
+
+                <?php if (!empty($preview['unbound_types'])) { ?>
+                <div class="alert alert-warning">
+                    以下资源站分类尚未绑定到本地分类，相关内容当前不会入库：
+                    <div class="mt-2">
+                        <?php foreach ($preview['unbound_types'] as $type_name) { ?>
+                        <span class="badge bg-warning text-dark me-1"><?php echo htmlspecialchars($type_name, ENT_QUOTES, 'UTF-8'); ?></span>
+                        <?php } ?>
+                    </div>
+                </div>
+                <?php } ?>
+
+                <div class="d-flex gap-2 flex-wrap mb-4">
+                    <form action="<?php echo url('api-fastdb', array(), TRUE); ?>" method="post">
+                        <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($safe_token, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="stage" value="prepare">
+                        <input type="hidden" name="code" value="<?php echo htmlspecialchars($code, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="limit" value="<?php echo intval($limit); ?>">
+                        <div class="mb-3">
+                            <div class="form-label fw-bold">更新策略</div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="update_mode" id="update_mode_skip" value="skip" <?php echo $update_mode === 'update' ? '' : 'checked'; ?>>
+                                <label class="form-check-label" for="update_mode_skip">仅新增内容，已存在或有差异的内容全部跳过</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="update_mode" id="update_mode_update" value="update" <?php echo $update_mode === 'update' ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="update_mode_update">新增并更新差异字段（封面、简介、播放地址等）</label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold" for="update_scope">更新范围</label>
+                            <select class="form-select" name="update_scope" id="update_scope">
+                                <?php foreach ($update_scope_options as $scope_key => $scope_label) { ?>
+                                <option value="<?php echo htmlspecialchars($scope_key, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $update_scope === $scope_key ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($scope_label, ENT_QUOTES, 'UTF-8'); ?>
+                                </option>
+                                <?php } ?>
+                            </select>
+                            <div class="form-text">预览中的“可更新样本”和差异字段，会随这里的范围变化。</div>
+                        </div>
+                        <button type="submit" class="btn btn-primary" <?php echo (intval($preview['importable'] ?? 0) + intval($preview['updatable'] ?? 0)) <= 0 ? 'disabled' : ''; ?>>确认开始导入</button>
+                    </form>
+                    <form action="<?php echo url('api-fastdb', array(), TRUE); ?>" method="post" class="d-inline-block">
+                        <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($safe_token, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="stage" value="preview">
+                        <input type="hidden" name="code" value="<?php echo htmlspecialchars($code, ENT_QUOTES, 'UTF-8'); ?>">
+                        <input type="hidden" name="limit" value="<?php echo intval($limit); ?>">
+                        <input type="hidden" name="update_mode" value="<?php echo htmlspecialchars($update_mode, ENT_QUOTES, 'UTF-8'); ?>">
+                        <div class="d-flex gap-2 align-items-end">
+                            <div>
+                                <label class="form-label">切换预览范围</label>
+                                <select class="form-select" name="update_scope">
+                                    <?php foreach ($update_scope_options as $scope_key => $scope_label) { ?>
+                                    <option value="<?php echo htmlspecialchars($scope_key, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $update_scope === $scope_key ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($scope_label, ENT_QUOTES, 'UTF-8'); ?>
+                                    </option>
+                                    <?php } ?>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-outline-primary">刷新预览</button>
+                        </div>
+                    </form>
+                    <a class="btn btn-outline-secondary" href="<?php echo url('api-fastapi', array(), TRUE); ?>">重新选择</a>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-lg-3">
+                        <div class="card h-100">
+                            <div class="card-header"><div class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div><h5 class="mb-0">可导入样本</h5></div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead><tr><th>名称</th><th>分类</th></tr></thead>
+                                        <tbody>
+                                            <?php if (!empty($preview['samples']['importable'])) { foreach ($preview['samples']['importable'] as $item) { ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($item['vod_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                                <td><?php echo htmlspecialchars($item['type_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                            </tr>
+                                            <?php } } else { ?>
+                                            <tr><td colspan="2" class="text-center text-muted">暂无可导入样本</td></tr>
+                                            <?php } ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3">
+                        <div class="card h-100">
+                            <div class="card-header"><div class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3"/><path d="M22 12.5a10 10 0 0 1-18.8 4.2"/></svg></div><h5 class="mb-0">可更新样本</h5></div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead><tr><th>名称</th><th>差异字段</th></tr></thead>
+                                        <tbody>
+                                            <?php if (!empty($preview['samples']['updatable'])) { foreach ($preview['samples']['updatable'] as $item) { ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($item['vod_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                                <td><?php echo htmlspecialchars(implode('、', $item['diff_fields'] ?? array()), ENT_QUOTES, 'UTF-8'); ?></td>
+                                            </tr>
+                                            <?php } } else { ?>
+                                            <tr><td colspan="2" class="text-center text-muted">暂无可更新样本</td></tr>
+                                            <?php } ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3">
+                        <div class="card h-100">
+                            <div class="card-header"><div class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg></div><h5 class="mb-0">无变化样本</h5></div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead><tr><th>名称</th><th>分类</th></tr></thead>
+                                        <tbody>
+                                            <?php if (!empty($preview['samples']['unchanged'])) { foreach ($preview['samples']['unchanged'] as $item) { ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($item['vod_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                                <td><?php echo htmlspecialchars($item['type_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                            </tr>
+                                            <?php } } else { ?>
+                                            <tr><td colspan="2" class="text-center text-muted">暂无无变化样本</td></tr>
+                                            <?php } ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3">
+                        <div class="card h-100">
+                            <div class="card-header"><div class="card-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div><h5 class="mb-0">未绑定分类样本</h5></div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead><tr><th>名称</th><th>资源站分类</th></tr></thead>
+                                        <tbody>
+                                            <?php if (!empty($preview['samples']['unbound'])) { foreach ($preview['samples']['unbound'] as $item) { ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($item['vod_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                                <td><?php echo htmlspecialchars($item['type_name'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                            </tr>
+                                            <?php } } else { ?>
+                                            <tr><td colspan="2" class="text-center text-muted">暂无未绑定样本</td></tr>
+                                            <?php } ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-muted mt-3">当前已支持字段级差异预览、更新范围控制，以及“仅新增 / 新增并更新差异字段”两种策略；本轮仍不做字段级冲突优先级混合规则。</div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

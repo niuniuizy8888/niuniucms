@@ -1,0 +1,45 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
+                <h3 class="card-title">在线升级</h3>
+            </div>
+            <div class="card-body">
+                <form action="<?php echo url('set-upgrade', '', TRUE);?>" method="post" id="form">
+                    <?php echo $input['safe_token'];?>
+                    <?php echo $input['upgrade'];?>
+                    <div class="mt-4">
+                        <button type="submit" class="btn btn-primary" id="submit" data-loading-text="升级中...">立即升级</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var jform = $('#form');
+jform.on('submit', function() {
+    jform.reset();
+    var jthis = $(this);
+    var jsubmit = jthis.find('#submit');
+    jsubmit.button('loading');
+    var postdata = jform.serialize();
+    $.xpost(jform.attr('action'), postdata, function(code, message, res) {
+        jsubmit.button('reset');
+        if(code == 0) {
+            $.alert(message);
+            /* 服务端 SetManageService::upgrade 返回 jump($msg, url('set-upgrade'), 3)，跳转脚本由
+               misc.php::message() 白名单提取到 res.jump_script；$.xpost 已透传完整响应。
+               这里执行它，修复"升级成功却停在原页"（原实现丢弃了服务端跳转意图）。 */
+            if (res && res.jump_script) { $('body').append(res.jump_script); }
+        }
+        else { $.alert(message || '升级失败'); }
+    });
+    return false;
+});
+</script>

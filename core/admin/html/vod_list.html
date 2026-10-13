@@ -1,0 +1,255 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <form method="get" action="<?php echo htmlspecialchars($conf['admin_entry'] ?? 'admin.php', ENT_QUOTES, 'UTF-8'); ?>" class="list-toolbar">
+                    <input type="hidden" name="0" value="vod">
+                    <input type="hidden" name="1" value="list">
+                    <div class="toolbar-group">
+                        <label>分类</label>
+                        <select class="form-control" name="cid">
+                            <option value="0"><?php echo 'sticky'==$route?lang('top_3'):lang('select'); ?></option>
+                            <?php if(!empty($columnlist)){foreach ($columnlist as $v) { ?>
+                            <option value="<?php echo $v['cid']; ?>" <?php if ($cid == $v['cid']) echo 'selected'; ?>><?php echo htmlspecialchars($v['name'], ENT_QUOTES, 'UTF-8'); ?></option>
+                            <?php }} ?>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>推荐状态</label>
+                        <select class="form-control" name="sticky">
+                            <option value="-1" <?php if (empty($filter) || $filter['sticky'] < 0) echo 'selected'; ?>>全部</option>
+                            <option value="1" <?php if (!empty($filter) && $filter['sticky'] == 1) echo 'selected'; ?>>仅推荐</option>
+                            <option value="0" <?php if (!empty($filter) && $filter['sticky'] == 0) echo 'selected'; ?>>未推荐</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>时间范围</label>
+                        <select class="form-control" name="range">
+                            <option value="" <?php if (empty($filter['range'])) echo 'selected'; ?>>全部时间</option>
+                            <option value="today" <?php if (!empty($filter['range']) && $filter['range'] == 'today') echo 'selected'; ?>>今天</option>
+                            <option value="7d" <?php if (!empty($filter['range']) && $filter['range'] == '7d') echo 'selected'; ?>>7天内</option>
+                            <option value="30d" <?php if (!empty($filter['range']) && $filter['range'] == '30d') echo 'selected'; ?>>30天内</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>每页数量</label>
+                        <select class="form-control" name="pagesize">
+                            <?php foreach (array(20, 50, 100) as $_size) { ?>
+                            <option value="<?php echo $_size; ?>" <?php if (!empty($filter) && intval($filter['pagesize']) == $_size) echo 'selected'; ?>><?php echo $_size; ?>/页</option>
+                            <?php } ?>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>关键词</label>
+                        <input type="text" id="keyword" class="form-control" placeholder="搜索视频名称…" name="keyword" value="<?php if(!empty($keyword)) { ?><?php echo htmlspecialchars($keyword);?><?php } ?>" style="min-width:160px;">
+                    </div>
+                    <div class="toolbar-group" style="align-self:flex-end;">
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">筛选</button>
+                            <a href="<?php echo url('vod-list', '', TRUE); ?>" class="btn btn-secondary">重置</a>
+                        </div>
+                    </div>
+                </form>
+
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">视频列表</h3>
+                <div class="ms-auto d-flex gap-2 align-items-center">
+                    <div class="card-actions">
+                        <form method="post" action="<?php echo url('vod-poster', '', TRUE); ?>" style="display:inline;">
+                            <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($poster_token ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                            <button type="submit" class="btn btn-primary btn-sm"><svg style="margin:-2px 4px 0 0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>海报更新</button>
+                        </form>
+                    </div>
+                    
+                    <label class="d-flex align-items-center gap-1 mb-0 cursor-pointer user-select-none">
+                        <input type="checkbox" data-target='input[name="delete"]' class="checkall"> 全选
+                    </label>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive" style="margin:0;padding:0;">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th class="text-center" style="width:40px;"></th>
+                                <th class="text-center" style="width:60px;">VID</th>
+                                <th>名称</th>
+                                <th class="text-center">分类</th>
+                                <th class="text-center">推荐</th>
+                                <th class="text-center">图片</th>
+                                <th>标签</th>
+                                <th class="text-center">播放组</th>
+                                <th class="text-center">添加时间</th>
+                                <th class="text-center" style="width:180px;">管理</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vodlist">
+                            <?php $page_modals = ''; ?>
+                            <?php if($videolist) { foreach($videolist as &$_video) { ?>
+                            <tr vid="<?php echo $_video['vid']; ?>">
+                                <td class="text-center">
+                                    <input type="checkbox" name="delete" value="<?php echo $_video['vid']; ?>">
+                                </td>
+                                <td class="text-center text-muted font-monospace" style="font-size:12px;">#<?php echo $_video['vid'];?></td>
+                                <td>
+                                    <?php if(($_video['sticky'] ?? 0) > 0) { ?><span class="badge bg-danger me-1">荐</span><?php } ?>
+                                    <a class="fw-semibold" target="_blank" href="<?php echo ($conf['url_rewrite_on'] < 2 ? '../' : ''),htmlspecialchars($_video['url'], ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($_video['name'], ENT_QUOTES, 'UTF-8');?></a>
+                                </td>
+                                <td class="text-center"><span class="badge bg-secondary"><?php echo htmlspecialchars($_video['cate_name'], ENT_QUOTES, 'UTF-8');?></span></td>
+                                <td class="text-center">
+                                    <?php if(($_video['sticky'] ?? 0) > 0) { ?>
+                                    <span class="badge bg-danger">已推荐</span>
+                                    <?php } else { ?>
+                                    <span class="badge bg-secondary">普通</span>
+                                    <?php } ?>
+                                </td>
+                                <td class="text-center">
+                                    <a href="<?php echo htmlspecialchars($_video['pic'], ENT_QUOTES, 'UTF-8'); ?>" class="gallery-item" data-lg-size="1406-1390" data-sub-html="<h4><?php echo htmlspecialchars($_video['name'], ENT_QUOTES, 'UTF-8'); ?></h4>">
+                                        <img alt="image" style="width:44px;height:44px;object-fit:cover;border-radius:6px;" src="<?php echo htmlspecialchars($_video['pic'], ENT_QUOTES, 'UTF-8'); ?>">
+                                    </a>
+                                </td>
+                                <td>
+                                    <?php if($_video['tag']){?>
+                                    <div class="tags">
+                                        <?php foreach($_video['tag_fmt'] as $key => $_tag) { ?>
+                                        <span class="tag"><a target="_blank" href="<?php echo ($conf['url_rewrite_on'] < 2 ? '../' : ''),url($conf['route']['tag'].'-'.$key, '', 2);?>"><?php echo htmlspecialchars($_tag, ENT_QUOTES, 'UTF-8');?></a></span>
+                                        <?php }?>
+                                    </div>
+                                    <?php }?>
+                                </td>
+                                <td class="text-center"><span class="text-sm text-muted"><?php echo htmlspecialchars($_video['play_from'], ENT_QUOTES, 'UTF-8');?></span></td>
+                                <td class="text-center text-sm text-muted"><?php echo $_video['create_date_fmt_ymd'];?></td>
+                                <td class="text-center">
+                                    <div class="d-flex gap-1 justify-content-center">
+                                        <a class="icon-btn" title="编辑" href="<?php echo url('vod-update',array('vid'=>$_video['vid']),true);?>"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
+                                        <a class="icon-btn danger del-one" title="删除" href="javascript:void(0);" data-vid="<?php echo $_video['vid'];?>"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></a>
+                                        <button class="btn btn-sm btn-secondary" data-bs-toggle="modal" data-bs-target="#input-modal<?php echo $_video['vid']; ?>" type="button">推荐</button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php
+                            ob_start();
+                            ?>
+                            <div class="modal fade" id="input-modal<?php echo $_video['vid']; ?>">
+                                <div class="modal-dialog modal-sm" role="document">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h6 class="modal-title">推荐等级</h6>
+                                            <button class="btn-close" data-bs-dismiss="modal" aria-label="Close">×</button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <form action="<?php echo url('vod-sticky', '', true);?>" method="post" id="mode_sticky_form">
+                                                <input type="hidden" name="vid" value="<?php echo $_video['vid'];?>">
+                                                <input type="hidden" name="cid" value="<?php echo $_video['cid'];?>">
+                                                <input type="hidden" name="safe_token" value="<?php echo $safe_token;?>">
+                                                <p class="mb-3 fw-semibold"><?php echo htmlspecialchars($_video['name'], ENT_QUOTES, 'UTF-8');?></p>
+                                                <div class="d-flex gap-3 mb-3">
+                                                    <label><input type="radio" name="sticky" value="0" checked> 普通</label>
+                                                    <label><input type="radio" name="sticky" value="1"> 推荐</label>
+                                                </div>
+                                                <button type="submit" class="btn btn-primary w-100" data-loading-text="提交中...">确定</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php $page_modals .= ob_get_clean(); ?>
+                            <?php }} else { ?>
+                            <tr><td colspan="10">
+                                <div class="empty-state">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                                    <h4>暂无视频</h4>
+                                    <p>当前筛选条件下没有找到视频数据</p>
+                                </div>
+                            </td></tr>
+                            <?php } ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <?php if ($pagination) { ?>
+            <div class="card-footer">
+                <nav><ul class="pagination"><?php echo $pagination; ?></ul></nav>
+            </div>
+            <?php } ?>
+        </div>
+
+    </div>
+    <?php echo $page_modals; ?>
+</div>
+
+        <!-- 批量操作浮条（勾选行后浮现） -->
+        <div class="batch-bar" id="batchBar">
+            <span class="batch-count">已选 <strong id="batchCount">0</strong> 项</span>
+            <select class="form-control form-control-sm" id="batch_action" style="width:auto;max-width:150px;">
+                <option value="">批量操作</option>
+                        <option value="delete">批量删除</option>
+                        <option value="sticky_on">设为推荐</option>
+                        <option value="sticky_off">取消推荐</option>
+            </select>
+            <button class="btn btn-danger btn-sm" id="confirm">删除</button>
+            <button class="btn btn-primary btn-sm" id="batch_submit">执行</button>
+            <button class="btn btn-ghost btn-sm" id="batch_cancel">取消</button>
+        </div>
+
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+
+<script>
+$('.mod-button button').each(function () {
+    var modal_url = $(this).attr('data-modal-url');
+    if (url_rewrite_on < 2) $(this).attr('data-modal-url', '../' + modal_url);
+});
+
+var jconfirm = $("#confirm");
+var jbatch = $("#batch_submit");
+var jbatchAction = $("#batch_action");
+var jvodlist = $('#vodlist');
+function selectedVodIds() {
+    return jvodlist.find('input[name="delete"]').filter(function(){ return this.checked; }).map(function(){ return $(this).val(); }).get();
+}
+function executeVodBatch(action) {
+    var ids = selectedVodIds();
+    if(ids.length < 1) { window.showToast("<?php echo lang('please_check_delete_vod');?>", 'warning'); return; }
+    if(action == 'delete' && !window.confirm("<?php echo lang('vod_delete_confirm');?>")) return false;
+    $.xpost(xn.url('vod-batch', '', true), {ids: ids.join(','), batch_action: action, safe_token: '<?php echo $safe_token; ?>'}, function (code, message) {
+        if (code == 0) {
+            $.alert(message, 1);
+            window.setTimeout(function(){ window.location.reload(); }, 800);
+        } else {
+            $.alert(message);
+        }
+    });
+}
+jconfirm.on('click', function(){ executeVodBatch('delete'); });
+jbatch.on('click', function () {
+    var action = jbatchAction.val();
+    if(!action) { window.showToast('请选择批量操作', 'warning'); return; }
+    executeVodBatch(action);
+});
+$('body').on('click', 'a.del-one', function(){
+    if(!window.confirm("<?php echo lang('vod_delete_confirm');?>")) return false;
+    var vid = $(this).data('vid'), jtr = $(this).parents('tr');
+    $.xpost(xn.url('vod-del', '', true), {vid: vid, safe_token: '<?php echo $safe_token??''; ?>'}, function(code, message){
+        if(code == 0){ jtr.remove(); } else { $.alert(message); }
+    });
+    return false;
+});
+
+/* 批量浮条联动（v6.3） */
+function syncBatchBar() {
+    var ids = selectedVodIds();
+    $('#batchCount').text(ids.length);
+    $('#batchBar').toggleClass('show', ids.length > 0);
+    var total = jvodlist.find('input[name="delete"]').length;
+    if (total) $('.checkall').prop('checked', ids.length === total);
+}
+jvodlist.on('change', 'input[name="delete"]', syncBatchBar);
+$(document).on('change', '.checkall', function () { setTimeout(syncBatchBar, 0); });
+$('#batch_cancel').on('click', function () {
+    jvodlist.find('input[name="delete"]:checked').prop('checked', false);
+    $('.checkall').prop('checked', false);
+    syncBatchBar();
+});
+</script>

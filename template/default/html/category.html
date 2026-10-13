@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    {inc:public/include.html}
+</head>
+<body>
+    <div class="relative w-full h-full flex flex-col overflow-y-auto overflow-x-hidden scroll-pt-[6px]">
+        <div class="z-50 sticky top-0 w-screen">
+        {inc:public/head.html}
+        </div>
+        <div class="w-full grow pt-4">
+            <div class="container mx-auto px-4">
+                <div class="flex flex-col w-full">
+                    {inc:public/slide.html}
+                    <div class="py-3">
+                        {inc:public/cate_nva.html}
+                    </div>
+                    <div>
+                        {inc:public/vod_lists.html}
+                        {inc:public/vod_list.html}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {inc:public/foot.html}
+    </div>
+</body>
+</html>

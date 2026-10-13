@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=0'>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title><?php echo xn_h($header['title'] ?? '提示');?></title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
+</head>
+<body>
+<style>
+.message-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--nn-bg); padding: 24px; }
+.message-card { max-width: 440px; width: 100%; background: var(--nn-surface); border: 1px solid var(--nn-border); border-radius: var(--nn-radius-xl); box-shadow: var(--nn-shadow-lg); padding: 48px 40px; text-align: center; animation: fadeInUp 0.3s ease-out; }
+.message-icon-wrap { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
+.message-icon-wrap.success { background: var(--nn-success-light); }
+.message-icon-wrap.warning { background: var(--nn-warning-light); }
+.message-icon-wrap.error { background: var(--nn-danger-light); }
+.message-icon-wrap.info { background: var(--nn-info-light); }
+.message-icon-wrap svg { width: 36px; height: 36px; }
+.message-icon-wrap.success svg { color: var(--nn-success); }
+.message-icon-wrap.warning svg { color: var(--nn-warning); }
+.message-icon-wrap.error svg { color: var(--nn-danger); }
+.message-icon-wrap.info svg { color: var(--nn-info); }
+.message-title { font-size: 20px; font-weight: 700; color: var(--nn-text); margin: 0 0 12px; }
+.message-text { font-size: 15px; line-height: 1.6; color: var(--nn-text-secondary); margin: 0 0 28px; word-break: break-word; }
+.message-back-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 42px; padding: 0 24px; font-size: 15px; font-weight: 500; border-radius: var(--nn-radius); background: var(--nn-primary); color: #fff; text-decoration: none; transition: background 0.15s; }
+.message-back-btn:hover { background: var(--nn-primary-hover); color: #fff; }
+</style>
+<?php
+$type = $arr['type'] ?? 'info';
+$titles = array(
+    'success' => '操作成功',
+    'warning' => '操作警告',
+    'error'   => '操作失败',
+    'info'    => '提示信息',
+);
+$icons = array(
+    'success' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+    'warning' => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    'error'   => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    'info'    => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+);
+?>
+<div class="message-page">
+    <div class="message-card">
+        <div class="message-icon-wrap <?php echo in_array($type, array('success', 'warning', 'error', 'info'), TRUE) ? $type : 'info'; ?>">
+            <?php echo $icons[$type] ?? $icons['info']; ?>
+        </div>
+        <h4 class="message-title"><?php echo $titles[$type] ?? '提示'; ?></h4>
+        <p class="message-text"><?php echo htmlspecialchars(is_array($arr['message']) ? print_r($arr['message'], 1) : $arr['message'], ENT_QUOTES, 'UTF-8');?></p>
+        <a href="javascript:void(0);" onclick="if(history.length>1){history.back();}else{location.href=<?php echo xn_h(json_encode($conf['path'] ?? '/', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE));?>;}" class="message-back-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            返回上一页
+        </a>
+    </div>
+</div>
+<?php /* 仅允许上游白名单生成的脚本，勿改为可传入原始 HTML */ ?>
+<?php echo $arr['jump_script'] ?? ''; ?>
+</body>
+</html>

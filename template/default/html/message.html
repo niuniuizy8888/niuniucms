@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    {inc:public/include.html}
+    <meta name="robots" content="noindex,nofollow">
+</head>
+<body>
+<div
+  class="relative w-full h-full flex flex-col overflow-y-auto overflow-x-hidden scroll-pt-[6px]"
+  style="align-items: center"
+>
+  <div class="z-50 sticky top-0 w-screen">
+            {inc:public/head.html}
+        </div>
+  <div class="w-full grow flex flex-col items-center justify-center text-[var(--text-tertiary)]" style="min-height: 60vh;">
+       {$msg}
+      <a href="/" class="mt-5 px-6 py-2 rounded-full bg-[var(--color-primary)] text-[var(--bg-base)] font-semibold cursor-pointer hover:bg-[var(--color-primary-hover)] transition-colors duration-200">返回首页</a>
+  </div>
+   {inc:public/foot.html}
+</div>
+</body>
+</html>

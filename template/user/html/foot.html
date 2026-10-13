@@ -1,0 +1,19 @@
+<footer class="content-footer">
+    <p style="margin:0;color:var(--nn-text3);font-size:13px;">
+        Copyright &copy; 2026 <a href="/" style="color:var(--nn-text2);"><?php echo APP_NAME;?></a>. All Rights Reserved
+    </p>
+</footer>
+</div>
+<script src="/static/js/jquery.min.js"></script>
+<script src="/static/js/bootstrap.bundle.min.js"></script>
+<script src="/template/user/dist/js/app.min.js"></script>
+<script src="/static/js/app.js"></script>
+<script>
+    var debug = DEBUG = 0;
+    var cid = <?php echo $cid ?? 0;?>;
+    var url_rewrite_on = <?php echo $conf['url_rewrite_on'] ?? 0;?>;
+    var url_access = true;
+    var url_path = '<?php echo $conf['path'] ?? './';?>';
+</script>
+</body>
+</html>

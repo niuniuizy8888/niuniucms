@@ -1,0 +1,99 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+                <div class="card-title"><?php echo lang('cate_title');?></div>
+            </div>
+            <div class="card-body">
+                <form action="<?php echo url('cate-update','',true);?>" method="post" id="form" style="max-width:600px;">
+                    <input type="hidden" name="cid" value="<?php echo $_cid;?>">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">分类名称 <span class="text-danger">*</span></label>
+                            <input type="text" name="name" class="form-control" value="<?php echo $name;?>" placeholder="分类名称">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">URL别名 <span class="text-danger">*</span></label>
+                            <input type="text" name="alias" class="form-control" value="<?php echo $alias;?>" placeholder="URL别名">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">类型</label>
+                            <select name="model" class="form-control">
+                                <option value="0" selected>视频</option>
+                                <option value="1">文章</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">栏目类型</label>
+                            <select name="cate_type" id="cate_type" class="form-control">
+                                <option value="1" <?php echo (($cate_type ?? 1) == 1) ? 'selected' : ''; ?>>频道（含下级分类）</option>
+                                <option value="2" <?php echo (($cate_type ?? 1) == 2) ? 'selected' : ''; ?>>单页（独立内容页）</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6" id="parent_box">
+                            <label class="form-label">上级分类</label>
+                            <select name="category" class="form-control">
+                                <option value="0" selected>顶级分类</option>
+                                <?php if ($arrlist) { foreach($arrlist as $_cid=>$_cate) { ?>
+                                <option value="<?php echo $_cid;?>" <?php echo (($cup ?? 0) == $_cid) ? 'selected' : ''; ?>><?php echo $_cate['name'];?></option>
+                                <?php }} ?>
+                            </select>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label">SEO 元数据 / 单页 URL 标识</label>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <input type="text" name="seo_title" class="form-control" value="<?php echo $seo_title ?? ''; ?>" placeholder="SEO 标题（留空则用栏目名）">
+                                </div>
+                                <div class="col-md-6">
+                                    <input type="text" name="seo_key" class="form-control" value="<?php echo $seo_key ?? ''; ?>" placeholder="SEO 关键词（逗号分隔）">
+                                </div>
+                                <div class="col-md-12">
+                                    <input type="text" name="seo_des" id="seo_des" class="form-control" value="<?php echo $seo_des ?? ''; ?>" placeholder="URL 标识：单页唯一入口 page-&lt;标识&gt;（仅字母/数字/下划线，如 about；频道可留空作 SEO 描述）">
+                                    <div class="form-text">⚠ 单页必填且全站唯一：含 <code>-</code>、空格或中文会因伪静态解析规则导致链接 404（保存时已校验）。</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-12" id="content_box" style="display:<?php echo (($cate_type ?? 1) == 2) ? 'block' : 'none'; ?>;">
+                            <label class="form-label">单页正文（HTML 白名单过滤后入库）</label>
+                            <textarea name="content" class="form-control" rows="14" placeholder="支持 HTML：段落/标题/图片/链接等（协议受限，脚本/事件属性会被过滤）"><?php echo $content ?? ''; ?></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">导航显示</label>
+                            <div class="d-flex gap-3">
+                                <label><input type="radio" name="nav_display" value="1" checked> 是</label>
+                                <label><input type="radio" name="nav_display" value="0"> 否</label>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary mt-4" id="submit">保存</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+var jform = $("#form");
+// 单页/频道切换：单页隐藏上级分类、显示正文；频道反之
+function cateTypeToggle(){
+    var isPage = ($("#cate_type").val() == "2");
+    $("#parent_box").toggle(!isPage);
+    $("#content_box").toggle(isPage);
+}
+$("#cate_type").on('change', cateTypeToggle);
+jform.on('submit', function(){
+    jform.reset();
+    var jsubmit = jform.find('#submit');
+    jsubmit.button('loading');
+    var postdata = jform.serialize();
+    $.xpost(jform.attr('action'), postdata, function(code, message) {
+        if(code == 0) { $.alert(message); jsubmit.text(message).delay(1000).location(xn.url('cate-list', '', true)); }
+        else { $.alert(message); jsubmit.button('reset'); }
+    });
+    return false;
+});
+</script>

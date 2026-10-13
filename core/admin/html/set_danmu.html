@@ -1,0 +1,99 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <h3 class="card-title">弹幕设置</h3>
+            </div>
+            <div class="card-body">
+                <form action="<?php echo url('set-danmu', '', TRUE);?>" method="post" id="form" class="ajaxform">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+
+                    <div class="form-section">
+                        <h4 class="form-section-title"><span class="dot"></span>弹幕功能</h4>
+                        <div class="row g-4">
+                            <div class="col-md-4">
+                                <label class="form-label"><?php echo lang('on');?></label>
+                                <?php echo $input['on'];?>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label"><?php echo lang('danmu_toggle');?></label>
+                                <?php echo $input['danmu_toggle'];?>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label"><?php echo lang('selec_col');?></label>
+                                <?php echo $input['selec_col'];?>
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-3 mb-0">
+                            播放器依赖（artplayer / hls.js / jQuery 及其插件）<b>一律从本站
+                            <code>/static/</code> 加载，不引用任何公共 CDN</b>，避免 CDN 被投毒导致前台任意脚本执行。
+                            原「CDN 开关」已移除。如需更换播放器版本，请直接替换
+                            <code>static/danmuku/</code> 与 <code>static/js/</code> 下的本地文件。
+                        </p>
+                    </div>
+
+                    <div class="form-section">
+                        <h4 class="form-section-title"><span class="dot"></span>开始广告</h4>
+                        <div class="row g-4">
+                            <div class="col-md-3">
+                                <label class="form-label"><?php echo lang('start_ad_on');?></label>
+                                <?php echo $input['start_ad_on'];?>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label"><?php echo lang('start_ad');?></label>
+                                <?php echo $input['start_ad'];?>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label"><?php echo lang('start_img_ad');?></label>
+                                <?php echo $input['start_img_ad'];?>
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label"><?php echo lang('start_mp4_ad');?></label>
+                                <?php echo $input['start_mp4_ad'];?>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label"><?php echo lang('start_ad_url');?></label>
+                                <?php echo $input['start_ad_url'];?>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label"><?php echo lang('start_all_time');?></label>
+                                <?php echo $input['start_all_time'];?>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label"><?php echo lang('start_close_time');?></label>
+                                <?php echo $input['start_close_time'];?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <h4 class="form-section-title"><span class="dot"></span>暂停广告</h4>
+                        <div class="row g-4">
+                            <div class="col-md-3">
+                                <label class="form-label"><?php echo lang('pause_ad');?></label>
+                                <?php echo $input['pause_ad'];?>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label"><?php echo lang('stop_ad');?></label>
+                                <?php echo $input['stop_ad'];?>
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label"><?php echo lang('stop_ad_url');?></label>
+                                <?php echo $input['stop_ad_url'];?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-end mt-4 pt-3" style="border-top:1px solid var(--nn-border-light);">
+                        <button type="submit" class="btn btn-primary" id="submit" data-loading-text="保存中...">保存设置</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

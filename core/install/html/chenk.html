@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>牛牛CMS - 系统检查</title>
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/install.css" rel="stylesheet">
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="row justify-content-center">
+        <div class="col-lg-10 col-xl-8">
+          <div class="install-card">
+            <div class="install-card-head">
+              <a class="install-logo" target="_blank" href="../"><img src="../static/logo.png" alt="牛牛CMS"></a>
+              <h2><?php echo lang('step_1_title');?></h2>
+            </div>
+            <div class="install-steps">
+              <div class="step-item done"><span class="step-dot">✓</span>许可协议</div>
+              <div class="step-line done"></div>
+              <div class="step-item active"><span class="step-dot">2</span>环境检测</div>
+              <div class="step-line"></div>
+              <div class="step-item"><span class="step-dot">3</span>数据库设置</div>
+            </div>
+            <div class="install-card-body">
+              <div class="table-responsive">
+                <table class="table table-bordered install-table align-middle">
+                  <thead class="text-center">
+                    <tr>
+                      <th width="220" class="text-start"><?php echo lang('runtime_env_check');?></th>
+                      <th width="100"><?php echo lang('required');?></th>
+                      <th width="120"><?php echo lang('current');?></th>
+                      <th width="130"><?php echo lang('check_result');?></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php foreach($env as $v) { ?>
+                    <tr class="text-center">
+                      <td class="text-start"><?php echo xn_h($v['name']);?></td>
+                      <td><?php echo xn_h($v['need']);?></td>
+                      <td><?php echo xn_h($v['current']);?></td>
+                      <td>
+                        <?php if($v['status'] == 1) { ?>
+                          <span class="badge badge-pass">✓ <?php echo lang('passed');?></span>
+                        <?php } elseif($v['status'] == 2) { ?>
+                          <span class="badge badge-warn" title="<?php echo xn_h(lang('not_the_best'));?>">⚠ <?php echo lang('not_installed');?></span>
+                        <?php } elseif($v['status'] == 0) { $succeed = 0; ?>
+                          <span class="badge badge-fail">✕ <?php echo lang('not_passed');?></span>
+                        <?php } ?>
+                      </td>
+                    </tr>
+                    <?php } ?>
+                    <tr class="table-secondary text-center fw-bold">
+                      <td colspan="4" class="text-start"><?php echo lang('dir_writable_check');?></td>
+                    </tr>
+                    <?php foreach($write as $k=>$v) { ?>
+                    <tr>
+                      <td colspan="3"><?php echo xn_h($k);?></td>
+                      <td class="text-center">
+                        <?php if($v) { ?><span class="badge badge-pass">✓ <?php echo lang('writable');?></span><?php } ?>
+                        <?php if(!$v) { $succeed = 0;?><span class="badge badge-fail">✕ <?php echo lang('unwritable');?></span><?php } ?>
+                      </td>
+                    </tr>
+                    <?php } ?>
+                    <tr class="table-secondary text-center fw-bold">
+                      <td colspan="4" class="text-start"><?php echo lang('function_check');?></td>
+                    </tr>
+                    <?php foreach($funclist as $f) { ?>
+                    <tr>
+                      <td colspan="3"><?php echo xn_h($f['name']); ?>()<?php if(!$f['ok']) { ?><p class="text-small text-danger mb-0"><?php echo lang($f['tip']);?></p><?php } ?></td>
+                      <td class="text-center"><?php if($f['ok']) { ?><span class="badge badge-pass">✓ <?php echo lang('supported');?></span><?php } else { if($f['must']) $succeed = 0; ?><span class="badge badge-fail">✕ <?php echo lang('not_supported');?></span><?php } ?></td>
+                    </tr>
+                    <?php } ?>
+                  </tbody>
+                </table>
+              </div>
+              <div class="text-center mt-4">
+                <button type="button" class="btn btn-install-outline me-2" onclick="window.location.reload()"><?php echo lang('check_again');?></button>
+                <button type="button" class="btn btn-install" onclick="window.location=<?php echo xn_h(json_encode($install_entry, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE));?> + '?action=database&agree=1'" <?php echo !$succeed ? 'disabled' : '';?>><?php echo lang('next_step');?></button>
+              </div>
+            </div>
+            <div class="install-footer">牛牛CMS 安装向导</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../static/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>

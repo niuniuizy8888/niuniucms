@@ -1,0 +1,56 @@
+
+
+
+<div class="action-buttons" data-login-url="{$user_login}">
+  <!-- 点赞按钮 -->
+  <button class="action-btn like-btn" id="likeBtn"
+          data-aid="{$vid}{$aid}"
+          data-uid="{$uid}"
+          data-model="{$cate.model}"
+          data-state="{$like_state}like"
+          data-count="{$video.likes}{$art.likes}"
+          data-type="like"
+          data-api="{$user_like}"
+          data-token="{$safe_token}"
+          aria-pressed="false">
+    <span class="action-icon like-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+        <path d="M12.1 21.35l-1.1-.99C5.14 15.36 2 12.28 2 8.5 
+               2 6.02 4.02 4 6.5 4c1.74 0 3.41.81 4.5 2.09
+               C12.09 4.81 13.76 4 15.5 4 
+               17.98 4 20 6.02 20 8.5
+               c0 3.78-3.14 6.86-8.9 11.86l-1 1z"/>
+      </svg>
+    </span>
+    <span class="action-text">喜欢</span>
+    <span class="action-count" aria-hidden="true">0</span>
+  </button>
+  <!-- 收藏按钮 -->
+  <button class="action-btn fav-btn" id="favBtn"
+          data-aid="{$vid}{$aid}"
+          data-uid="{$uid}"
+          data-model="{$cate.model}"
+          data-state="{$favorite_state}favorite"
+          data-count="{$video.favorites}{$art.favorites}"
+          data-type="favorite"
+          data-api="{$user_favorite}"
+          data-token="{$safe_token}"
+          aria-pressed="false">
+    <span class="action-icon fav-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+        <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24
+               l-7.19-.61L12 2 9.19 8.63 2 9.24
+               l5.46 4.73L5.82 21z"/>
+      </svg>
+    </span>
+    <span class="action-text">收藏</span>
+    <span class="action-count" aria-hidden="true">0</span>
+  </button>
+</div>
+<div id="actionToast" class="action-toast" hidden>
+  <div class="msg" id="actionToastMsg"></div>
+  <button class="close" id="actionToastClose" aria-label="关闭提示">&times;</button>
+</div>
+
+
+<script type="text/javascript" src="{$path_tpl}js/like.js"></script>
