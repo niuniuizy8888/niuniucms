@@ -314,11 +314,23 @@ class ApiExecutionService
     }
 
     /** 明文基址请求（store 模式；来源基址在 fetchJson/fetchVideoJson 内经 core_decrypt 解出后直连） */
-    private static function remoteSyncBase($url)
+    private static function remoteSyncBase($url, bool $allowRepair = TRUE)
     {
         if ('' === trim((string)$url)) return array();
         $html = https_request($url, '', '', 30, 0, 8 * 1048576); // 传输中 8MB 上限（审查修复）
-        return xn_json_decode($html);
+        $arr = xn_json_decode($html);
+        // token 自愈：商店返回「无效 token / 站点未启用」时，尝试按当前 auth_key 补登记一次并重试。
+        // 场景：安装时漏登记、历史 auth_key 变更后商店里还是旧 token。只重试一次，避免坏配置死循环。
+        if ($allowRepair && is_array($arr)) {
+            $msg = trim((string)($arr['msg'] ?? ''));
+            if ('' !== $msg && preg_match('#无效 token|站点未启用#u', $msg)) {
+                $repair = \App\Service\System\CloudOpsService::storeInstallRegister(TRUE);
+                if (!empty($repair['ok'])) {
+                    return self::remoteSyncBase($url, FALSE);
+                }
+            }
+        }
+        return $arr;
     }
 
     /**

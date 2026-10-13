@@ -38,13 +38,7 @@ NiuNiuCMS 是一个基于 PHP + MySQL 的内容管理系统，包含前台展示
 ## 公共仓库建议忽略
 
 - `runtime/` 下的实际运行内容
-- `graphify-out/`
-- `.user.ini`
-- `404.html`
-- `core/install.lock`
-- `core/config/config.php`
-- `core/config/database.php`
-- 过程性维护记录
+
 
 这些文件通常包含运行时数据、安装状态、本地环境配置或内部维护信息。
 

@@ -220,6 +220,8 @@ if (empty($action)) {
                 'serverip' =>_SERVER('SERVER_ADDR'),
                 'cms_version' => isset($defaults['version']) ? (string)$defaults['version'] : '',
                 'php_version' => PHP_VERSION,
+                // 站点名（安装向导无站点名输入，取出厂默认 sitename，后台改名不会回写云端）
+                'sitename' => isset($defaults['sitename']) ? (string)$defaults['sitename'] : '',
                 );
             // 上报地址：只用 config.default 的 cloud_api（域名派生自 $nn_cloud_host）。
             // 【已移除】旧的 `http://example.com/?cmsinstall.html` 回退：该官方云端已停用，

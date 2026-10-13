@@ -23,6 +23,62 @@ class CloudOpsService
         return '' === $u ? '' : rtrim($u, '/') . '/';
     }
 
+    /** 当前请求站点 host（安装上报/补登记口径）；沿用安装器白名单规则，避免把脏 Host 带到商店侧。 */
+    private static function reportHost(): string
+    {
+        $host = preg_replace('#[^A-Za-z0-9._:\-]#', '', (string)_SERVER('HTTP_HOST'));
+        if ('' === $host) $host = preg_replace('#[^A-Za-z0-9._:\-]#', '', (string)_SERVER('SERVER_NAME'));
+        return (string)$host;
+    }
+
+    /** 当前请求站点 scheme（优先显式 REQUEST_SCHEME / X-Forwarded-Proto，退回 HTTPS/端口判定）。 */
+    private static function reportScheme(): string
+    {
+        $scheme = strtolower(trim((string)_SERVER('REQUEST_SCHEME')));
+        if ('http' === $scheme || 'https' === $scheme) return $scheme;
+        $proto = strtolower(trim((string)_SERVER('HTTP_X_FORWARDED_PROTO')));
+        if ('http' === $proto || 'https' === $proto) return $proto;
+        $https = strtolower(trim((string)_SERVER('HTTPS')));
+        if ('' !== $https && 'off' !== $https && '0' !== $https) return 'https';
+        return 443 === intval(_SERVER('SERVER_PORT')) ? 'https' : 'http';
+    }
+
+    /**
+     * 向商店补登记当前站点的异步采集 token。
+     *
+     * 用途：安装上报漏掉 / 历史 auth_key 变更后 token 漂移时，云端异步采集与替换下发会收到
+     * 「无效 token 或站点未启用」；此处按**当前运行配置**重发一份登记并由调用方重试一次请求，
+     * 让站点自愈，不要求站长重装或手工改库。
+     */
+    public static function storeInstallRegister(bool $force = FALSE): array
+    {
+        $store = self::storeBase();
+        if ('' === $store) return array('ok' => FALSE, 'msg' => '未配置商店地址（config: cloud_api），无法补登记 token');
+        $conf = _SERVER('conf');
+        if (!$force && empty($conf['install_report'])) {
+            return array('ok' => FALSE, 'msg' => '安装时未启用安装上报，当前未自动补登记');
+        }
+        $token = function_exists('api_wire_token') ? (string)api_wire_token('api') : '';
+        if ('' === $token) return array('ok' => FALSE, 'msg' => '本站缺少采集令牌（auth_key 未配置），无法补登记 token');
+        $host = self::reportHost();
+        if ('' === $host) return array('ok' => FALSE, 'msg' => '取不到本站域名，无法补登记 token');
+        $payload = array(
+            'token' => $token,
+            'host' => $host,
+            'domain' => self::reportScheme() . '://' . $host,
+            'serverip' => (string)_SERVER('SERVER_ADDR'),
+            'cms_version' => isset($conf['version']) ? (string)$conf['version'] : '',
+            'php_version' => PHP_VERSION,
+            'sitename' => isset($conf['sitename']) ? (string)$conf['sitename'] : '',
+        );
+        $raw = https_request($store . 'index.php?api=install', $payload, '', 8, 0, 8 * 1048576);
+        if (FALSE === $raw) {
+            if (function_exists('xn_log')) xn_log('store install register failed: no response', 'cloud');
+            return array('ok' => FALSE, 'msg' => '商店补登记 token 失败（无响应）');
+        }
+        return array('ok' => TRUE, 'msg' => 'ok');
+    }
+
     /**
      * 云端 code 数据（`cloud_version` / `update_log` / `rsync` / `down_path` / `api` / `list` / `tmpl` / `artapi`）。
      *
@@ -207,6 +263,18 @@ class CloudOpsService
         if (!is_array($arr)) {
             self::logNoStore('replace');
             return array('ok' => FALSE, 'msg' => '商店无响应或返回非 JSON（' . $url . '）');
+        }
+        $msg = trim((string)($arr['msg'] ?? ''));
+        if ('' !== $msg && preg_match('#无效 token|站点未启用#u', $msg)) {
+            $repair = self::storeInstallRegister(TRUE);
+            if (!empty($repair['ok'])) {
+                $raw = https_request($url, $payload, '', 20, 0, 8 * 1048576);
+                $arr = xn_json_decode((string)$raw);
+                if (!is_array($arr)) {
+                    self::logNoStore('replace-retry');
+                    return array('ok' => FALSE, 'msg' => '商店补登记后重试替换失败（返回非 JSON）');
+                }
+            }
         }
         return array(
             'ok'   => (0 === intval($arr['code'] ?? -1)),
