@@ -140,7 +140,10 @@ switch ($route) {
         $errText = lang('api_err');
         $strV = implode('|', (array)$resV);
         $strA = implode('|', (array)$resA);
-        if (mb_str_contains($strV, $errText) && mb_str_contains($strA, $errText)) {
+        // PHP 7.4 兼容：mb_str_contains() 仅 8.0+ 可用；异步采集机器通道需兼容老站点。
+        $vFailed = '' !== $errText && FALSE !== strpos($strV, $errText);
+        $aFailed = '' !== $errText && FALSE !== strpos($strA, $errText);
+        if ($vFailed && $aFailed) {
             http_response_code(500);
             exit('rsync fetch error');
         }
