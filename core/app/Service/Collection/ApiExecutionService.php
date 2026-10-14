@@ -1011,12 +1011,33 @@ class ApiExecutionService
                     !empty($tag_json) and $vod_update['tag'] = $tag_json;
                     !empty($vod_update) && FALSE === art_update($aid, $vod_update) and message(-1, lang('update_thread_failed'));
                 } else {
-                    $des .= '内容存在 跳过。';
+                    $art_update = array();
+                    if (!self::artContentHasText($info['content'] ?? '') && self::artContentHasText($arr['content'] ?? '')) {
+                        $art_update['content'] = $arr['content'];
+                    }
+                    if (empty($info['pic']) && !empty($arr['pic'])) {
+                        $art_update['pic'] = $arr['pic'];
+                    }
+                    if (!empty($art_update)) {
+                        FALSE === art_update(intval($info['aid']), $art_update) and message(-1, lang('update_thread_failed'));
+                        $des .= '内容补全成功。';
+                    } else {
+                        $des .= '内容存在 跳过。';
+                    }
                 }
             }
             $ress[] = ($k + 1) . '、' . htmlspecialchars($v['art_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
         }
         return $ress;
+    }
+
+    /** 资讯采集补正文：已有文章只在正文确实为空时才补，避免把人工编辑内容覆盖掉。 */
+    private static function artContentHasText($html): bool
+    {
+        $plain = html_entity_decode((string)$html, ENT_QUOTES, 'UTF-8');
+        $plain = strip_tags($plain);
+        $plain = preg_replace('#(?:&nbsp;|\s|　)+#u', '', $plain);
+        return '' !== (string)$plain;
     }
 
     /**
