@@ -124,7 +124,8 @@ switch ($action) {
         break;
     case 'cate':
         if ('GET' == $method) {
-            $res = \App\Service\Collection\ApiViewService::cateView(param('code', ''), intval($uid), $conf);
+            $model = intval(param('model', -1));
+            $res = \App\Service\Collection\ApiViewService::cateView(param('code', ''), intval($uid), $conf, $model >= 0 ? $model : NULL);
             admin_json_out($res);
         }  
         if ($method === 'POST') {

@@ -56,14 +56,17 @@
                                         <button type="submit" class="btn btn-info btn-sm">自动绑定分类</button>
                                     </form>
                                     <?php } else { ?>
-                                    <div class="d-flex gap-1 flex-wrap">
-                                        <button type="button" class="btn btn-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#<?php echo xn_h($value['code']);?>">未创建</button>
-                                        <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#type<?php echo xn_h($value['code']);?>">已绑定</button>
-                                    </div>
+                                     <div class="d-flex gap-1 flex-wrap">
+                                         <button type="button" class="btn btn-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#<?php echo xn_h($value['code']);?>">未创建</button>
+                                         <button type="button" class="btn btn-success btn-sm open-art-bind-modal" data-code="<?php echo xn_h($value['code']);?>" data-bs-toggle="modal" data-bs-target="#artBindModal">绑定分类</button>
+                                     </div>
                                     <?php } ?>
                                 </td>
                                 <td><a class="btn btn-danger btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'day','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">今日采集</a></td>
-                                <td><a class="btn btn-danger btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'week','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">本周采集</a></td>
+                                <td>
+                                    <a class="btn btn-success btn-sm" target="_blank" href="<?php echo url_domain();?>/api.php?route=cron&token=<?php echo api_wire_token('api');?>&code=<?php echo xn_h($value['code']);?>&h=24&froms=<?php echo xn_h($value['code']);?>" data-bs-toggle="tooltip" title="可复制链接进行宝塔计划任务">定时采集</a>
+                                    <a class="btn btn-danger btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'week','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">本周采集</a>
+                                </td>
                                 <td><a class="btn btn-info btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'all','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">全部采集</a></td>
                             </tr>
                             <?php
@@ -77,7 +80,7 @@
                                     <div class="modal-content">
                                         <div class="modal-header"><h5><?php echo xn_h($value['name']);?> 自动绑定</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
                                         <div class="modal-body">
-                                            <?php $arrs = \App\Service\Collection\ApiViewService::apiNoBind($code); ?>
+                                             <?php $arrs = \App\Service\Collection\ApiViewService::apiNoBind($code, NULL, 1); ?>
                                             <table class="table table-bordered">
                                                 <thead><tr><th>分类名称</th><th>绑定状态</th><th>操作</th></tr></thead>
                                                 <tbody>
@@ -97,40 +100,15 @@
                                                 </tbody>
                                             </table>
                                         </div>
-                                        <div class="modal-footer">
-                                            <form action="<?php echo url('api-art_auto', '', TRUE);?>" method="post">
+                                         <div class="modal-footer">
+                                             <form action="<?php echo url('api-art_auto', '', TRUE);?>" method="post">
                     <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
                                                 <input type="hidden" name="code" value="<?php echo xn_h($value['code']);?>">
                                                 <input type="hidden" name="api" value="<?php echo xn_h($value['api']);?>">
-                                                <button type="submit" class="btn btn-primary">重新绑定</button>
+                                                 <button type="submit" class="btn btn-primary">重新自动绑定</button>
                                             </form>
                                             <button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
                                         </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- 已绑定 Modal -->
-                            <div class="modal fade" id="type<?php echo xn_h($value['code']);?>" tabindex="-1">
-                                <div class="modal-dialog modal-lg">
-                                    <div class="modal-content">
-                                        <div class="modal-header"><h5><?php echo xn_h($value['name']);?> 已绑定分类</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-                                        <div class="modal-body">
-                                            <?php $arrs = $conf['bind'][$code]; $keys = array_keys($arrs); $total = count($keys); ?>
-                                            <table class="table table-bordered">
-                                                <thead><tr><th>分类名称</th><th>绑定ID</th><th>分类名称</th><th>绑定ID</th></tr></thead>
-                                                <tbody>
-                                                    <?php for ($i = 0; $i < $total; $i += 2) { ?>
-                                                    <tr>
-                                                        <td><?php echo xn_h($keys[$i]);?></td><td><?php echo xn_h($arrs[$keys[$i]]);?></td>
-                                                        <?php if (isset($keys[$i + 1])) { ?>
-                                                        <td><?php echo xn_h($keys[$i + 1]);?></td><td><?php echo xn_h($arrs[$keys[$i + 1]]);?></td>
-                                                        <?php } else { ?><td></td><td></td><?php } ?>
-                                                    </tr>
-                                                    <?php } ?>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                        <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button></div>
                                     </div>
                                 </div>
                             </div>
@@ -144,9 +122,33 @@
             </div>
         </div>
     </div>
-    <?php echo $page_modals; ?>
-</div>
-<script>
+     <?php echo $page_modals; ?>
+     <div class="modal fade" id="artBindModal" tabindex="-1">
+         <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+             <div class="modal-content">
+                 <div class="modal-header">
+                     <h5 class="modal-title">文章绑定分类</h5>
+                     <button type="button" class="btn btn-secondary btn-sm ms-3" data-bs-dismiss="modal">关闭</button>
+                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                 </div>
+                 <div class="modal-body">
+                     <div id="art-bind-loading" class="text-center py-4">加载中...</div>
+                     <div id="art-bind-content" class="d-none"></div>
+                 </div>
+             </div>
+         </div>
+     </div>
+ </div>
+ <style>
+ #artBindModal .modal-content { border-radius:8px; }
+ #art-bind-loading::after { content:''; display:inline-block; width:20px; height:20px; margin-left:8px; border:2px solid #e2e8f0; border-top:2px solid #2563EB; border-radius:50%; animation:spin 1s linear infinite; }
+ @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+ #art-bind-content select { font-size:12px; padding:6px 10px; border-radius:4px; border:1px solid #e2e8f0; width:100%; margin-bottom:6px; }
+ #art-bind-content .card { transition:all .3s; border-radius:6px; border:1px solid #e2e8f0; margin-bottom:12px; padding:12px; }
+ #art-bind-content .card:hover { box-shadow:0 4px 12px rgba(0,0,0,.1); }
+ </style>
+ <script>
+ var ADMIN_BASE = '<?php echo htmlspecialchars($conf['admin_entry'] ?? 'admin.php', ENT_QUOTES, 'UTF-8'); ?>?';
 function apiDo(ep){
   if(!window.confirm('确定执行该操作吗？')) return false;
   $.xpost(xn.url(ep, '', true), {safe_token:'<?php echo $safe_token??''; ?>'}, function(code, message){
@@ -155,5 +157,91 @@ function apiDo(ep){
   });
   return false;
 }
+  document.addEventListener("DOMContentLoaded", function () {
+    var bindModal = document.getElementById("artBindModal");
+    var contentDiv = document.getElementById("art-bind-content");
+    var loadingDiv = document.getElementById("art-bind-loading");
+    var csrfToken = '<?php echo $safe_token??''; ?>';
+
+    function refreshCategoryData(code) {
+      contentDiv.classList.add("d-none");
+      loadingDiv.classList.remove("d-none");
+      loadingDiv.textContent = "正在加载分类数据...";
+      contentDiv.innerHTML = "";
+      fetch(ADMIN_BASE + "0=api&1=cate&model=1&code=" + encodeURIComponent(code))
+        .then(function(r){ return r.json(); })
+        .then(function(data) {
+          if (data && data.safe_token) csrfToken = data.safe_token;
+          loadingDiv.classList.add("d-none");
+          contentDiv.classList.remove("d-none");
+          function escapeHtml(s) {
+            s = String(s == null ? '' : s);
+            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+          }
+          var api_type = data.api_type || [], cate = data.cate || {}, bind = data.bind || {};
+          var html = "<div class=\"container-fluid\"><div class=\"row g-3\">";
+          api_type.forEach(function(item) {
+            var typeName = item.type_name;
+            var boundId = bind[typeName] || "";
+            var localExist = Object.prototype.hasOwnProperty.call(cate, typeName);
+            html += "<div class=\"col-md-3 col-sm-6\"><div class=\"card p-3\"><div class=\"fw-bold mb-2\">" + escapeHtml(typeName) + "</div>";
+            if (localExist) {
+              html += "<select class=\"form-select form-select-sm mb-1 local-cate\" data-type-name=\"" + escapeHtml(typeName) + "\"><option value=\"\">选择文章分类</option>";
+              for (var n in cate) {
+                if (Object.prototype.hasOwnProperty.call(cate, n)) {
+                  html += "<option value=\"" + escapeHtml(cate[n]) + "\"" + (cate[n]==boundId?" selected":"") + ">" + escapeHtml(n) + "</option>";
+                }
+              }
+              html += "</select><small class=\"" + (boundId?"text-success":"text-muted") + "\">" + (boundId?"已绑定":"未绑定") + "</small>";
+              if (boundId) html += "<button class=\"btn btn-sm btn-danger btn-unbind mt-2 w-100\">解绑</button>";
+            } else {
+              html += "<small class=\"text-muted\">本地未创建文章分类</small><button class=\"btn btn-warning btn-sm btn-create w-100 mt-2\" data-type-name=\"" + escapeHtml(typeName) + "\">创建文章分类</button>";
+            }
+            html += "</div></div>";
+          });
+          html += "</div></div>";
+          contentDiv.innerHTML = html;
+        }).catch(function(err) {
+          loadingDiv.textContent = "加载失败";
+          console.error(err);
+        });
+    }
+
+    if (bindModal) {
+      bindModal.addEventListener("show.bs.modal", function (event) {
+        var btn = event.relatedTarget;
+        if (!btn) return;
+        bindModal.dataset.code = btn.getAttribute("data-code");
+        refreshCategoryData(bindModal.dataset.code);
+      });
+
+      contentDiv.addEventListener("click", function (e) {
+        var t = e.target, code = bindModal.dataset.code;
+        if (!code) return;
+        if (t.classList.contains("btn-unbind")) {
+          var tn = t.closest(".card").querySelector("select").dataset.typeName;
+          fetch(ADMIN_BASE + "0=api&1=cate", {method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"binstatus=unbind&code="+encodeURIComponent(code)+"&type_name="+encodeURIComponent(tn)+"&safe_token="+encodeURIComponent(csrfToken)})
+            .then(function(r){return r.json()})
+            .then(function(d){if(d.success)refreshCategoryData(code);else $.alert(d.msg||"解绑失败")})
+            .catch(function(err){ console.error(err); $.alert("解绑失败"); });
+        }
+        if (t.classList.contains("btn-create")) {
+          fetch(ADMIN_BASE + "0=api&1=newcreate", {method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"type_name="+encodeURIComponent(t.dataset.typeName)+"&model=1&safe_token="+encodeURIComponent(csrfToken)})
+            .then(function(r){return r.json()})
+            .then(function(d){if(d.success){refreshCategoryData(code);$.alert("文章分类创建成功")}else $.alert(d.msg||"创建失败")})
+            .catch(function(err){ console.error(err); $.alert("创建失败"); });
+        }
+      });
+
+      contentDiv.addEventListener("change", function(e) {
+        if (!e.target.classList.contains("local-cate")) return;
+        var s = e.target, code = bindModal.dataset.code, localId = s.value;
+        fetch(ADMIN_BASE + "0=api&1=cate", {method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"binstatus="+(localId?"bind":"unbind")+"&code="+encodeURIComponent(code)+"&type_name="+encodeURIComponent(s.dataset.typeName)+"&local_id="+encodeURIComponent(localId||"")+"&safe_token="+encodeURIComponent(csrfToken)})
+          .then(function(r){return r.json()})
+          .then(function(d){if(d.success)refreshCategoryData(code);else $.alert(d.msg||"操作失败")})
+          .catch(function(err){ console.error(err); $.alert("操作失败"); });
+      });
+    }
+  });
 </script>
 <?php include _include(ADMIN_PATH.'html/foot.html');?>

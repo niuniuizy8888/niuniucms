@@ -78,7 +78,7 @@ class ApiViewService
      * @param array $conf 站点配置（api/bind 段由调用方传入，本方法不读容器）
      * @return array {status, api_type, cate, bind, safe_token} 或 {status:'error', msg}
      */
-    public static function cateView(string $code, int $uid, array $conf): array
+    public static function cateView(string $code, int $uid, array $conf, ?int $model = NULL): array
     {
         if (!isset($conf['api'][$code]['api'])) {
             return array('status' => 'error', 'msg' => '采集源未配置');
@@ -86,6 +86,9 @@ class ApiViewService
 
         $api_type = self::apiClass($code, $conf);
         $typelist = cate_list_cache();
+        if (NULL !== $model) {
+            $typelist = arrlist_cond_orderby($typelist, array('model' => $model), array(), 1, 1000);
+        }
         $cate = arrlist_key_values($typelist, 'name', 'cid');
 
         bull_token_set($uid, 'admin_api_newcreate');
@@ -122,10 +125,13 @@ class ApiViewService
      * @param array|null $conf 站点配置（透传 apiClass，NULL=读容器）
      * @return array string[] 未绑定的源分类名；源分类为空返回空 array（条目缺 type_name 会触发 undefined key 警告，依赖 sourceClassList 契约）
      */
-    public static function apiNoBind(string $code, ?array $conf = NULL): array
+    public static function apiNoBind(string $code, ?array $conf = NULL, ?int $model = NULL): array
     {
         $apiType = self::apiClass($code, $conf);
         $typelist = cate_list_cache();
+        if (NULL !== $model) {
+            $typelist = arrlist_cond_orderby($typelist, array('model' => $model), array(), 1, 1000);
+        }
         $arrlista = arrlist_key_values($typelist, 'name', 'cid');
         $arrlist = array();
         foreach ($apiType as $value) {

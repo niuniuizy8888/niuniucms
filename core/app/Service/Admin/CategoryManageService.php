@@ -238,6 +238,8 @@ class CategoryManageService
     {
         $name = filter_all_html($payload['name'] ?? '');
         empty($name) and message(1, lang('data_empty_to_last_step'));
+        // 文章采集建类固定写入文章模型，避免前端漏传/误传时落到视频模型。
+        $payload['model'] = 1;
         self::createCategory($payload, $name);
         \App\Service\Collection\ApiArtService::autoBindAll($payload['code'] ?? '', $payload['api'] ?? '');
         admin_audit_log('api_art_create', array('code' => $payload['code'] ?? '', 'name' => $name));

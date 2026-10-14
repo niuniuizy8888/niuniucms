@@ -206,8 +206,12 @@ var jconfirm = $("#confirm");
 var jbatch = $("#batch_submit");
 var jbatchAction = $("#batch_action");
 var jvodlist = $('#vodlist');
+var jcheckall = $('.checkall');
+function vodRowCheckboxes() {
+    return jvodlist.find('input[name="delete"]');
+}
 function selectedVodIds() {
-    return jvodlist.find('input[name="delete"]').filter(function(){ return this.checked; }).map(function(){ return $(this).val(); }).get();
+    return vodRowCheckboxes().filter(function(){ return this.checked; }).map(function(){ return $(this).val(); }).get();
 }
 function executeVodBatch(action) {
     var ids = selectedVodIds();
@@ -232,7 +236,7 @@ $('body').on('click', 'a.del-one', function(){
     if(!window.confirm("<?php echo lang('vod_delete_confirm');?>")) return false;
     var vid = $(this).data('vid'), jtr = $(this).parents('tr');
     $.xpost(xn.url('vod-del', '', true), {vid: vid, safe_token: '<?php echo $safe_token??''; ?>'}, function(code, message){
-        if(code == 0){ jtr.remove(); } else { $.alert(message); }
+        if(code == 0){ jtr.remove(); syncBatchBar(); } else { $.alert(message); }
     });
     return false;
 });
@@ -240,16 +244,24 @@ $('body').on('click', 'a.del-one', function(){
 /* 批量浮条联动（v6.3） */
 function syncBatchBar() {
     var ids = selectedVodIds();
+    var jrows = vodRowCheckboxes();
+    var total = jrows.length;
     $('#batchCount').text(ids.length);
     $('#batchBar').toggleClass('show', ids.length > 0);
-    var total = jvodlist.find('input[name="delete"]').length;
-    if (total) $('.checkall').prop('checked', ids.length === total);
+    jcheckall.prop('disabled', total === 0);
+    jcheckall.prop('checked', total > 0 && ids.length === total);
+    jcheckall.prop('indeterminate', ids.length > 0 && ids.length < total);
 }
 jvodlist.on('change', 'input[name="delete"]', syncBatchBar);
-$(document).on('change', '.checkall', function () { setTimeout(syncBatchBar, 0); });
-$('#batch_cancel').on('click', function () {
-    jvodlist.find('input[name="delete"]:checked').prop('checked', false);
-    $('.checkall').prop('checked', false);
+jcheckall.on('change', function () {
+    if (this.disabled) return;
+    vodRowCheckboxes().prop('checked', this.checked);
     syncBatchBar();
 });
+$('#batch_cancel').on('click', function () {
+    vodRowCheckboxes().prop('checked', false);
+    jcheckall.prop('checked', false).prop('indeterminate', false);
+    syncBatchBar();
+});
+syncBatchBar();
 </script>

@@ -133,8 +133,12 @@ var jconfirm = $("#confirm");
 var jbatch = $("#batch_submit");
 var jbatchAction = $("#batch_action");
 var jartlist = $('#artlist');
+var jcheckall = $('.checkall');
+function artRowCheckboxes() {
+    return jartlist.find('input[name="delete"]');
+}
 function selectedArtIds() {
-    return jartlist.find('input[name="delete"]').filter(function(){ return this.checked; }).map(function(){ return $(this).val(); }).get();
+    return artRowCheckboxes().filter(function(){ return this.checked; }).map(function(){ return $(this).val(); }).get();
 }
 function executeArtBatch(action) {
     var ids = selectedArtIds();
@@ -159,7 +163,7 @@ $('body').on('click', 'a.del-one', function(){
     if(!window.confirm('确定删除吗？')) return false;
     var aid = $(this).data('aid'), jtr = $(this).parents('tr');
     $.xpost(xn.url('art-del', '', true), {aid: aid, safe_token: <?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>}, function(code, message){
-        if(code == 0){ jtr.remove(); } else { $.alert(message); }
+        if(code == 0){ jtr.remove(); syncBatchBar(); } else { $.alert(message); }
     });
     return false;
 });
@@ -167,16 +171,24 @@ $('body').on('click', 'a.del-one', function(){
 /* 批量浮条联动（v6.3） */
 function syncBatchBar() {
     var ids = selectedArtIds();
+    var jrows = artRowCheckboxes();
+    var total = jrows.length;
     $('#batchCount').text(ids.length);
     $('#batchBar').toggleClass('show', ids.length > 0);
-    var total = jartlist.find('input[name="delete"]').length;
-    if (total) $('.checkall').prop('checked', ids.length === total);
+    jcheckall.prop('disabled', total === 0);
+    jcheckall.prop('checked', total > 0 && ids.length === total);
+    jcheckall.prop('indeterminate', ids.length > 0 && ids.length < total);
 }
 jartlist.on('change', 'input[name="delete"]', syncBatchBar);
-$(document).on('change', '.checkall', function () { setTimeout(syncBatchBar, 0); });
-$('#batch_cancel').on('click', function () {
-    jartlist.find('input[name="delete"]:checked').prop('checked', false);
-    $('.checkall').prop('checked', false);
+jcheckall.on('change', function () {
+    if (this.disabled) return;
+    artRowCheckboxes().prop('checked', this.checked);
     syncBatchBar();
 });
+$('#batch_cancel').on('click', function () {
+    artRowCheckboxes().prop('checked', false);
+    jcheckall.prop('checked', false).prop('indeterminate', false);
+    syncBatchBar();
+});
+syncBatchBar();
 </script>

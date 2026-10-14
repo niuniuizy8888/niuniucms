@@ -1,10 +1,10 @@
 # NiuNiuCMS
 
-NiuNiuCMS 是一个基于 PHP + MySQL 的内容管理系统，包含前台展示、后台管理、采集、插件和云端能力。
+NiuNiuCMS 是一个基于 PHP + MySQL 的视频内容管理系统，包含前台展示、后台管理、采集、插件和云端能力。
 
 ## 环境要求
 
-- PHP 7.4+
+- PHP 8.0+
 - MySQL 5.7+ / 8.0+
 - Nginx 或 Apache
 - 推荐开启 `pdo_mysql`

@@ -470,7 +470,9 @@ class ApiExecutionService
 
     /**
      * cron_source 任务处理器（TaskQueueService 注册回调；解耦后由组合根接线）
-     * 单采集源全量拉取（h=24，对应原有宝塔 cron 的逐源语义）
+     * 单采集源增量拉取（h=24，对应原有宝塔 cron 的逐源语义）。
+     * 与机器通道 route=rsync 保持一致：同一采集源同时尝试视频和文章两条入库链，
+     * 避免定时任务只更新视频、不更新资讯。
      * @param array $param 任务参数（code=采集源编码）
      */
     public static function taskCronSource(array $param): void
@@ -483,7 +485,9 @@ class ApiExecutionService
         // 会越过 TaskQueueService::process() 的 try/catch 使任务永久卡 running；此处预检改为抛异常，
         // 走队列的失败→重试（上限 3）→failed 状态机，不再产生僵尸任务
         if (!isset($conf['bind'][$code])) throw new \RuntimeException('采集源未绑定分类: ' . $code);
-        self::videoApiCron((string)$cfg['api'], $code, '24');
+        $encodeurl = (string)$cfg['api'];
+        self::videoApiCron($encodeurl, $code, '24');
+        self::artApiCron($encodeurl, $code, '24');
     }
 
     /**
@@ -523,6 +527,11 @@ class ApiExecutionService
      * @param string $h 小时窗口
      * @return string 逐页结果拼接文本（同 videoApiCron，仅供留痕）
      */
+    public static function artApiCron($encodeurl, $code, $h)
+    {
+        return self::cronFetchLoop(array(__CLASS__, 'fetchArtJson'), array(__CLASS__, 'importArtData'), $encodeurl, $code, $h);
+    }
+
     /**
      * cron 逐页采集循环：先取一次页信息拿 pagecount，再 1..count 逐页 fetch+import；
      * 每页导入后触发 addon.hook.collect.page 事件（payload 仅摘要）。
@@ -984,8 +993,7 @@ class ApiExecutionService
                 $arr['cid'] = $cid;
                 $get_tag = get_tag($v['art_name']);
                 $tags = $v['type_name'] . ',' . $get_tag;
-                $arrcontent = html_entity_decode($v['art_content']);
-                $arr['content'] = xn_html_safe(str_replace('mac://', 'https://', $arrcontent));
+                $arr['content'] = self::sanitizeImportedArtContent($v['art_content'] ?? '');
                 $info = \App\Repository\RepositoryFactory::art()->findOne(array('name' => $v['art_name']));
                 if (!$info) {
                     $aid = \App\Repository\RepositoryFactory::art()->insert($arr);
@@ -1038,6 +1046,112 @@ class ApiExecutionService
         $plain = strip_tags($plain);
         $plain = preg_replace('#(?:&nbsp;|\s|　)+#u', '', $plain);
         return '' !== (string)$plain;
+    }
+
+    /**
+     * 资讯源正文常带整页 HTML 包裹（<html><body><article>…），旧口径 xn_html_safe() 在这类输入上会整段清空，
+     * 导致 art.content 入库为 ''。这里收口为“保留常见正文标签 + 属性审计”，只用于第三方资讯采集入库。
+     */
+    private static function sanitizeImportedArtContent($html): string
+    {
+        $html = html_entity_decode((string)$html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $html = str_replace('mac://', 'https://', $html);
+        $html = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $html);
+        if ('' === trim((string)$html)) return '';
+
+        $html = preg_replace('#<(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|base)[^>]*>.*?</\\1>#is', '', $html);
+        $html = preg_replace('#<!--.*?-->#s', '', $html);
+        $allowedTags = '<img><p><br><b><strong><i><em><u><ul><ol><li><a><span><div><blockquote><code><pre><h1><h2><h3><h4><h5><h6>'
+            . '<hr><table><thead><tbody><tr><th><td>'
+            . '<section><article><aside><nav><header><footer><figure><figcaption>';
+        $html = strip_tags($html, $allowedTags);
+
+        $html = preg_replace_callback('/<([a-z1-6]+)\s*([^>]*)>/i', function ($matches) {
+            $tagName = strtolower((string)$matches[1]);
+            $attrs = self::parseImportedArtAttributes((string)$matches[2]);
+            $allowedCommon = array('class', 'id', 'style', 'title');
+            $allowedMap = array(
+                'a'   => array('href', 'target', 'rel'),
+                'img' => array('src', 'alt', 'width', 'height'),
+                'ol'  => array('type', 'start'),
+                'ul'  => array('type'),
+            );
+            $allowedList = array_merge($allowedCommon, $allowedMap[$tagName] ?? array());
+            $cleanAttrs = array();
+            foreach ($attrs as $name => $val) {
+                if (!in_array($name, $allowedList, TRUE)) continue;
+                $val = self::sanitizeImportedArtAttributeValue($tagName, $name, $val);
+                if (NULL !== $val) {
+                    $cleanAttrs[] = sprintf('%s="%s"', $name, htmlspecialchars((string)$val, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+                }
+            }
+            return '<' . $tagName . (empty($cleanAttrs) ? '' : ' ' . implode(' ', $cleanAttrs)) . '>';
+        }, $html);
+
+        return trim((string)$html);
+    }
+
+    /** 解析 HTML 开始标签上的属性。 */
+    private static function parseImportedArtAttributes(string $attrStr): array
+    {
+        $attrs = array();
+        if (preg_match_all('/([a-z0-9_-]+)\s*=\s*(?:["\']([^"\']*)["\']|([^\s>]+))/i', $attrStr, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $m) {
+                $name = strtolower((string)$m[1]);
+                $value = $m[2] !== '' ? $m[2] : ($m[3] ?? '');
+                $attrs[$name] = (string)$value;
+            }
+        }
+        return $attrs;
+    }
+
+    /** 资讯正文属性值白名单。 */
+    private static function sanitizeImportedArtAttributeValue(string $tag, string $name, string $val): ?string
+    {
+        if ('src' === $name && preg_match('#^data:image/(?:jpg|jpeg|gif|png);base64,[A-Za-z0-9+/=]+$#i', $val)) {
+            return $val;
+        }
+        if (in_array($name, array('href', 'src', 'action'), TRUE) && self::isDangerousImportedArtProtocol($val)) {
+            return '#';
+        }
+        if ('style' === $name) {
+            return self::auditImportedArtInlineStyle($val);
+        }
+        if ('id' === $name) {
+            if (!preg_match('/^[a-zA-Z][a-zA-Z0-9\-_:.]*\z/', $val)) return NULL;
+            if (in_array(strtolower($val), array('location', 'closed', 'frames', 'length', 'name', 'opener', 'status'), TRUE)) return NULL;
+        }
+        return $val;
+    }
+
+    /** 危险协议拦截。 */
+    private static function isDangerousImportedArtProtocol(string $val): bool
+    {
+        $normalized = html_entity_decode($val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $normalized = preg_replace('/[\s\x00-\x1F\x7F-\x9F\xAD]/u', '', $normalized);
+        $normalized = strtolower((string)$normalized);
+        foreach (array('javascript:', 'data:', 'vbscript:', 'mocha:', 'livescript:') as $prefix) {
+            if (0 === strpos($normalized, $prefix)) return TRUE;
+        }
+        return FALSE;
+    }
+
+    /** 行内样式审计：拒绝脚本式样与非 http(s) 的 url()。 */
+    private static function auditImportedArtInlineStyle(string $style): ?string
+    {
+        $normalized = strtolower($style);
+        foreach (array('expression', 'javascript', 'behavior', 'vmlframe', '-moz-binding', '@import') as $word) {
+            if (FALSE !== strpos($normalized, $word)) return NULL;
+        }
+        if (FALSE !== strpos($normalized, 'url')) {
+            $n = preg_match_all('#url\s*\(\s*([\'"]?)(.*?)\1\s*\)#is', $style, $matches);
+            if (!$n) return NULL;
+            foreach ((array)$matches[2] as $u) {
+                $u = trim((string)$u);
+                if ('' === $u || !preg_match('#^https?://#i', $u)) return NULL;
+            }
+        }
+        return $style;
     }
 
     /**
