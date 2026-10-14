@@ -13,10 +13,23 @@
  * @version
  */
 
-// AES 密钥 — 优先使用配置中的 auth_key，缺失则抛出异常阻止降级
-defined('SECRET') or define('SECRET', defined('APP_PATH') && is_file(APP_PATH . 'core/config/config.php') ? ((include APP_PATH . 'core/config/config.php')['auth_key'] ?? '') : '');
+// AES 密钥：优先读取 config.php。安装向导阶段尚未生成 config.php 属正常状态，
+// 此时不要打 CRITICAL，避免在部分 FPM/面板环境里把 stderr 混入响应导致安装页异常空白。
+$secret_value = '';
+$config_file = defined('APP_PATH') ? APP_PATH . 'core/config/config.php' : '';
+$install_lock_file = defined('APP_PATH') ? APP_PATH . 'core/install.lock' : '';
+if ($config_file && is_file($config_file)) {
+    $secret_conf = include $config_file;
+    if (is_array($secret_conf)) {
+        $secret_value = (string)($secret_conf['auth_key'] ?? '');
+    }
+}
+defined('SECRET') or define('SECRET', $secret_value);
 if (empty(SECRET)) {
-    error_log('[CRITICAL] SECRET not configured — missing auth_key in config/config.php');
+    $is_installing = $config_file && !is_file($config_file) && $install_lock_file && !is_file($install_lock_file);
+    if (!$is_installing) {
+        error_log('[CRITICAL] SECRET not configured — missing auth_key in config/config.php');
+    }
 }
 
 /**
@@ -162,4 +175,3 @@ function url_domain()
     return $protocol . $host;
 }
 // block_*_page 分页渲染函数已迁移至 core/func/pagination.php
-
