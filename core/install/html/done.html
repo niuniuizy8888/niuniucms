@@ -28,11 +28,18 @@
               <h4 class="mb-2 fw-semibold">恭喜，牛牛CMS 安装成功！</h4>
               <p class="text-muted mb-4">站点已经就绪，数据表与配置文件已生成，可以开始使用了。</p>
               <div class="alert alert-warning text-start small mb-4" role="alert">
-                <strong>安全提示：</strong>后台入口文件为 <code><?php echo htmlspecialchars($conf['admin_entry'] ?? 'admin.php', ENT_QUOTES, 'UTF-8');?></code>
-                （出厂默认名，可直接访问）。该文件名众所周知，扫描器会主动探测，<strong>建议改成随机文件名</strong>（如 <code>3x9k2m.php</code>）
-                并同步修改 <code>core/config/config.php</code> 中的 <code>admin_entry</code>；改名后其余代码无需改动
-                （后台链接统一由 <code>url()</code> 读该配置生成）。未改名时请务必使用强密码——登录已有
-                同 IP 与同账号各 10 次/300 秒的限流兜底。
+                <strong>安全提示：</strong>后台入口文件当前为
+                <code><?php echo htmlspecialchars($conf['admin_entry'] ?? 'admin.php', ENT_QUOTES, 'UTF-8');?></code>，
+                默认可直接访问。该文件名众所周知，扫描器会主动探测；如需进一步隐藏后台入口，建议安装完成后手工改成随机文件名。
+                <div class="mt-2"><strong>操作步骤：</strong></div>
+                <ol class="mb-2 ps-3">
+                  <li>把站点根目录的 <code>admin.php</code> 重命名为随机文件名，例如 <code>3x9k2m.php</code>。</li>
+                  <li>打开 <code>core/config/config.php</code>，把 <code>admin_entry</code> 的值同步改为新的文件名，例如 <code>'admin_entry' =&gt; '3x9k2m.php'</code>。</li>
+                </ol>
+                <div class="mb-1"><strong>请务必两步同时完成：</strong></div>
+                <div>只改文件不改配置，或只改配置不改文件，后台链接和登录提交都会指向错误地址，导致后台 404 无法访问。</div>
+                <div class="mt-2">两步同步后，其余代码无需改动；后台链接会自动读取 <code>admin_entry</code> 生成。后续升级也会按该配置同步后台入口文件。</div>
+                <div class="mt-2">若暂时不改名，请务必使用强管理员密码；系统已内置同 IP 与同账号各 10 次/300 秒的登录限流。</div>
               </div>
               <a class="btn btn-install w-100" href="../">进入网站首页</a>
             </div>
