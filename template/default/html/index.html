@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    {inc:public/include.html}
+</head>
+<body>
+    <div class="relative w-full h-full flex flex-col overflow-y-auto overflow-x-hidden scroll-pt-[6px]"
+        style="align-items: center;">
+        <div class="z-50 sticky top-0 w-screen">
+            {inc:public/head.html}
+        </div>
+        <div class="w-full grow flex justify-center pt-4">
+            <div class="flex flex-1 justify-start flex-col" style="width: 100%;">
+                <div class="flex flex-col w-full">
+                    {inc:public/slide.html}
+                    <h1 class="sr-only">{$nncms.site_name} - 最新电影电视剧免费在线观看</h1>
+                    <div class="container w-[100%] animate-fadeIn">
+                        {inc:public/vod_cate.html}
+                        {inc:public/vod_cid.html}
+                        {inc:public/vod_list.html}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {inc:public/foot.html}
+    </div>
+</body>
+</html>

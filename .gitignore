@@ -28,7 +28,7 @@ runtime/throttle/*
 .user.ini
 .htaccess
 404.html
-index.html
+/index.html
 core/install.lock
 core/config/config.php
 core/config/database.php

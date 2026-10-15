@@ -1,0 +1,253 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+        <?php if (!empty($partial_failed)) { ?>
+        <!-- 代码审查 #4：仪表盘某些统计查询失败时不再静默吞掉——显式提示，避免把故障看成「本来就是 0」。
+             失败明细已写入 runtime/log/<Ym>/dashboard_error.php（通道含 error ⇒ 线上也落盘）。 -->
+        <div class="card" style="border-left:3px solid #e0a800;">
+            <div class="card-body py-2 d-flex align-items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span style="font-size:13px;">部分统计模块查询失败，下方数据可能不完整（缺失项显示为 0）。详情见
+                    <code>runtime/log/<?php echo date('Ym'); ?>/dashboard_error.php</code>。</span>
+            </div>
+        </div>
+        <?php } ?>
+
+        <!-- 欢迎横幅 -->
+        <div class="hero-banner">
+            <div class="hero-ring"></div>
+            <div class="hero-content">
+                <p class="hero-date"><?php $wk = array('日','一','二','三','四','五','六'); echo date('Y年n月j日') . ' · 星期' . $wk[intval(date('w'))]; ?></p>
+                <h1 class="hero-title"><?php $h = intval(date('G')); echo ($h < 6 ? '夜深了' : ($h < 11 ? '上午好' : ($h < 14 ? '中午好' : ($h < 18 ? '下午好' : '晚上好')))) . '，' . htmlspecialchars((string)($user['username'] ?? '管理员'), ENT_QUOTES, 'UTF-8'); ?></h1>
+                <p class="hero-sub">欢迎回到牛牛CMS 管理系统，今天也一起把内容运营做好吧。</p>
+            </div>
+            <div class="hero-actions">
+                <a href="<?php echo url('vod-list','',TRUE);?>" class="btn">视频管理</a>
+                <a href="<?php echo url('api-list','',TRUE);?>" class="btn btn-ghost-hero">采集入库</a>
+                <a href="<?php echo url('set-set','',TRUE);?>" class="btn btn-ghost-hero">系统设置</a>
+            </div>
+        </div>
+
+        <!-- 核心数据 -->
+        <div class="row g-3 mb-4">
+            <div class="col-sm-6 col-lg-3">
+                <div class="card stat-card">
+                    <div class="stat-icon" style="background:linear-gradient(135deg,#EEF2FF,#E0E7FF);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo intval($stat['users'] ?? 0);?></h2>
+                        <h5>当前在线</h5>
+                        <div class="stat-trend up">活跃用户</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card stat-card">
+                    <div class="stat-icon" style="background:linear-gradient(135deg,#ECFDF5,#D1FAE5);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo intval($stat['vod'] ?? 0);?></h2>
+                        <h5>视频内容</h5>
+                        <div class="stat-trend up">今日 +<?php echo intval($stat['vod_day'] ?? 0);?></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card stat-card">
+                    <div class="stat-icon" style="background:linear-gradient(135deg,#FFFBEB,#FDE68A);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo intval($stat['art'] ?? 0);?></h2>
+                        <h5>文章内容</h5>
+                        <div class="stat-trend up">今日 +<?php echo intval($stat['art_day'] ?? 0);?></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card stat-card">
+                    <div class="stat-icon" style="background:linear-gradient(135deg,#FEF2F2,#FECACA);">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo intval($stat['tag'] ?? 0);?></h2>
+                        <h5>内容标签</h5>
+                        <div class="stat-trend up">已收录</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+                        <h3 class="card-title">快捷入口</h3>
+                        <div class="card-actions">
+                            <span class="header-meta-chip"><span class="status-dot online" style="margin-right:0;"></span>系统运行中</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <a href="<?php echo url('vod-list','',TRUE);?>" class="quick-tile">
+                                    <div class="q-icon" style="background:linear-gradient(135deg,#EEF2FF,#E0E7FF);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></div>
+                                    <div><div class="q-title">视频管理</div><div class="q-desc">管理视频内容</div></div>
+                                    <span class="q-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="<?php echo url('art-list','',TRUE);?>" class="quick-tile">
+                                    <div class="q-icon" style="background:linear-gradient(135deg,#ECFDF5,#D1FAE5);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+                                    <div><div class="q-title">文章管理</div><div class="q-desc">管理文章内容</div></div>
+                                    <span class="q-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="<?php echo url('cate-list','',TRUE);?>" class="quick-tile">
+                                    <div class="q-icon" style="background:linear-gradient(135deg,#FFFBEB,#FDE68A);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D97706" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+                                    <div><div class="q-title">分类管理</div><div class="q-desc">管理内容分类</div></div>
+                                    <span class="q-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="<?php echo url('user-list','',TRUE);?>" class="quick-tile">
+                                    <div class="q-icon" style="background:linear-gradient(135deg,#EFF6FF,#DBEAFE);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0284C7" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
+                                    <div><div class="q-title">用户管理</div><div class="q-desc">管理注册用户</div></div>
+                                    <span class="q-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="<?php echo url('api-list','',TRUE);?>" class="quick-tile">
+                                    <div class="q-icon" style="background:linear-gradient(135deg,#FEF2F2,#FECACA);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></div>
+                                    <div><div class="q-title">采集管理</div><div class="q-desc">资源采集与导入</div></div>
+                                    <span class="q-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+                                </a>
+                            </div>
+                            <div class="col-md-4">
+                                <a href="<?php echo url('set-set','',TRUE);?>" class="quick-tile">
+                                    <div class="q-icon" style="background:linear-gradient(135deg,#F1F5F9,#E2E8F0);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+                                    <div><div class="q-title">系统设置</div><div class="q-desc">全局配置管理</div></div>
+                                    <span class="q-arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+                        <h3 class="card-title">服务器信息</h3>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="info-rows">
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="1"/><rect x="2" y="14" width="20" height="8" rx="1"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>操作系统</span><span class="info-val"><?php echo PHP_OS; ?></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Web Server</span><span class="info-val"><?php echo xn_h($info['SERVER_SOFTWARE'] ?? ''); ?></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>PHP 版本</span><span class="info-val"><span class="badge bg-success"><?php echo PHP_VERSION; ?></span></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>数据库</span><span class="info-val"><?php echo xn_h($conf['db']['type'] ?? ''); ?> <small class="text-muted">(<?php echo xn_h($info['dbversion'] ?? ''); ?>)</small></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传限制</span><span class="info-val"><?php echo xn_h($info['upload_max_filesize'] ?? ''); ?></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>内存限制</span><span class="info-val"><?php echo xn_h($info['memory_limit'] ?? ''); ?></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>磁盘可用</span><span class="info-val"><?php echo xn_h($stat['disk_free_space'] ?? ''); ?></span></div>
+                            <div class="info-row"><span class="info-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>系统版本</span><span class="info-val">v<?php echo xn_h($version);?><?php if(isset($cloud_version) && $cloud_version != $version){ ?> <span class="badge bg-warning">v<?php echo xn_h($cloud_version);?> 可升级</span><?php } ?></span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 近 7 天入库趋势 -->
+        <div class="row g-3 mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg></div>
+                        <h3 class="card-title">近 7 天内容入库趋势</h3>
+                        <div class="ms-auto trend-legend">
+                            <span class="lg"><i class="vod"></i>视频</span>
+                            <span class="lg"><i class="art"></i>文章</span>
+                        </div>
+                    </div>
+                    <div class="card-body pb-3">
+                        <?php if (!empty($trend)) { ?>
+                        <div class="trend-chart">
+                            <?php foreach ($trend as $_t) { ?>
+                            <div class="trend-col">
+                                <div class="trend-bars">
+                                    <div class="trend-bar vod" style="height:<?php echo max(5, intval($_t['p_vod'] ?? 0)); ?>%;"><span class="trend-tip">视频 <?php echo intval($_t['vod'] ?? 0); ?></span></div>
+                                    <div class="trend-bar art" style="height:<?php echo max(5, intval($_t['p_art'] ?? 0)); ?>%;"><span class="trend-tip">文章 <?php echo intval($_t['art'] ?? 0); ?></span></div>
+                                </div>
+                                <div class="trend-label"><span class="w">周<?php echo xn_h($_t['w'] ?? ''); ?></span><span class="d"><?php echo xn_h($_t['d'] ?? ''); ?></span></div>
+                            </div>
+                            <?php } ?>
+                        </div>
+                        <?php } else { ?>
+                        <div class="empty-state" style="padding:32px 24px;">暂无趋势数据</div>
+                        <?php } ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <div class="col-lg-7">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+                        <h3 class="card-title">最近动态</h3>
+                    </div>
+                    <div class="card-body pt-2">
+                        <?php if (!empty($recent)) { ?>
+                        <div class="feed-list">
+                            <?php foreach ($recent as $_f) { ?>
+                            <div class="feed-item">
+                                <div class="feed-icon <?php echo in_array($_f['type'] ?? '', array('vod','art','user'), TRUE) ? xn_h($_f['type']) : ''; ?>">
+                                    <?php if ('vod' == $_f['type']) { ?><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><?php } elseif ('art' == $_f['type']) { ?><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><?php } else { ?><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><?php } ?>
+                                </div>
+                                <div class="feed-body">
+                                    <div class="feed-name"><?php echo xn_h($_f['name'] ?? ''); ?></div>
+                                    <div class="feed-meta"><?php echo 'vod' == ($_f['type'] ?? '') ? '新视频入库' : ('art' == ($_f['type'] ?? '') ? '新文章发布' : '新用户注册'); ?></div>
+                                </div>
+                                <div class="feed-time"><?php echo !empty($_f['time']) ? xn_h(date('m-d H:i', intval($_f['time']))) : '-'; ?></div>
+                            </div>
+                            <?php } ?>
+                        </div>
+                        <?php } else { ?>
+                        <div class="feed-empty">暂无动态，去添加内容吧</div>
+                        <?php } ?>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 12 23 18 23 18 21.09 15.09"/><path d="M10.09 2.4a9 9 0 1 0 9.9 5.06"/><path d="M2.4 9.2A9 9 0 0 1 23 8"/></svg></div>
+                        <h3 class="card-title">更新与通知</h3>
+                    </div>
+                    <div class="card-body pt-2">
+                        <?php if (!empty($nnzs['replist'])) { foreach (array_slice($nnzs['replist'], 0, 3) as $_rep) { ?>
+                        <div class="notice-item">
+                            <div class="notice-icon warn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+                            <div><div class="notice-title"><?php echo htmlspecialchars((string)($_rep['sitename'] ?? '替换通知'), ENT_QUOTES, 'UTF-8'); ?></div><div class="notice-desc"><?php echo htmlspecialchars((string)($_rep['addtime'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></div></div>
+                        </div>
+                        <?php } } ?>
+                        <div class="notice-item">
+                            <div class="notice-icon info"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div>
+                            <div>
+                                <div class="notice-title">系统版本 v<?php echo xn_h($version);?><?php if (isset($cloud_version) && $cloud_version != $version) { ?> · 云端 v<?php echo xn_h($cloud_version);?><?php } ?></div>
+                                <div class="notice-desc"><?php echo !empty($update_log) ? htmlspecialchars((string)$update_log, ENT_QUOTES, 'UTF-8') : '当前为最新稳定版本，可前往「系统升级」查看云端动态。'; ?></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>

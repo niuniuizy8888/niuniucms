@@ -115,7 +115,7 @@ CREATE TABLE `niuniucms_session` (
   `cid` int(11) unsigned NOT NULL default '0', 
   `url` varchar(255) NOT NULL default '',  
   `ip` decimal(39,0) unsigned NOT NULL default '0', 
-  `useragent` varchar(255) NOT NULL default '', 
+  `useragent` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '', 
   `data` varchar(1024) NOT NULL default '',  
   `bigdata` tinyint(1) NOT NULL default '0',
 
