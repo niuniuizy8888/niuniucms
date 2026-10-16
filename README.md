@@ -4,7 +4,7 @@ NiuNiuCMS 是一个基于 PHP + MySQL 的视频内容管理系统，包含前台
 
 ## 环境要求
 
-- PHP 8.0+
+- PHP 8.0+（使用了 PHP 8 原生函数，不再兼容 7.x）
 - MySQL 5.7+ / 8.0+
 - Nginx 或 Apache
 - 推荐开启 `pdo_mysql`

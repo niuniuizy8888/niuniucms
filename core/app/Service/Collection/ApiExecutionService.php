@@ -324,7 +324,7 @@ class ApiExecutionService
         if ($allowRepair && is_array($arr)) {
             $msg = trim((string)($arr['msg'] ?? ''));
             if ('' !== $msg && preg_match('#无效 token|站点未启用#u', $msg)) {
-                $repair = \App\Service\System\CloudOpsService::storeInstallRegister(TRUE);
+                $repair = \App\Service\System\CloudOpsService::storeInstallRegister();
                 if (!empty($repair['ok'])) {
                     return self::remoteSyncBase($url, FALSE);
                 }

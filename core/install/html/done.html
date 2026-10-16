@@ -41,6 +41,11 @@
                 <div class="mt-2">两步同步后，其余代码无需改动；后台链接会自动读取 <code>admin_entry</code> 生成。后续升级也会按该配置同步后台入口文件。</div>
                 <div class="mt-2">若暂时不改名，请务必使用强管理员密码；系统已内置同 IP 与同账号各 10 次/300 秒的登录限流。</div>
               </div>
+              <?php if (empty($replace['install_report'])) { ?>
+              <div class="alert alert-danger text-start small mb-4" role="alert">
+                <strong>注意：</strong>安装时未勾选“上报安装信息”，本站未在云端登记，<strong>无法使用云端异步采集</strong>（云端替换下发同样不可用）。本地采集与定时采集不受影响。
+              </div>
+              <?php } ?>
               <a class="btn btn-install w-100" href="../">进入网站首页</a>
             </div>
             <div class="install-footer">牛牛CMS 安装向导</div>

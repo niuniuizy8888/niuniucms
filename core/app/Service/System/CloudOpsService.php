@@ -76,6 +76,12 @@ class CloudOpsService
             if (function_exists('xn_log')) xn_log('store install register failed: no response', 'cloud');
             return array('ok' => FALSE, 'msg' => '商店补登记 token 失败（无响应）');
         }
+        $res = xn_json_decode((string)$raw);
+        if (!is_array($res) || 0 !== intval($res['code'] ?? -1)) {
+            $err = is_array($res) ? (string)($res['msg'] ?? '') : '返回非 JSON';
+            if (function_exists('xn_log')) xn_log('store install register rejected: ' . $err, 'cloud');
+            return array('ok' => FALSE, 'msg' => '商店补登记 token 失败：' . $err);
+        }
         return array('ok' => TRUE, 'msg' => 'ok');
     }
 
@@ -266,7 +272,7 @@ class CloudOpsService
         }
         $msg = trim((string)($arr['msg'] ?? ''));
         if ('' !== $msg && preg_match('#无效 token|站点未启用#u', $msg)) {
-            $repair = self::storeInstallRegister(TRUE);
+            $repair = self::storeInstallRegister();
             if (!empty($repair['ok'])) {
                 $raw = https_request($url, $payload, '', 20, 0, 8 * 1048576);
                 $arr = xn_json_decode((string)$raw);
