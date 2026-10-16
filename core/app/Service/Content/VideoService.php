@@ -36,7 +36,50 @@ class VideoService
     protected static function queryListIndexCachePrefix(): string { return 'video_find_vid_'; }
     /** ContentQueryTrait 配置点：descIndexByCid 缓存键前缀，与 list 前缀分桶互不污染。@return string */
     /** ContentQueryTrait 配置点：主表写入实现，转发兼容壳 video__update()→RepositoryFactory::vod()->update()（$id 传数组经 applyCond 变 IN 可批量）。@return int|false 影响行数；底层空参/失败为 false */
-    protected static function queryUpdateImpl($id, array $update) { return video__update($id, $update); }
+    protected static function queryUpdateImpl($id, array $update) { return video__update($id, self::fitColumns($update)); }
+
+    /**
+     * vod 表 varchar/char 列宽（字符数，utf8mb4；与 core/install/install.sql 及线上 DESCRIBE 一致）。
+     * 采集源字段（演员/简介/编剧/副标等）常超长，严格模式下 MySQL 报 SQLSTATE[22001] Data too long 整行入库失败。
+     */
+    private const VOD_COLUMN_LIMITS = array(
+        'alias' => 32, 'tag' => 255, 'uptime' => 255, 'name' => 255, 'sub' => 255, 'en' => 255, 'letter' => 1,
+        'pic' => 1024, 'pic_slide' => 1024, 'actor' => 255, 'director' => 255, 'writer' => 100, 'behind' => 100,
+        'blurb' => 255, 'remarks' => 100, 'pubdate' => 100, 'serial' => 20, 'area' => 20, 'lang' => 10,
+        'year' => 10, 'version' => 30, 'play_from' => 255, 'play_server' => 255, 'play_note' => 255,
+    );
+
+    /**
+     * 入库前按 vod 列宽截断字符串字段（多字节安全，按字符计）；非字符串值与未知列原样保留。
+     * 采集（videoRowPayload / fastDbBuildVodRow）与 VideoService::update 统一经此收口。
+     * @param array $row 列=>值
+     * @return array 截断后的行
+     */
+    public static function fitColumns(array $row): array
+    {
+        foreach (self::VOD_COLUMN_LIMITS as $col => $max) {
+            if (isset($row[$col]) && is_string($row[$col])) {
+                $row[$col] = self::fitText($row[$col], $max);
+            }
+        }
+        return $row;
+    }
+
+    /**
+     * 字符串截断到 $max 个字符（UTF-8 多字节安全），并去掉截断造成的半截 HTML 实体
+     * （采集字段入库前已 htmlspecialchars，`&amp;` 被切成 `&am` 会在前台显示乱码）。
+     */
+    public static function fitText(string $s, int $max): string
+    {
+        if (function_exists('mb_strlen')) {
+            if (mb_strlen($s, 'UTF-8') <= $max) return $s;
+            $cut = mb_substr($s, 0, $max, 'UTF-8');
+        } else {
+            if (strlen($s) <= $max) return $s;
+            $cut = (string)@iconv('UTF-8', 'UTF-8//IGNORE', substr($s, 0, $max));
+        }
+        return (string)preg_replace('/&#?[A-Za-z0-9]{0,8}$/', '', $cut);
+    }
     /** ContentQueryTrait 配置点：read()/update() 内容行缓存键前缀（后接 intval(vid)，缓存键 vod_<id> 的历史口径）。@return string */
     protected static function queryCachePrefix(): string { return 'vod_'; }
     /**

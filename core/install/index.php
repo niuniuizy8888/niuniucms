@@ -297,6 +297,7 @@ function get_env(&$env, &$write, &$funclist)
         array('name' => 'pdo_mysql',  'tip' => 'function_pdo_mysql_not_exists','ok' => extension_loaded('pdo_mysql'),  'must' => TRUE),
         array('name' => 'openssl',    'tip' => 'function_openssl_not_exists',  'ok' => extension_loaded('openssl'),    'must' => FALSE),
         array('name' => 'gd',         'tip' => 'function_gd_not_exists',       'ok' => extension_loaded('gd'),         'must' => FALSE),
+        array('name' => 'zip',        'tip' => 'function_zip_not_exists',      'ok' => class_exists('ZipArchive'),     'must' => FALSE),
         array('name' => 'glob',       'tip' => 'function_glob_not_exists',     'ok' => function_exists('glob'),        'must' => FALSE),
         array('name' => 'gzinflate',  'tip' => 'function_gzcompress_not_exists','ok' => function_exists('gzinflate'),   'must' => FALSE),
         array('name' => 'mb_substr',  'tip' => 'function_mb_substr_not_exists','ok' => function_exists('mb_substr'),    'must' => FALSE),

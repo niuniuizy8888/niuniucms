@@ -111,8 +111,13 @@ class TmplManageService
         $dir = param_word('dir');
         $url = admin_param_text('downurl', '', 1024);
         empty($url) and message(-1, lang('data_is_empty'));
+        if (!class_exists('ZipArchive')) {
+            return array('code' => -1, 'message' => lang('zip_ext_missing'));
+        }
 
-        \App\Service\System\TemplateService::download($url, $dir);
+        if (!\App\Service\System\TemplateService::download($url, $dir)) {
+            return array('code' => -1, 'message' => lang('down_err'));
+        }
         admin_audit_log('tmpl_down', array('name' => $dir));
         return array('code' => 0, 'message' => lang('down_successfully'));
     }
@@ -150,8 +155,10 @@ class TmplManageService
         if ($path == '') {
             $arrlist = \App\Service\System\TemplateService::topLevelDirs($arrs);
         } else {
-            $arrlist = \App\Service\System\TemplateService::topLevelDirs($arrs);
-            isset($arrlist[$path]) and $arrlist = $arrlist[$path];
+            // 修复：$arrs 已是 <主题>/<path> 目录本身的内容，原先再过 topLevelDirs 会剔除全部文件
+            // （只剩子目录），且 isset($arrlist[$path]) 永不命中 ⇒ 进 html 只看到目录看不到文件。
+            // 现列出当前目录：子目录（可进入）+ 允许扩展名的文件（可编辑）；编辑器侧栏只列文件。
+            $arrlist = self::dirListing($arrs, $allowExt, $editor == 'editor');
         }
 
         if ($editor == 'editor') {
@@ -248,6 +255,32 @@ class TmplManageService
     {
         $safeToken = param('safe_token');
         admin_bull_token_guard($uid, $scene, $safeToken);
+    }
+
+    /**
+     * 当前目录列表（模板编辑页）：目录名 => 子树（可进入），文件名 => 文件名（可编辑）；
+     * 只保留能通过 sanitizePath/sanitizeFilename 与扩展名白名单的条目，目录在前、各自自然排序。
+     * $filesOnly=TRUE（编辑器侧栏）时只返回文件。
+     */
+    private static function dirListing(array $arrs, array $allowExt, bool $filesOnly): array
+    {
+        $dirs = array();
+        $files = array();
+        foreach ($arrs as $k => $v) {
+            if (is_array($v)) {
+                // 目录：名字须能通过 sanitizePath（字符白名单），否则点进去也会被拒
+                if (!$filesOnly && is_string($k) && preg_match('#^[a-zA-Z0-9_\\-]+$#', $k)) $dirs[$k] = $v;
+                continue;
+            }
+            $v = (string)$v;
+            $ext = strtolower(pathinfo($v, PATHINFO_EXTENSION));
+            // 文件：名字须能通过 sanitizeFilename，且扩展名在编辑白名单内
+            if ($v === '' || $v[0] === '.' || !preg_match('#^[a-zA-Z0-9_\\-.]+$#', $v) || !in_array($ext, $allowExt, TRUE)) continue;
+            $files[$v] = $v;
+        }
+        ksort($dirs, SORT_NATURAL | SORT_FLAG_CASE);
+        ksort($files, SORT_NATURAL | SORT_FLAG_CASE);
+        return $dirs + $files;
     }
 
     /**

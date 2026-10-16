@@ -424,6 +424,10 @@ class CloudOpsService
     public static function updateDown($url, $cloud_version)
     {
         $conf = _SERVER('conf');         global $config;
+        if (!class_exists('ZipArchive')) {
+            self::upgradeLogError('update_down error: PHP zip extension not loaded (ZipArchive missing)');
+            return false;
+        }
         if (!is_string($url) || $url === '') {
             self::upgradeLogError('update_down error: invalid download url payload');
             return false;
@@ -734,6 +738,7 @@ class CloudOpsService
     public static function packageVersionFromZip($zipPath)
     {
         if (!is_string($zipPath) || '' === $zipPath || !is_file($zipPath)) return '';
+        if (!class_exists('ZipArchive')) return '';
         $zip = new \ZipArchive();
         if ($zip->open($zipPath) !== TRUE) return '';
         $def = $zip->getFromName('core/config/config.default.php');

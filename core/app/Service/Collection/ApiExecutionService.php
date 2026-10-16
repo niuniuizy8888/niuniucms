@@ -755,7 +755,8 @@ class ApiExecutionService
         $arr['play_note'] = xn_url_strip((string)join('$$$', (array)$cj_play_note_arr));
 
         return array(
-            'arr' => $arr,
+            // 按 vod 列宽截断（防 SQLSTATE[22001] Data too long：actor/blurb/writer/sub 等采集字段超长）
+            'arr' => \App\Service\Content\VideoService::fitColumns($arr),
             'tags' => $tags,
             'cj_play_from' => $cj_play_from_arr,
             'cj_play_url' => $cj_play_url_arr,
@@ -1298,7 +1299,7 @@ class ApiExecutionService
      * 并加一条防御性次级请求：先按原 URL 取一次；**若拿不到 class 且 URL 上还没有 `ac=` 参数**，
      * 补 `ac=list` 再取一次。
      *
-     * 关于 `ac=list`（口径已实测纠偏，勿再照抄旧说法）：本站测试源 `api.wsyzy.net/.../vod/`
+     * 关于 `ac=list`（口径已实测纠偏，勿再照抄旧说法）：本站测试源 `example.com/.../vod/`
      * **裸 URL 本身就返回 `class`×60**（`ac=videolist` 那种才不带 class）；补 `ac=list` 只是为
      * 「根路径不返回 class」的其它 MacCMS 源留的兜底，属无害冗余，不是本站故障原因。
      *

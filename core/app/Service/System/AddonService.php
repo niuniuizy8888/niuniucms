@@ -663,6 +663,7 @@ class AddonService
         if (!is_file($zipFile)) return self::fail('上传包不存在');
         $size = (int)@filesize($zipFile);
         if ($size <= 0 || $size > self::ZIP_MAX_FILESIZE) return self::fail('包体积超限（上限 50MB）');
+        if (!class_exists('ZipArchive')) return self::fail(lang('zip_ext_missing'));
         $zip = new \ZipArchive();
         if (TRUE !== $zip->open($zipFile)) return self::fail('ZIP 文件无法打开');
         // 1) 条目闸：路径穿越（绝对路径/..段/盘符，对齐 CloudOpsService::validateUpgradeZip）

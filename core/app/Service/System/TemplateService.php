@@ -294,13 +294,16 @@ class TemplateService
     public static function templateList(array $cond = array(), array $orderby = array(), int $page = 1, int $pagesize = 20, int $type = 1): array
     {
         $state = self::loadState();
-        if (2 == $type) {
-            return arrlist_cond_orderby($state['tmpllist'], $cond, $orderby, $page, $pagesize);
+        if (2 != $type && 3 != $type) return array();
+        $list = 2 == $type ? $state['tmpllist'] : $state['tmpls'];
+        // 「已安装」以站点当前启用主题（KV conf.theme，currentTheme）为唯一口径：
+        // 各主题 conf.json 的 installed 标志会漂移（商店包自带 installed=1、切换主题时旧主题未必被置 0），
+        // 直接读它会让后台出现多个「卸载」。这里只覆盖展示数据，不改写 conf.json。
+        $active = self::currentTheme();
+        foreach ($list as $dir => $row) {
+            $list[$dir]['installed'] = ((string)$dir === $active) ? 1 : 0;
         }
-        if (3 == $type) {
-            return arrlist_cond_orderby($state['tmpls'], $cond, $orderby, $page, $pagesize);
-        }
-        return array();
+        return arrlist_cond_orderby($list, $cond, $orderby, $page, $pagesize);
     }
 
     /**
@@ -438,6 +441,11 @@ class TemplateService
     public static function download(string $url, string $dir)
     {
         $dir = basename($dir);
+        // PHP 未启用 zip 扩展：ZipArchive 不存在，new 即 Fatal。先拦，提示站长启用扩展
+        if (!class_exists('ZipArchive')) {
+            self::templateLogError('ZipArchive error: PHP zip extension not loaded');
+            return false;
+        }
         $savePath = \APP_PATH . 'runtime/cache/' . $dir . '.zip';
         // 修复：商店 downurl 是**明文**（且主机可能是商店 site_url，需归一为可达地址），
         // 原先的 core_decrypt 在 store 模式下返空 ⇒ 主题包下载必然失败。统一走 cloudUrl()。

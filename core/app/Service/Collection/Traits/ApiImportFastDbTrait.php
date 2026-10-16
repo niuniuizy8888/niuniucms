@@ -551,7 +551,8 @@ trait ApiImportFastDbTrait
     {
         $time = $time ?: time();
         $en = htmlspecialchars($v['vod_en'] ?? '', ENT_QUOTES);
-        return array(
+        // 按 vod 列宽截断（防 Data too long；update 行复用本函数，截断后 diff 才不会每次都判「有变化」）
+        return \App\Service\Content\VideoService::fitColumns(array(
             'cid'          => intval($cid),
             'views'        => 0,
             'sticky'       => 0,
@@ -591,7 +592,7 @@ trait ApiImportFastDbTrait
             'cup'          => 0,
             'favorites'    => 0,
             'likes'        => 0,
-        );
+        ));
     }
 
     /**
