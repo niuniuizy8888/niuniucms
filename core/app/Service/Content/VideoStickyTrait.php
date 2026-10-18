@@ -30,7 +30,7 @@ trait VideoStickyTrait
         static $cache = array();
         if (isset($cache[$key])) return $cache[$key];
         $arr = cache_get($key);
-        if (NULL === $arr) {
+        if (empty($arr)) { // 缓存的空数组也视为未命中，避免空值遮蔽新推荐
             $arr = self::stickyFind(array(), array('vid' => -1), 1, 2000);
             $arr and cache_set($key, $arr, 1800);
         }
@@ -152,7 +152,7 @@ trait VideoStickyTrait
 
     /**
      * 置推荐写路径：更新 vod.sticky + REPLACE vod_sticky（cid/vid/sticky/create_date=time）。
-     * ⚠ 不清 sticky_video_list、不推进 sticky_video_ver——置顶列表缓存靠 TTL（1800s）兜底，展示存在滞后窗口。
+     * 写入后清 sticky_video_list 并推进 sticky_video_ver（首页/分页置顶缓存即时换代失效）。
      * @param int $vid 视频 ID（本方法不校验存在性，靠调用方传入 $video 非空把关）
      * @param int $sticky 推荐级别（写两表）
      * @param array $video 视频整行（取 cid/vid；空数组短路返回 FALSE）
@@ -163,12 +163,15 @@ trait VideoStickyTrait
         $time = $GLOBALS['time'] ?? time();
         if (empty($video)) return FALSE;
         self::update($vid, array('sticky' => $sticky));
-        return \App\Repository\RepositoryFactory::stickyVod()->replace(array(
+        $r = \App\Repository\RepositoryFactory::stickyVod()->replace(array(
             'cid' => $video['cid'],
             'vid' => $video['vid'],
             'sticky' => $sticky,
             'create_date' => $time,
         ));
+        cache_delete('sticky_video_list');
+        cache_set('sticky_video_ver', time(), 86400);
+        return $r;
     }
 
     /**
