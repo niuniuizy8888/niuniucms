@@ -117,12 +117,20 @@ class ListService
             $page_url = self::listPageUrl($route_list, $cid, $cate, $extra, $conf, $hit);
             $ranked = \App\Service\Content\QueryService::rankVideoByHit($hit, $cid, $page, $pagesize);
             $num = $ranked['total'];
+            $maxPage = max(1, (int)ceil($num / max(1, $pagesize)));
+            if ($page > $maxPage) {
+                // 越界页钳制到末页（同 CategoryService 口径）
+                $page = $maxPage;
+                $ranked = \App\Service\Content\QueryService::rankVideoByHit($hit, $cid, $page, $pagesize);
+            }
             $videolist = $ranked['items'];
         } else {
-            $videolist = \App\Service\Content\QueryService::listVideoByCid($cid, $page, $pagesize);
             $page_url = self::listPageUrl($route_list, $cid, $cate, $extra, $conf);
             $vcc = \App\Service\Content\VideoService::countByCid($cid);
             $num = $vcc > $pagesize * $conf['listsize'] ? $pagesize * $conf['listsize'] : $vcc;
+            // 越界页钳制到末页（同 CategoryService 口径）
+            $page = min(max(1, intval($page)), max(1, (int)ceil($num / max(1, $pagesize))));
+            $videolist = \App\Service\Content\QueryService::listVideoByCid($cid, $page, $pagesize);
         }
 
         return array(

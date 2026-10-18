@@ -59,7 +59,7 @@ function http_url_path()
     $path = substr($_SERVER['PHP_SELF'], 0, $len);
     !isset($conf['url_rewrite_on']) and $conf['url_rewrite_on'] = 0;
     $conf['url_rewrite_on'] < 2 and $path = $path . '/';
-    $http = ((443 == $port) || 'https' == $proto || ($https && 'off' != $https)) ? 'https' : 'http';
+    $http = (!empty($conf['force_https']) || (443 == $port) || 'https' == $proto || ($https && 'off' != $https)) ? 'https' : 'http';
     return "$http://$host$path";
 }
 

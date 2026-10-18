@@ -53,12 +53,12 @@ class PlayService
         $from_index = $play_from - 1;
         $ep_index = $ep - 1;
         if (!isset($video['play_data'][$from_index])) {
-            return array('found' => false, 'reason' => 'play_from_not_found');
+            return array('found' => false, 'reason' => 'redirect', 'url' => $video['url'] ?? url('index'), 'cause' => 'play_from_not_found');
         }
 
         $play_list = $video['play_data'][$from_index]['info'] ?? array();
         if (!isset($play_list[$ep_index])) {
-            return array('found' => false, 'reason' => 'episode_not_found');
+            return array('found' => false, 'reason' => 'redirect', 'url' => $video['url'] ?? url('index'), 'cause' => 'episode_not_found');
         }
 
         $froms = $video['play_data'][$from_index]['from'];

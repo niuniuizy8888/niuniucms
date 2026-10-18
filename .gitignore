@@ -47,10 +47,10 @@ node_modules/
 *.tar.gz
 *.tgz
 *.bak
+*.bak-*
+*.bak.*
 *.tmp
 
 # 商店/第三方主题：仅演示站本地使用，不入公共仓库
-/template/03/
-/template/9C18A511/
-/template/9C18A514/
-/template/9C18A515/
+/template/[0-9]*/
+/template/9C18A*/

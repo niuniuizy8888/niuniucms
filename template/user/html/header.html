@@ -1,11 +1,11 @@
 
  <!-- header -->
     <div class="header">
-    <div class="menu-toggle-btn">
+    <?php if (!empty($user['uid'])) { ?><div class="menu-toggle-btn">
         <a href="#">
             <i class="bi bi-list"></i>
         </a>
-    </div>
+    </div><?php } ?>
     <a href="/" class="logo">
         <img src="/template/default/images/logo.png" alt="<?php echo $nncms['site_name'] ?? 'NiuNiuCms';?>">
     </a>

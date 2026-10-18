@@ -40,6 +40,11 @@ if (!($data['found'] ?? false)) {
 extract($data);
 $header['title'] = $video['name'];
 $header['mobile_link'] = $video['url'];
+$video['content'] = xn_html_safe((string)($video['content'] ?? ''));
+// 集名兜底：空或误存为 URL 时按 1 起始的集序号显示
+if ('' === trim((string)$play_name) || preg_match('#^https?://#i', (string)$play_name)) {
+    $play_name = '第' . max(1, intval($ep ?? 1)) . '集';
+}
 \App\Service\Front\SeoService::apply($conf['seo']['play'], [
     'play_name' =>  $play_name,
     'name' => $video['name'],

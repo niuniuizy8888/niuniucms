@@ -10,10 +10,10 @@
 <script src="/static/js/app.js"></script>
 <script>
     var debug = DEBUG = 0;
-    var cid = <?php echo $cid ?? 0;?>;
-    var url_rewrite_on = <?php echo $conf['url_rewrite_on'] ?? 0;?>;
+    var cid = <?php echo intval($cid ?? 0);?>;
+    var url_rewrite_on = <?php echo intval($conf['url_rewrite_on'] ?? 0);?>;
     var url_access = true;
-    var url_path = '<?php echo $conf['path'] ?? './';?>';
+    var url_path = <?php echo json_encode((string)($conf['path'] ?? './'));?>;
 </script>
 </body>
 </html>

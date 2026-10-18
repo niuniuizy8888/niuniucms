@@ -182,6 +182,8 @@ CREATE TABLE `niuniucms_vod` (
   KEY `create_date` (`create_date`),
   KEY `cid_views` (`cid`, `views`),
   KEY `idx_filter` (`area`,`lang`,`year`,`cid`),
+  KEY `idx_cid_vid` (`cid`,`vid`),
+  KEY `idx_cid_lang_vid` (`cid`,`lang`,`vid`),
   -- 修复（默认 MyISAM 安装报 1071）：utf8mb4 下 varchar(255) 全列索引 = 1020 B，
   -- 既超 MyISAM 的 1000 B 硬限，也超 MySQL 5.6 默认行格式 InnoDB 的 767 B 限。
   -- 改前缀 191 字符（191×4 = 764 B ≤ 767）——采集去重 `WHERE name = ?` 仍走该索引。

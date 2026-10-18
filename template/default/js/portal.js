@@ -136,21 +136,13 @@
       card.addEventListener('touchend', function() { this.style.transform = ''; }, { passive: true });
     });
 
-    // ---- mobile bottom nav highlight (from public/include.html) ----
-    var currentPath = window.location.pathname;
-    document.querySelectorAll('.bottom-nav-item').forEach(function(item) {
-      var href = item.getAttribute('href');
-      if (href === currentPath || (href === '/' && currentPath === '/')) item.classList.add('active');
-    });
+    // 导航高亮改由服务端输出 active（$nav_active/$nav_home/$nav_pku，见 core/model/view.php nn_nav_state）；
+    // 原 pathname 比对在 query 形态 URL 下恒命中首页，已移除。
 
-    // ---- desktop nav highlight (from public/include.html) ----
-    document.querySelectorAll('.header-tab, .nav-item').forEach(function(item) {
-      var link = item.querySelector('a') || item;
-      var href = link.getAttribute('href');
-      if (!href) return;
-      var normHref = href.replace(/\/$/, '');
-      var normPath = currentPath.replace(/\/$/, '');
-      if (normHref === normPath || (href === '/' && currentPath === '/')) item.classList.add('active');
+    // ---- 筛选行：横向滚动行把选中项滚入可视区（只动行自身 scrollLeft，不滚页面） ----
+    document.querySelectorAll('.nn-row-opts').forEach(function(row) {
+      var on = row.querySelector('.filter-item.active');
+      if (on && row.scrollWidth > row.clientWidth) row.scrollLeft = Math.max(0, on.offsetLeft - row.offsetLeft - 48);
     });
 
     // ---- mobile sidebar (from public/head.html) ----

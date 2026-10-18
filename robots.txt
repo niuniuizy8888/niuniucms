@@ -2,7 +2,6 @@ User-agent: *
 Disallow: /api.php
 Disallow: /core/
 Disallow: /runtime/
-Disallow: /static/
 Disallow: /plugins/
 Disallow: /task/
 Disallow: /domian/

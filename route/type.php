@@ -8,13 +8,22 @@ if (page_cache_start($cacheKey)) return;
 
 $page = param(2, 1);
 // 发布前检查修复（C-3）：深分页钳制（route/list.php 同款）
-$page = min(max(1, intval($page)), max(1, intval($conf['listsize'] ?? 50)));
+$page = max(1, intval($page)); // 越界由 TypeService 按真实总页数 302 钳制
 $type = param(1, '');
 $fallbackCid = intval(param('cid', 0));
 $data = \App\Service\Front\TypeService::build($type, intval($page), $fallbackCid, $conf, $catelist, $areaarray, $yeararray, $langarray);
 
 
 // hook route_type_data_after.php
+// 非法 cid / 选项值 ⇒ 404（不写页缓存）；越界页 ⇒ 302 末页（search 同款）
+if (!empty($data['not_found'])) {
+    http_response_code(404);
+    include _include(APP_PATH . '404.html');
+    return;
+}
+if (!empty($data['redirect']) && !$json) {
+    http_location($data['redirect']);
+}
 extract($data);
 $_SESSION['cid'] = $cid;
 \App\Service\Front\SeoService::apply($conf['seo']['type'], [
@@ -25,8 +34,8 @@ $_SESSION['cid'] = $cid;
     'year' => $req_year,
     'sitename' => $conf['sitename'],
 ], [
-    'url' => \App\Service\Front\SeoService::currentUrl(),
-    'robots' => intval($page) > 1 ? 'noindex,follow' : '',
+    'url' => $filter_canonical,
+    'robots' => $filter_noindex ? 'noindex,follow' : '',
 ]);
 if ($json) {
     $api_json['cid'] = $cid;

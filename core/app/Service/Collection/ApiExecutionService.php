@@ -664,7 +664,7 @@ class ApiExecutionService
                 $cj_play_note_arr = $payload['cj_play_note'];
                 $info = $existing_vods[$v['vod_name']] ?? null;
                 if (!$info) {
-                    $vid = \App\Repository\RepositoryFactory::vod()->insert($arr);
+                    $vid = \App\Repository\RepositoryFactory::vod()->insert($arr); \App\Service\Front\TypeService::bumpFacets();
                     $vod_vid = array('vid' => $vid, 'cid' => $cid);
                     video_vid_create($vod_vid);
                     $vod_vid and cate_update($cid, array('videos+' => 1));

@@ -102,6 +102,8 @@ function _file($srcfile)
             $s = preg_replace_callback('#\{loop\:(\$' . $reg_arr . '(?:\040\$[a-zA-Z_]\w*){1,2})\}(.*?)\{\/loop\}#s', 'process_loop', $s);
         while (preg_match('#\{if\:[^\n\}]+\}.*?\{\/if\}#s', $s))
             $s = preg_replace_callback('#\{if\:([^\n\}]+)\}(.*?)\{\/if\}#s', 'process_if', $s); 
+        // {h:$a.b} / {h:$a}：HTML 转义输出（htmlspecialchars ENT_QUOTES，不二次编码已有实体）
+        $s = preg_replace_callback('#\{h\:\$([a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)*)\}#', 'process_vars_h', $s);
         $s = preg_replace_callback('#\{\$([a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)+)\}#', 'process_vars_dot', $s);
         if (!empty($conf['tpl_allow_expr'])) {
             $s = preg_replace('#\{\@([^\}]+)\}#', '<?php echo(\\1); ?>', $s);
@@ -191,6 +193,18 @@ function process_vars_dot($matches)
     $default = isset($matches[2]) ? $matches[2] : "''";
     // hook model_view_process_vars_dot_end.php
     return "<?php echo isset($var) ? $var : $default; ?>";
+}
+/**
+ * 编译 `{h:$a.b}` / `{h:$a}` 为转义 echo（htmlspecialchars ENT_QUOTES UTF-8，double_encode=false）。
+ * 用于采集来源字段（名称/备注/简介等）在 HTML 文本与属性位的输出。
+ *
+ * @param array $matches preg 捕获数组：[1]=变量路径（不含 $）
+ * @return string PHP 片段
+ */
+function process_vars_h($matches)
+{
+    $var = false === strpos($matches[1], '.') ? '$' . $matches[1] : dot_to_array_syntax($matches[1]);
+    return "<?php echo isset($var) ? htmlspecialchars((string)$var, ENT_QUOTES, 'UTF-8', false) : ''; ?>";
 }
 /**
  * 编译 `{$var}` / `{$arr[key]}` 型变量为裸 echo PHP 段（未定义输出空串）。
@@ -447,7 +461,33 @@ function view_load($type = '', $id = 0, $dir = '')
     $tpl_mode = $config['setting']['tpl_mode'] ?? 0;
      isset($tpl_mode) || $tpl_mode = 0;
     $detect = get_device();
+    // 导航高亮（服务端口径）：站点 URL 为 query 形态（/?cates-15.html），pathname 恒为 '/'，
+    // 前端按 pathname 比对无法区分栏目 ⇒ 在此按 $id 沿 catelist.cup 上溯到顶级 cid。
+    nn_nav_state((string)$type, intval($id));
     // hook model_view_view_load_end.php
     return \App\Service\System\TemplateService::resolveFrontViewFile((string)$type, intval($id), (string)$dir, $theme, intval($tpl_mode), intval($detect));
 }
 
+
+
+/**
+ * 计算导航高亮状态并写入全局：$nav_active（顶级栏目 cid，0=无）、$nav_route（视图类型）、
+ * $nav_home（首页=1）、$nav_pku（片库类列表页=1）。模板只做简单等值比较（{if:} 不得含函数调用）。
+ * @param string $type 视图类型（index/list/category/type/video/player/tag/search/art/page...）
+ * @param int $id 当前栏目 cid（0=无）
+ * @return void
+ */
+function nn_nav_state($type, $id)
+{
+    $catelist = isset($GLOBALS['catelist']) && is_array($GLOBALS['catelist']) ? $GLOBALS['catelist'] : array();
+    $cid = intval($id);
+    $guard = 0;
+    while ($cid && isset($catelist[$cid]) && intval($catelist[$cid]['cup'] ?? 0) > 0 && $guard++ < 10) {
+        $cid = intval($catelist[$cid]['cup']);
+    }
+    if ($cid && !isset($catelist[$cid])) $cid = 0;
+    $GLOBALS['nav_active'] = $cid;
+    $GLOBALS['nav_route'] = $type;
+    $GLOBALS['nav_home'] = $type === 'index' ? 1 : 0;
+    $GLOBALS['nav_pku'] = in_array($type, array('list', 'category', 'type', 'cate', 'lists'), TRUE) ? 1 : 0;
+}

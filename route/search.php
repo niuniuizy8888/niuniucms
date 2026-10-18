@@ -57,7 +57,20 @@ if ($keyword) {
         $search_cache_started = true;
     }
 }
-$data = \App\Service\Front\SearchService::build($keyword, $conf);
+$data = \App\Service\Front\SearchService::build($keyword, $conf, \App\Service\Front\SearchService::resolvePage());
+// 关键词本身以「-数字」结尾（如 26-27）：末段按页码解析后越界时，回退为整串关键词第 1 页
+if (!empty($data['redirect']) && '' !== \App\Service\Front\SearchService::pathPageSegment()) {
+    $_alt_kw = $keyword . '-' . \App\Service\Front\SearchService::pathPageSegment();
+    $_alt = \App\Service\Front\SearchService::build($_alt_kw, $conf, 1);
+    if (!empty($_alt['num'])) {
+        $keyword = $_alt_kw;
+        $data = $_alt;
+    }
+}
+// 越界页 → 302 到末页
+if (!empty($data['redirect']) && !$json) {
+    http_location($data['redirect']);
+}
 extract($data);
 $num = intval($num ?? 0);
 $_SESSION['cid'] = 0;

@@ -146,6 +146,8 @@ return array(
   'sitemap_play' => 1,
   'sitemap_tag' => 1,
   'sitemap_num' => 1000,
+  'force_https' => 0,
+  'category_sub_num' => 6,
   'url_rewrite_on' => 0,
   // （历史死键 disabled_plugin 已移除，真实开关为上方 disabled_addons）
   'version' => '1.0.4',
@@ -247,8 +249,8 @@ return array(
     'searchs' =>
     array(
       'seo_title' => '{$name} 相关影视电影院资源搜索结果 -{$sitename}',
-      'seo_key' => '{$name}相关影视电影院资源搜索结果,免费观看电视剧高清电影,星辰影院,青丝影院,青柠影院,八戒影院,天狼影院',
-      'seo_des' => '2026年最好看的电影，免费观看高清电影大全为您找到关于{$name}的{$num}条相关影视电影院资源。',
+      'seo_key' => '{$name}相关影视电影院资源搜索结果,{$name}在线观看,{$sitename}',
+      'seo_des' => '搜索“{$name}”相关影视，共找到{$num}部 - {$sitename}',
     ),
   ),
   'api_api' =>  array(

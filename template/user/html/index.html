@@ -4,7 +4,7 @@
 <div class="content">
 
     <!-- 欢迎卡片 -->
-    <div style="background:linear-gradient(135deg,var(--nn-elevated),var(--nn-overlay));border:1px solid var(--nn-border);border-radius:var(--nn-radius);padding:24px;margin-bottom:24px;">
+    <div class="nn-welcome" style="background:linear-gradient(135deg,var(--nn-elevated),var(--nn-overlay));border:1px solid var(--nn-border);border-radius:var(--nn-radius);padding:24px;margin-bottom:24px;">
         <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
             <div style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,var(--nn-primary),#FFD700);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:var(--nn-bg);flex-shrink:0;">
                 <?php echo strtoupper(substr($user['username'] ?? 'U', 0, 1));?>
@@ -17,7 +17,7 @@
                     <?php echo htmlspecialchars($user['groupname'] ?? '');?>
                 </span>
             </div>
-            <div style="display:flex;gap:10px;">
+            <div class="nn-welcome-actions" style="display:flex;gap:10px;">
                 <a href="<?php echo url('member-password');?>" style="padding:8px 20px;border:1px solid var(--nn-primary);color:var(--nn-primary);border-radius:9999px;font-size:13px;font-weight:500;transition:all .2s;">修改密码</a>
                 <a href="/" style="padding:8px 20px;background:var(--nn-primary);color:var(--nn-bg);border-radius:9999px;font-size:13px;font-weight:600;transition:all .2s;">返回首页</a>
             </div>
@@ -25,7 +25,7 @@
     </div>
 
     <!-- 快捷功能 -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-bottom:24px;">
+    <div class="nn-quick-grid">
         <a href="<?php echo url('member-vod_like');?>" style="background:var(--nn-elevated);border:1px solid var(--nn-border);border-radius:var(--nn-radius);padding:28px 20px;text-align:center;transition:all .2s;display:block;">
             <div style="width:48px;height:48px;border-radius:12px;background:rgba(250,195,61,.1);display:flex;align-items:center;justify-content:center;margin:0 auto 12px;">
                 <i class="bi bi-heart" style="font-size:22px;color:var(--nn-primary);"></i>
@@ -57,11 +57,11 @@
     </div>
 
     <!-- 账号信息 -->
-    <div style="background:var(--nn-elevated);border:1px solid var(--nn-border);border-radius:var(--nn-radius);padding:24px;">
+    <div class="nn-info-card" style="background:var(--nn-elevated);border:1px solid var(--nn-border);border-radius:var(--nn-radius);padding:24px;">
         <h5 style="margin:0 0 20px;font-size:17px;font-weight:700;color:var(--nn-text);">
             <i class="bi bi-person" style="color:var(--nn-primary);margin-right:8px;"></i>账号信息
         </h5>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 32px;">
+        <div class="nn-info-grid">
             <div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--nn-border);">
                 <span style="color:var(--nn-text3);font-size:14px;">用户名</span>
                 <span style="color:var(--nn-text);font-size:14px;font-weight:500;"><?php echo htmlspecialchars($user['username'] ?? '');?></span>

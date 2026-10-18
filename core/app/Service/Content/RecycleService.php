@@ -254,7 +254,7 @@ class RecycleService
             return false;
         }
         // 重建主行（保持原 vid）与 vod_vid 关联——insert($row) 直接按快照原 vid 落行
-        $ok = (bool)\App\Repository\RepositoryFactory::vod()->insert($row);
+        $ok = (bool)\App\Repository\RepositoryFactory::vod()->insert($row); \App\Service\Front\TypeService::bumpFacets();
         if ($ok) {
             \App\Repository\RepositoryFactory::vodVid()->replace(array('vid' => $vid, 'cid' => intval($row['cid'] ?? 0)));
             // 重建标签绑定 + 计数（rebindTags：只对仍存在、且绑定行已不存在的标签补插并 count+1）

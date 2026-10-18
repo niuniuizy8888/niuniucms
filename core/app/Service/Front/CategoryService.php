@@ -143,6 +143,17 @@ class CategoryService
             $num = $videos > $pagesize * $conf['listsize'] ? $pagesize * $conf['listsize'] : $videos;
         }
 
+        // 频道页每个子分类只展示前 N 条（conf.category_sub_num，默认 6），其余经「更多」进入子分类
+        $subNum = max(1, intval($conf['category_sub_num'] ?? 6));
+        if (!empty($arrlistall['list']) && is_array($arrlistall['list'])) {
+            foreach ($arrlistall['list'] as &$_sub) {
+                if (isset($_sub['news']) && is_array($_sub['news'])) {
+                    $_sub['news'] = array_slice($_sub['news'], 0, $subNum, true);
+                }
+            }
+            unset($_sub);
+        }
+
         return array(
             'found' => true,
             'type' => 'vod',

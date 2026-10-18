@@ -2,16 +2,16 @@
 <!-- 移动端底部导航 -->
 <div class="w-full mobile" style="padding-bottom: 70px;">
     <div class="fixed bottom-0 w-full z-40">
-        <div class="bottom-nav w-full pt-2 pb-2">
+        <div class="bottom-nav w-full pt-2 pb-2 nn-safe-bottom">
             <div class="flex justify-around">
-                <a href="/" class="bottom-nav-item active">
+                <a href="/" class="bottom-nav-item {if:$nav_home==1}active{/if}">
                     <div class="relative">
                         <img decoding="async" alt="首页" width="22" height="23" src="{$path_tpl}images/home.svg">
                         <div class="absolute -top-1 -right-1 w-2 h-2 bg-[var(--color-primary)] rounded-full opacity-0 transition-opacity duration-200"></div>
                     </div>
                     <span>首页</span>
                 </a>
-                <a href="{$pku_url}" class="bottom-nav-item">
+                <a href="{$pku_url}" class="bottom-nav-item {if:$nav_pku==1}active{/if}">
                     <div class="relative">
                         <img decoding="async" alt="片库" width="22" height="23" src="{$path_tpl}images/list.svg">
                     </div>
@@ -42,7 +42,6 @@
                 {/if}
                 {if:defined("DEBUG") && DEBUG > 0 && DEBUG < 3 && function_exists('xn_debug_info')}
                 <div class="text-xs text-[var(--text-disabled)] mt-2 font-mono">{$nncms.debug_mode}</div>
-                {@xn_debug_info()}
                 {/if}
             </div>
         </div>
@@ -50,7 +49,7 @@
 </footer>
 
 <!-- 回到顶部 -->
-<button id="backTop" class="d-none pointer-cursor fixed bottom-20 right-4 rounded-full z-30 bg-[var(--bg-overlay)]/90 backdrop-blur-md p-3 shadow-lg hover:bg-[var(--bg-hover)] hover:shadow-xl transition-all duration-300 transform hover:scale-110 active:scale-95 border border-[var(--border-subtle)]">
+<button id="backTop" type="button" aria-label="返回顶部" class="d-none pointer-cursor fixed bottom-20 right-4 rounded-full z-30 bg-[var(--bg-overlay)]/90 backdrop-blur-md p-3 shadow-lg hover:bg-[var(--bg-hover)] hover:shadow-xl transition-all duration-300 transform hover:scale-110 active:scale-95 border border-[var(--border-subtle)]">
     <img decoding="async" alt="返回顶部" width="24" height="24" src="{$path_tpl}images/backtop.svg" class="opacity-80">
 </button>
 

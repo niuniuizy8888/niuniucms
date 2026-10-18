@@ -172,6 +172,7 @@ $cid_count = is_array($catelist) ? count($catelist) : 0;
 $catearr = arrlist_key_values($catelist, 'cid', 'name');
 $catelist_show = $catelist;
 $cate_nav = category_tree($catelist);
+$nav_active = 0; $nav_route = ''; $nav_home = 0; $nav_pku = 0;
 $api_json['catelist'] = $cate_nav;
 $runtime = runtime_init();
 check_runlevel();
@@ -191,6 +192,11 @@ if (str_contains($_SERVER['REQUEST_URI'], 'sitemap') && $txt_len) {
         }
         $_REQUEST[0] = 'sitemap';
     }
+}
+// /sitemap.xml → sitemap 路由的 xml 分支（index.php 已放行该路径，不走静态文件通道）
+if ('/sitemap.xml' === strtolower((string)parse_url((string)($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH))) {
+    $_REQUEST[0] = 'sitemap';
+    $_REQUEST[1] = 'xml';
 }
 $areaarray = explode(',', $conf['area']);
 $yeararray = explode(',', $conf['year']);
@@ -272,7 +278,7 @@ $danmu_send = url('danmu-send');
 // 页面内嵌的令牌对其浏览器无效，播放器需在该端点上取一次才发得出弹幕（第二十二轮）
 $danmu_token_api = url('danmu-token');
 // 手机端底部导航「片库」链接（修复：此前 $pku_url 从未被赋值 → href 恒空）
-$pku_url = url($conf['route']['type'], '', FALSE);
+$pku_url = url($conf['route']['type'] . '-' . intval(\App\Service\Front\TypeService::defaultCid($catelist)) . '___', '', FALSE);
 // 后台入口模板变量：前台模板编译期剥离原生 PHP（tpl_allow_php=0，view.php 编译规则），
 // 「后台管理」等入口链接统一走模板变量（修复：此前模板内裸写 PHP 输出指令，编译后被清空导致链接为空）
 $admin_entry = !empty($conf['admin_entry']) ? $conf['admin_entry'] : 'admin.php';

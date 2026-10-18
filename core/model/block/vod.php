@@ -509,7 +509,9 @@ function block_sticky_index_video($arr)
     $sticky_ver = (int)cache_get('sticky_video_ver');
     $key = block_key('sticky_index', $n, 'v' . $sticky_ver);
     // hook model_block_vod_block_sticky_index_video_end.php
-    return block_cache($key, 3600, function () use ($n) {
+    $list = block_cache($key, 3600, function () use ($n) {
         return \App\Service\Block\VodBlockService::stickyIndex($n);
     }, array());
+    // 轮播模板用 $k==0 判断首张（eager）：统一 0 起索引
+    return slide_items_decorate(is_array($list) ? array_values($list) : array());
 }

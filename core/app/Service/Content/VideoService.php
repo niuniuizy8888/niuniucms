@@ -328,6 +328,7 @@ class VideoService
      */
     public static function deleteAll($vid)
     {
+        \App\Service\Front\TypeService::bumpFacets(); // 筛选统计缓存失效
         if (empty($vid)) return FALSE;
         set_time_limit(0);
         $n = is_array($vid) ? count($vid) : 1;
@@ -402,6 +403,7 @@ class VideoService
      */
     public static function delete($vid)
     {
+        \App\Service\Front\TypeService::bumpFacets(); // 筛选统计缓存失效
         if (empty($vid)) return FALSE;
         // 软删：先写回收站快照再物理删除；快照失败 ⇒ 中止（审查修复轮 C1，fail-closed）
         $n = is_array($vid) ? count($vid) : 1;

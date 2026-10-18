@@ -1030,7 +1030,7 @@ $g_dir_file = FALSE;
  * @param array $extra Keys: view (override template), adlist, extra_json
  */
 function route_list_page($type, $cid, $cate, $num, $page, $pagesize, $page_url, $items, $conf, $extra = array()) {
-    global $json, $seo, $api_json, $cate_nav, $path_tpl, $nncms, $search_url, $user_logout;
+    global $json, $seo, $api_json, $cate_nav, $path_tpl, $nncms, $search_url, $user_logout, $pku_url, $nav_active, $nav_route, $nav_home, $nav_pku;
     $_SESSION['cid'] = $cid;
     $_SESSION['num'] = $num;
     $_SESSION['page'] = $page;
@@ -1063,6 +1063,7 @@ function route_list_page($type, $cid, $cate, $num, $page, $pagesize, $page_url, 
     $page_list = page_array($page_url, $num, $page, $pagesize);
     $arrlistall = array_value($extra, 'arrlistall', array());
     $sticky_list = array_value($extra, 'sticky_list', array());
+    $sticky_list = slide_items_decorate(is_array($sticky_list) ? array_values($sticky_list) : array()); // 0 起索引 + slide_img/slide_type
     $type_urls = array_value($extra, 'type_urls', array());
     $sonlist = array_value($extra, 'sonlist', array());
     $req_area = array_value($extra, 'req_area', '');
@@ -1335,4 +1336,23 @@ function page_cache_end($cacheKey, $ttl = 1800)
     }
 }
 
+/**
+ * 轮播条目装配：优先横版海报 pic_slide（slide_type=poster），无则回落竖版缩略图 pic（slide_type=thumb）。
+ * pic_slide 为站内相对路径（如 upload/poster/...）时补成站点根相对 URL；http(s):// 与 // 原样保留。
+ * @param array $list 视频条目（需 0 起索引，模板以 $k==0 判断首张）
+ * @return array 每项新增 slide_img / slide_type
+ */
+function slide_items_decorate(array $list): array
+{
+    foreach ($list as $i => $v) {
+        if (!is_array($v)) continue;
+        $ps = trim((string)($v['pic_slide'] ?? ''));
+        if ('' !== $ps && !preg_match('#^(https?:)?//#i', $ps)) {
+            $ps = '/' . ltrim($ps, '/');
+        }
+        $list[$i]['slide_img'] = '' !== $ps ? $ps : (string)($v['pic'] ?? '');
+        $list[$i]['slide_type'] = '' !== $ps ? 'poster' : 'thumb';
+    }
+    return $list;
+}
 

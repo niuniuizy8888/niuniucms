@@ -39,7 +39,10 @@ class RouteMetaService
             if ($isJson) {
                 message(-1, lang('user_not_login'));
             } else {
-                message(0, jump('请先登录', url('user-login'), 3));
+                // 未登录直接 302 到登录页，带站内回跳地址（登录页经 UserAuthService::httpReferer() 再校验：仅 http(s) 站内、排除登录/注册等环节点）
+                $back = preg_replace('#^(https?://[^/]+).*$#i', '$1', (string)http_url_path()) . '/' . ltrim((string)($_SERVER['REQUEST_URI'] ?? ''), '/');
+                $back = preg_match('#^https?://[^\s"<>]+$#i', $back) ? $back : '';
+                http_location('' === $back ? url('user-login') : url('user-login', array('referer' => $back)));
             }
             return false;
         }

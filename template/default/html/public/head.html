@@ -1,4 +1,4 @@
-<div id="header" class="transition-all duration-500 w-screen z-30 bg-[var(--bg-surface)]/95 backdrop-blur-md">
+<div id="header" class="transition-all duration-500 w-full z-30 bg-[var(--bg-surface)]/95 backdrop-blur-md">
     <div class="flex pb-2.5 md:pb-4 pt-3 justify-center container md:pl-0">
         <div class="gap-y-2 flex-col w-full md:flex-row flex">
             <div class="flex-1 flex gap-x-2 md:justify-between">
@@ -9,7 +9,7 @@
                 <div class="items-center flex flex-1 md:flex-none">
                     <div class="flex-1 md:flex-none">
                         <div class="relative flex flex-1 md:flex-none">
-                            <div id="back" class="flex justify-between pr-4 pl-2 self-center hidden">
+                            <div id="back" role="button" aria-label="返回" class="nn-tap flex items-center justify-center pr-4 pl-2 self-center hidden">
                                 <img decoding="async" alt="" width="9" height="16" src="{$path_tpl}images/back.svg">
                             </div>
                             <div class="flex items-center gap-2 w-full">
@@ -17,16 +17,16 @@
                                     <label for="searchInput" class="sr-only">搜索影视内容</label>
                                     <div class="relative flex-1">
                                         <input id="searchInput" placeholder="请输入要搜索的关键词" maxlength="20" class="search-expand border-0 text-white rounded-full pl-10 md:pl-4 md:pr-10 pr-4 py-2 focus:outline-none w-full md:w-60 header-search-input-desktop text-[14px] search-field bg-[var(--bg-overlay)]/70 backdrop-blur-sm transition-all duration-300 focus:ring-2 focus:ring-[var(--color-primary)] focus:bg-[var(--bg-overlay)]" name="keyword" autocomplete="off" type="text" value="{if:isset($keyword)}{$keyword}{/if}">
-                                        <button type="submit" class="absolute inset-y-0 left-3 flex items-center justify-center md:hidden">
+                                        <button type="submit" aria-label="搜索" class="absolute inset-y-0 left-3 flex items-center justify-center md:hidden">
                                             <img decoding="async" alt="search" loading="lazy" width="20" height="20" class="search-icon-img hover:text-[var(--color-primary)] transition-colors duration-200" src="{$path_tpl}images/search.png">
                                         </button>
-                                        <button type="submit" class="absolute inset-y-0 right-3 items-center justify-center hidden md:flex">
+                                        <button type="submit" aria-label="搜索" class="absolute inset-y-0 right-3 items-center justify-center hidden md:flex">
                                             <img decoding="async" alt="search" loading="lazy" width="20" height="20" class="search-icon-img hover:text-[var(--color-primary)] transition-colors duration-200" src="{$path_tpl}images/search.png">
                                         </button>
                                     </div>
                                 </form>
 
-                                <button id="mobileMenuBtn" class="md:hidden flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-overlay)] hover:bg-[var(--bg-hover)] transition-all duration-200 active:scale-95">
+                                <button id="mobileMenuBtn" type="button" aria-label="打开导航菜单" class="md:hidden flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-overlay)] hover:bg-[var(--bg-hover)] transition-all duration-200 active:scale-95">
                                     <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="bars" class="svg-inline--fa fa-bars" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" style="width: 20px; height: 20px; color: var(--text-primary);">
                                         <path fill="currentColor" d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"></path>
                                     </svg>
@@ -39,15 +39,15 @@
 
             <!-- 桌面端导航 -->
             <div id="menu" class="grow md:flex items-center justify-end md:flex hidden">
-                <a class="flex items-center cursor-pointer header-tab group relative px-3 py-1 whitespace-nowrap" href="/" title="首页">
+                <a class="flex items-center cursor-pointer header-tab group relative px-3 py-1 whitespace-nowrap {if:$nav_home==1}active{/if}" href="/" title="首页">
                     <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">首页</span>
                     <div class="nav-underline absolute bottom-0 left-1/2 -translate-x-1/2 w-0 h-0.5 bg-[var(--color-primary)] group-hover:w-full transition-all duration-300 rounded-full"></div>
                 </a>
 
                 {loop:$cate_nav $v}
-                <div class="nav-item group relative px-3 py-1 whitespace-nowrap">
-                    <a href="{$v.url}" title="{$v.name}" class="flex items-center gap-1">
-                        <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">{$v.name}</span>
+                <div class="nav-item group relative px-3 py-1 whitespace-nowrap {if:$nav_active==$v[cid]}active{/if}">
+                    <a href="{$v.url}" title="{h:$v.name}" class="flex items-center gap-1">
+                        <span class="transition-all duration-200 text-[var(--text-primary)] group-hover:text-[var(--color-primary)]">{h:$v.name}</span>
                         {if:isset($v['child']) && !empty($v['child'])}
                         <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="chevron-down" class="svg-inline--fa fa-chevron-down transition-all duration-200 group-hover:rotate-180 group-hover:text-[var(--color-primary)]" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" style="width: 10px; height: 10px;">
                             <path fill="currentColor" d="M233.4 406.6c12.5 12.5 32.8 12.5 45.3 0l192-192c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L256 338.7 86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l192 192z"></path>
@@ -58,7 +58,7 @@
                 {if:isset($v['child']) && !empty($v['child'])}
                     <div class="dropdown-menu absolute left-0 top-full mt-2 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] shadow-xl rounded-lg overflow-hidden z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[140px] py-1">
                         {loop:$v['child'] $child}
-                        <a href="{$child.url}" title="{$child.name}" class="block px-4 py-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-colors duration-150">{$child.name}</a>
+                        <a href="{$child.url}" title="{h:$child.name}" class="block px-4 py-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-colors duration-150">{h:$child.name}</a>
                         {/loop}
                     </div>
                     {/if}
@@ -88,7 +88,7 @@
     <div class="fixed top-0 left-0 h-full w-72 bg-[var(--bg-surface)] shadow-2xl transform transition-transform duration-300 ease-out -translate-x-full" id="sidebarContent">
         <div class="p-4 border-b border-[var(--border-subtle)] flex justify-between items-center">
             <div class="text-lg font-bold text-[var(--text-primary)]">导航菜单</div>
-            <button id="closeSidebarBtn" class="w-8 h-8 flex items-center justify-center rounded-full text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-all duration-200">
+            <button id="closeSidebarBtn" type="button" aria-label="关闭导航菜单" class="nn-tap w-8 h-8 flex items-center justify-center rounded-full text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-overlay)] transition-all duration-200">
                 <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="times" class="svg-inline--fa fa-times" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 352 512" style="width: 18px; height: 18px;">
                     <path fill="currentColor" d="M242.72 256l100.07-100.07c12.28-12.28 12.28-32.19 0-44.48l-22.24-22.24c-12.28-12.28-32.19-12.28-44.48 0L176 189.28 75.93 89.21c-12.28-12.28-32.19-12.28-44.48 0L9.21 111.45c-12.28 12.28-12.28 32.19 0 44.48L109.28 256 9.21 356.07c-12.28 12.28-12.28 32.19 0 44.48l22.24 22.24c12.28 12.28 32.2 12.28 44.48 0L176 322.72l100.07 100.07c12.28 12.28 32.2 12.28 44.48 0l22.24-22.24c12.28-12.28 12.28-32.19 0-44.48L242.72 256z"></path>
                 </svg>
@@ -97,7 +97,7 @@
         <div class="p-4 overflow-y-auto">
             <ul class="space-y-1">
                 <li>
-                    <a href="/" class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)]">
+                    <a href="/" class="nn-side-link flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)] {if:$nav_home==1}active{/if}">
                         <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="home" class="svg-inline--fa fa-home" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" style="width: 18px; height: 18px; color: var(--text-tertiary);">
                             <path fill="currentColor" d="M575.8 255.5c0 18-15 32.1-32 32.1H462.4l-21.1 21.1c-9.4 9.4-24.6 9.4-33.9 0L288 224.1l-97.4 97.4c-9.4 9.4-24.6 9.4-33.9 0L98.6 287.6H32c-18 0-32-14.1-32-32.1c0-9 3.5-17 9.4-23l238-198.1c9.4-7.8 22.9-7.8 32.3 0l238 198.1c5.9 4.9 9.4 14 9.4 23z"></path>
                         </svg>
@@ -107,11 +107,11 @@
                 {if:isset($cate_nav)}
                 {loop:$cate_nav $v}
                 <li>
-                    <a href="{$v.url}" class="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)]">
+                    <a href="{$v.url}" class="nn-side-link flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-[var(--bg-overlay)] transition-colors duration-200 text-[var(--text-primary)] {if:$nav_active==$v[cid]}active{/if}">
                         <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="film" class="svg-inline--fa fa-film" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" style="width: 18px; height: 18px; color: var(--text-tertiary);">
                             <path fill="currentColor" d="M576 128H0V384H576V128zM48 160h64v192H48V160zm80 0h64v192H128V160zm80 0h64v192h-64V160zm80 0h64v192h-64V160z"></path>
                         </svg>
-                        {$v.name}
+                        {h:$v.name}
                     </a>
                 </li>
                 {/loop}

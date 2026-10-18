@@ -24,6 +24,23 @@ class SearchService
      *
      * @return string 单层转义后的关键词；未提供时为空字符串（不会是 NULL）
      */
+    /** @var int 路径/查询串解析出的搜索页码（resolveKeyword 写入） */
+    protected static $pathPage = 1;
+    /** @var string 路径末段被当作页码时的原文（供「关键词本身以 -数字 结尾」回退判定） */
+    protected static $pathPageSeg = '';
+
+    /** 路径末段是否被解析为页码 @return string 该段原文；未解析为页码时为空串 */
+    public static function pathPageSegment(): string
+    {
+        return self::$pathPageSeg;
+    }
+
+    /** 搜索页码：须在 resolveKeyword() 之后调用 @return int */
+    public static function resolvePage(): int
+    {
+        return self::$pathPage;
+    }
+
     public static function resolveKeyword()
     {
         // 上线前安全审计修复（反射型 XSS，VULN-001）：
@@ -34,11 +51,21 @@ class SearchService
         // 现改为「原始读取 → 只解码一次 → 收尾统一转义」：转义必须是最后一步。
         // 返回值语义与旧版一致（单转义文本），入库检索与模板输出两侧行为不变。
         $keyword = param('keyword', '', FALSE);
+        self::$pathPage = max(1, intval(param('page', 1)));
         if ($keyword == '' || $keyword === null) {
-            $keyword = param(1, '', FALSE);
-            if (!empty($keyword)) {
-                $keyword = str_replace('.html', '', $keyword);
+            // 路径形态 search-<关键词>[-<页码>]：关键词可含「-」，路由已按「-」拆段，这里重新拼回；
+            // 段数 ≥2 且末段为纯数字时视为页码
+            $segs = array();
+            for ($i = 1; $i < 64; $i++) {
+                $_seg = param($i, '', FALSE); // 路由段（框架统一入口，原始值，后续统一解码/转义）
+                if (!is_string($_seg) || '' === $_seg) break;
+                $segs[] = str_replace('.html', '', $_seg);
             }
+            if (count($segs) >= 2 && ctype_digit((string)end($segs))) {
+                self::$pathPage = max(1, intval(array_pop($segs)));
+                self::$pathPageSeg = (string)self::$pathPage;
+            }
+            $keyword = implode('-', $segs);
         }
         $keyword = (string)$keyword;
         // URL 段解码：rewrite=0 时路由段取自 REQUEST_URI path（xn_url_parse 不解码），
@@ -55,7 +82,7 @@ class SearchService
     }
 
     /** 搜索结果页数据装配：转 Content\QueryService::searchVideos()（ES 优先、前导通配 LIKE 回退）后整形成模板需要的键集。keyword 与 keyword_decode 当前是同值双键（历史模板两键并存，勿擅自合并）；num 恒等于**过滤后返回条数**（≤60），不是全库命中总数；adlist 现固定空数组（占位给模板）。⚠ $keyword 应是 resolveKeyword() 的转义出口，本方法不再转义也不做剥离。@param mixed $keyword 已转义的关键词 @param array $conf 站点配置（es_on 等） @return array {cid:int,keyword,keyword_decode,search_type:'like'|'mysql_fallback',videolist:array,adlist:array,num:int} */
-    public static function build($keyword, $conf)
+    public static function build($keyword, $conf, $page = 1)
     {
         $keyword_decode = $keyword;
         $adlist = array();
@@ -63,6 +90,15 @@ class SearchService
         $videolist = array_value($query, 'videolist', array());
         $search_type = array_value($query, 'search_type', 'like');
         $num = intval(array_value($query, 'num', count($videolist)));
+        // 结果分页（命中集本身有上限，这里在内存中按 conf.pagesize 切片）；链接形如 search-<关键词>-<页码>
+        $pagesize = max(1, intval($conf['pagesize'] ?? 20));
+        $maxPage = max(1, (int)ceil($num / $pagesize));
+        $page = max(1, intval($page));
+        $redirect = ($num > 0 && $page > $maxPage) ? str_replace('{page}', (string)$maxPage, url('search-' . rawurlencode(html_entity_decode((string)$keyword, ENT_QUOTES, 'UTF-8')) . '-{page}', array())) : '';
+        $page = min($page, $maxPage);
+        $videolist = array_slice((array)$videolist, ($page - 1) * $pagesize, $pagesize);
+        $page_url = url('search-' . rawurlencode(html_entity_decode((string)$keyword, ENT_QUOTES, 'UTF-8')) . '-{page}', array());
+        $index_page = '' === (string)$keyword ? '' : index_page($page_url, $num, $page, $pagesize);
 
         return array(
             'cid' => 0,
@@ -72,6 +108,11 @@ class SearchService
             'videolist' => $videolist,
             'adlist' => $adlist,
             'num' => $num,
+            'page' => $page,
+            'pagesize' => $pagesize,
+            'page_url' => $page_url,
+            'index_page' => $index_page,
+            'redirect' => $redirect,
         );
     }
 

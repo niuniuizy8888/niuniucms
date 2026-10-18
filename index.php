@@ -39,7 +39,7 @@ include CORE_PATH . 'func/static.php';
 // 静态文件直接服务
 $reqPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 $reqPath = $reqPath ? rawurldecode($reqPath) : '';
-if ($reqPath && strtolower(pathinfo($reqPath, PATHINFO_EXTENSION))) {
+if ($reqPath && '/sitemap.xml' !== strtolower($reqPath) && strtolower(pathinfo($reqPath, PATHINFO_EXTENSION))) {
     serveStaticFile($reqPath);
 }
 

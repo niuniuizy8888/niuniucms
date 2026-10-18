@@ -302,7 +302,7 @@ trait ApiImportFastDbTrait
         $vid_rows = array();
         $vid_names = array();
         foreach ($vod_rows as $row) {
-            $new_id = \App\Repository\RepositoryFactory::vod()->insert($row);
+            $new_id = \App\Repository\RepositoryFactory::vod()->insert($row); \App\Service\Front\TypeService::bumpFacets();
             if ($new_id) {
                 $count++;
                 $vid_rows[] = array(

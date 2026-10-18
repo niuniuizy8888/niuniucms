@@ -2,33 +2,17 @@
 <html lang="zh-CN">
 <head>
 {inc:public/include.html}
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "TVSeries",
-  "name": "{$video.name}",
-  "description": "{if:isset($seo['d']) && !empty($seo['d'])}{$seo.d}{/if}",
-  "image": "{$video.pic}",
-  "genre": "{if:isset($cate) && !empty($cate['name'])}{$cate.name}{/if}",
-  {if:isset($seo['url']) && !empty($seo['url'])}"url": "{$seo.url}",{/if}
-  {if:isset($video['year']) && !empty($video['year'])}"datePublished": "{$video.year}",{/if}
-  "aggregateRating": {
-    "@type": "AggregateRating",
-    "ratingValue": "{if:isset($video['score']) && !empty($video['score'])}{$video.score}{else}0{/if}",
-    "ratingCount": "{if:isset($video['hit']) && !empty($video['hit'])}{$video.hit}{else}0{/if}"
-  }
-}
-</script>
+<script type="application/ld+json">{$video_jsonld}</script>
 </head>
 <body class="overflow-x-hidden text-white">
     <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
-        <div class="mobile z-50 sticky top-0 w-screen bg-[var(--bg-surface)]">
+        <div class="mobile z-50 sticky top-0 w-full bg-[var(--bg-surface)]">
             <div class="flex items-center justify-center cursor-pointer py-3.5 sticky top-0 w-full z-[999] bg-[var(--bg-surface)]">
                 <span class="flex backPage" style="position: absolute; left: 12px;"><svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="angle-left" class="svg-inline--fa fa-angle-left" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><path fill="currentColor" d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"></path></svg></span>
-                <span class="flex text-[var(--text-primary)]">{$video.name}</span>
+                <span class="flex text-[var(--text-primary)]">{h:$video.name}</span>
             </div>
         </div>
-        <div class="desktop z-50 sticky top-0 w-screen bg-[var(--bg-base)]">
+        <div class="desktop z-50 sticky top-0 w-full bg-[var(--bg-base)]">
            {inc:public/head.html}
         </div>
         <div class="w-full grow flex justify-center ">
@@ -41,14 +25,14 @@
                             <div id="videoInfo" class="space-y-4 style_vodMetaContainer__TFb8U">
                                 <div class="flex flex-row space-x-4">
                                     <div class="relative hidden lg:flex rounded-xl">
-                                    <img width="230" height="300" class="rounded-xl" loading="lazy" src="{$video.pic}" alt="{$video.name}" style="max-width: 100%; height: auto;"></div>
+                                    <img width="230" height="300" class="rounded-xl" loading="lazy" src="{$video.pic}" alt="{h:$video.name}" style="max-width: 100%; height: auto;"></div>
                                     <div class="flex flex-col lg:w-2/3 allow-select">
-                                        <div class="flex flex-row"><span class="text-lg pr-5 line-clamp-2">{$video.name}</span>
+                                        <div class="flex flex-row"><h1 class="text-lg pr-5 line-clamp-2">{h:$video.name}</h1>
                                              
-                                        </div><span class="video-meta py-1"><span>{$video.year}</span><span class="video-meta-dot"></span><span>{$video.area}</span><span class="video-meta-dot"></span><span>{$video.lang}</span></span>
+                                        </div><span class="video-meta py-1"><span>{h:$video.year}</span><span class="video-meta-dot"></span><span>{h:$video.area}</span><span class="video-meta-dot"></span><span>{h:$video.lang}</span></span>
                                         <div class="video-meta py-1"><span>更新: {$video.create_date_fmt_ymd}</span>
                                         </div>
-                                        <div class="text-sm pt-1 text-ellipsis overflow-hidden">主演: {$video.actor} </div>
+                                        <div class="text-sm pt-1 text-ellipsis overflow-hidden">主演: {h:$video.actor} </div>
                                         <div class="section-title text-[var(--color-primary)] text-md pt-3 py-2">简介</div>
                                         <div class="text-sm text-ellipsis overflow-hidden">
                                             {$video.content}
@@ -68,9 +52,9 @@
                                         </a>
                                     </div> 
                                 </div>
-                                <div class="flex flex-col space-y-1" style="max-height: 300px;">
+                                <div class="flex flex-col space-y-1 nn-ep-wrap">
                                      
-                                    <div id="mobileModalVideoWrap" class="flex flex-wrap no-scrollbar" style="overflow-y: scroll; min-height: 150px; max-height: 300px;">
+                                    <div id="mobileModalVideoWrap" class="flex flex-wrap no-scrollbar" style="overflow-y: auto; -webkit-overflow-scrolling: touch; max-height: 300px;">
                                         {loop:$p[info] $i}
                                         <div class="py-1 mobileVideoItem" style="margin-right: 0.4rem; height: fit-content; min-width: 4.5rem; max-width: 11rem;">
                                             <div class="style_radioOptionCard__ON4rV style_unselectedOptionCard__xcEwl" style="justify-content: center;">
@@ -113,7 +97,7 @@
 													  		{loop:$data $v} 
                                                          <a class="flex flex-row space-x-4 items-center cursor-pointer hover-effect" href="{$v.url}">
                                                             <span class="{if:($v['n']<4)}text-hot-{$v[n]}{else}text-hot-4{/if}">{$v.n}</span>
-                                                    <span class="text-sm flex-1">{$v.name}</span>
+                                                    <span class="text-sm flex-1">{h:$v.name}</span>
                                                     </a> 
 													{/loop}
 													{/block} 
@@ -125,10 +109,10 @@
                                 {block:vod_rand n="6"}
                                 {loop:$data $v}
                                 <a href="{$v.url}" class="flex items-center gap-3 group">
-                                    <img src="{$v.pic}" alt="{$v.name}" loading="lazy" class="w-10 h-14 rounded object-cover flex-shrink-0">
+                                    <img src="{$v.pic}" alt="{h:$v.name}" loading="lazy" class="w-10 h-14 rounded object-cover flex-shrink-0">
                                     <div class="flex-1 min-w-0">
-                                        <span class="text-sm text-[var(--text-secondary)] group-hover:text-[var(--color-primary)] transition-colors line-clamp-1">{$v.name}</span>
-                                        <span class="text-xs text-[var(--text-tertiary)]">{$v.year} {if:!empty($v['area'])}{$v.area}{/if}</span>
+                                        <span class="text-sm text-[var(--text-secondary)] group-hover:text-[var(--color-primary)] transition-colors line-clamp-1">{h:$v.name}</span>
+                                        <span class="text-xs text-[var(--text-tertiary)]">{h:$v.year} {if:!empty($v['area'])}{h:$v.area}{/if}</span>
                                     </div>
                                 </a>
                                 {/loop}

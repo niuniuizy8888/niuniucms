@@ -4,8 +4,9 @@
     {inc:public/include.html}
 </head>
 <body class="overflow-x-hidden">
+<h1 class="sr-only">{h:$seo.t}</h1>
        <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
-         <div class="mobile z-50 sticky top-0 w-screen">
+         <div class="mobile z-50 sticky top-0 w-full">
             <div class="flex items-center justify-center cursor-pointer py-3.5 sticky top-0 w-full z-[999] bg-[var(--bg-surface)]">
                 <span class="flex backPage" style="position: absolute; left: 12px;"><svg aria-hidden="true" focusable="false"
                         data-prefix="fas" data-icon="angle-left" class="svg-inline--fa fa-angle-left " role="img"
@@ -17,13 +18,13 @@
             </div>
         </div>
 
-         <div class="desktop z-50 sticky top-0 w-screen">
+         <div class="desktop z-50 sticky top-0 w-full">
         {inc:public/head.html}
         </div>
     <div class="w-full grow flex justify-center ">
             <div class="flex flex-1 justify-start flex-col">
-                <div class="flex w-screen flex-col items-center">
-                    <div class=" w-screen p-1 z-10 top-[48px] md:static sticky bg-[var(--bg-elevated)]">
+                <div class="flex w-full flex-col items-center">
+                    <div class=" w-full p-1 z-10 top-[48px] md:static sticky bg-[var(--bg-elevated)]">
                         <div class="container">
                             <div class="section-header pt-3">
                                 <span class="section-header-title">热门标签</span>
@@ -34,7 +35,7 @@
                                 <div class="flex flex-wrap gap-3 py-2">
                                     {loop:$taglist $t}
                                     <a href="{$t.url}" class="filter-item {if:$cid==$t['tagid']}active{/if}">
-                                        <span>{$t.name}</span>
+                                        <span>{h:$t.name}</span>
                                     </a>
                                     {/loop}
                                 </div>

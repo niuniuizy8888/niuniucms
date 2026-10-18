@@ -5,7 +5,7 @@
 </head>
 <body class="overflow-y-auto overflow-x-hidden">
     <div class="relative w-full h-full flex flex-col scroll-pt-[6px]" style="align-items: center;">
-        <div class="z-50 w-screen sticky top-0">
+        <div class="z-50 w-full sticky top-0">
             {inc:public/head.html}
         </div>
         <div class="w-full grow flex justify-center">
@@ -13,7 +13,7 @@
                 <div class="container mx-auto px-4 py-4">
                     <div class="flex flex-wrap gap-2 mb-4">
                         {loop:$sonlist $s}
-                        <a class="filter-item text-nowrap {if:$cid==$s['cid']}active{/if}" href="{$s.url}">{$s.name}</a>
+                        <a class="filter-item text-nowrap {if:$cid==$s['cid']}active{/if}" href="{$s.url}">{h:$s.name}</a>
                         {/loop}
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 w-full">
@@ -22,11 +22,11 @@
                             <a href="{$v.url}">
                                 <div class="topic-details-card">
                                     <div class="flex flex-col sm:flex-row gap-4">
-                                        <div style="width: 120px; height: 160px; position: relative; overflow: hidden; border-radius: 10px; flex-shrink: 0;">
-                                            <img loading="lazy" src="{$v.pic}" alt="{$v.name}" class="rounded-xl" style="position: absolute; height: 100%; width: 100%; inset: 0px; object-fit: cover;">
+                                        <div class="nn-cover-art" style="position: relative; overflow: hidden; border-radius: 10px; flex-shrink: 0;">
+                                            <img loading="lazy" src="{$v.pic}" alt="{h:$v.name}" class="rounded-xl" style="position: absolute; height: 100%; width: 100%; inset: 0px; object-fit: cover;">
                                         </div>
                                         <div class="flex-1 min-w-0">
-                                            <div class="topic-details-title">{$v.name}</div>
+                                            <div class="topic-details-title">{h:$v.name}</div>
                                             <span class="btn-topic-play mt-2">
                                                 <svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="play" class="svg-inline--fa fa-play" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" style="color: white;">
                                                     <path fill="currentColor" d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"></path>

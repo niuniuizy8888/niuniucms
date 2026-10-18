@@ -49,10 +49,12 @@ class TagService
             return array('found' => false, 'reason' => 'tag_not_found');
         }
 
-        $videolist = \App\Service\Content\RelationService::buildTagMixedList($tagid, $tags['name'], $page, $pagesize);
-
         $page_url = url($conf['route']['tag'] . '-' . $tagid . '-{page}', array());
         $num = $tags['count'] > $pagesize * $conf['listsize'] ? $pagesize * $conf['listsize'] : $tags['count'];
+        // 越界页钳制到末页（与分页条口径一致，避免「分页条显示末页、列表为空」）
+        $page = min(max(1, intval($page)), max(1, (int)ceil($num / max(1, $pagesize))));
+
+        $videolist = \App\Service\Content\RelationService::buildTagMixedList($tagid, $tags['name'], $page, $pagesize);
 
         return array(
             'found' => true,

@@ -14,8 +14,8 @@
                     <p style="margin:0; color:var(--nn-text-tertiary); font-size:13px;">修改密码后请妥善保管，确保账号安全</p>
                 </div>
 
-                <form action="{$passwd_url}" method="post" id="form">
-                    <input type="hidden" name="safe_token" value="{$safe_token}">
+                <form action="{h:$passwd_url}" method="post" id="form">
+                    <input type="hidden" name="safe_token" value="{h:$safe_token}">
                     <div style="margin-bottom:16px;">
                         <label style="display:block; margin-bottom:6px; color:var(--nn-text-secondary); font-size:13px; font-weight:500;">{$lang.password_old}</label>
                         <div class="input-group">

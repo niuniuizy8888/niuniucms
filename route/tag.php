@@ -10,6 +10,7 @@ switch ($action) {
     case 'list':
         $data = \App\Service\Front\TagService::buildList(intval(param(2, 1)), $conf);
         extract($data);
+        $index_page = index_page($page_url, $num, $page, $pagesize);
         $_SESSION['cid'] = 0;
         $_SESSION['num'] = $num;
         $_SESSION['page'] = $page;
@@ -44,6 +45,7 @@ switch ($action) {
             return;
         }
         extract($data);
+        $index_page = index_page($page_url, $num, $page, $pagesize);
         $_SESSION['cid'] = 0;
         \App\Service\Front\SeoService::apply($conf['seo']['tag'], [
             'name' => $tags['name'],

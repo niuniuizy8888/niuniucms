@@ -78,3 +78,10 @@
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: var(--nn-bg-surface); }
     ::-webkit-scrollbar-thumb { background: var(--nn-bg-overlay); border-radius: 9999px; }
+
+/* 自适应优化 2026-10-18 */
+.login-card .form-control { font-size: 16px; min-height: 44px; } /* ≥16px 防 iOS 聚焦缩放 */
+.login-card .btn-primary { min-height: 44px; }
+.login-card .input-group-text { min-width: 44px; justify-content: center; }
+body { padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+@media (max-width: 420px) { .login-card { padding: 28px 20px; border-radius: 14px; } }

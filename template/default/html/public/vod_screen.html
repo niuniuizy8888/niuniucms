@@ -2,50 +2,50 @@
     <div class="flex md:flex-wrap gap-y-2 pl-4 py-2 container overflow-x-auto">
         {loop:$cate_nav $v}
         <a href="{$v.url}" class="relative flex flex-col items-center cursor-pointer px-2 py-1 rounded-lg hover:bg-[var(--color-primary-muted)] transition-all duration-200">
-            <span class="hover:text-[var(--color-primary)] transition-colors duration-200 truncate whitespace-nowrap {if:$cup==$v[cid]}text-[var(--color-primary)]{else}text-[var(--text-secondary)]{/if}">{$v.name}</span>
-            {if:$cup==$v[cid]}
+            <span class="hover:text-[var(--color-primary)] transition-colors duration-200 truncate whitespace-nowrap {if:$nav_active==$v[cid]}text-[var(--color-primary)]{else}text-[var(--text-secondary)]{/if}">{h:$v.name}</span>
+            {if:$nav_active==$v[cid]}
             <div class="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-[var(--color-primary)] rounded-full"></div>
             {/if}
         </a>
         {/loop}
     </div>
-    <div class="transition-all duration-500 md:h-fit md:visible md:py-2 ease-out h-[280px] py-2 flex flex-col container md:flex md:opacity-100">
+    <div class="transition-all duration-500 md:h-fit md:visible md:py-2 ease-out nn-filter py-2 flex flex-col container md:flex md:opacity-100">
         <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-scroll no-scrollbar">
                 {loop:$sonlist $s}
                 <a href="{$s.url}" class="filter-item {if:$cid==$s[cid]}active{/if}">
-                <span class="truncate">{$s.name}</span>
+                <span class="truncate">{h:$s.name}</span>
                 </a>
                 {/loop}
         </div>
         <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-scroll no-scrollbar">
-            <a href="{$pageurl}" class="filter-item {if:$req_area==''}active{/if}">
+            <a href="{$type_reset[area]}" class="filter-item {if:$req_area==''}active{/if}">
                 <span class="truncate">地区</span>
             </a>
             {loop:$type_urls[area] $v}
             <a href="{$v.url}" class="filter-item {if:$req_area==$v[name]}active{/if}">
-                <span class="truncate">{$v.name}</span>
+                <span class="truncate">{h:$v.name}</span>
             </a>
             {/loop}
         </div>
 
         <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-scroll no-scrollbar">
-            <a href="#" class="filter-item {if:$req_year==''}active{/if}">
+            <a href="{$type_reset[year]}" class="filter-item {if:$req_year==''}active{/if}">
                 <span class="truncate">年份</span>
             </a>
             {loop:$type_urls[year] $v}
             <a href="{$v.url}" class="filter-item {if:$req_year==$v[name]}active{/if}">
-                <span class="truncate">{$v.name}</span>
+                <span class="truncate">{h:$v.name}</span>
             </a>
             {/loop}
         </div>
 
         <div class="flex md:flex-wrap gap-x-2 gap-y-1 py-2 overflow-scroll no-scrollbar">
-            <a href="#" class="filter-item {if:$req_lang==''}active{/if}">
+            <a href="{$type_reset[lang]}" class="filter-item {if:$req_lang==''}active{/if}">
                 <span class="truncate">语言</span>
             </a>
             {loop:$type_urls[lang] $v}
             <a href="{$v.url}" class="filter-item {if:$req_lang==$v[name]}active{/if}">
-                <span class="truncate">{$v.name}</span>
+                <span class="truncate">{h:$v.name}</span>
             </a>
             {/loop}
         </div>

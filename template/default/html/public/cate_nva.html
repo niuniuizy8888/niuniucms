@@ -1,7 +1,7 @@
 <div class="w-full overflow-x-auto no-scrollbar">
     <div class="flex gap-2 py-2">
         {loop:$sonlist $s}
-        <a class="filter-item text-nowrap" href="{$s.url}">{$s.name}</a>
+        <a class="filter-item text-nowrap" href="{$s.url}">{h:$s.name}</a>
         {/loop}
     </div>
 </div>

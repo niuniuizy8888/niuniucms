@@ -384,6 +384,7 @@ class CateService
         if ($deleted) return;
         cache_delete('cate-alias-cache');
         cache_delete('catelist');
+        \App\Service\Front\TypeService::bumpFacets();
         $deleted = TRUE;
     }
 
