@@ -1,14 +1,15 @@
 <?php
 // PHP 版本下限：唯一定义点，闸门与环境检查页都用它，避免两处漂移。
-// 2026-10 兼容收口：
-// - 站点代码已补 `str_contains()/str_starts_with()/str_ends_with()` polyfill；
-// - `#[\ReturnTypeWillChange]` 在 PHP 7.4 中按注释处理，不构成语法错误；
-// - 已用 PHP 7.4、8.3、8.5 对全仓做过 lint 回归。
-// 结论：最低支持版本调整为 PHP 7.4，推荐 8.2+。
-define('NNCMS_PHP_MIN', '7.4');
+// 最低 PHP 8.0（与 README、商店页一致），推荐 8.2+。本文件只用 7.x 也能解析的语法，
+// 低版本访问时给出明确提示（503），而不是解析错误或空白 500。
+define('NNCMS_PHP_MIN', '8.0');
 define('NNCMS_PHP_RECOMMEND', '8.2');
 if (version_compare(PHP_VERSION, NNCMS_PHP_MIN, '<')) {
-    die('牛牛CMS 需要 PHP ' . NNCMS_PHP_MIN . ' 或更高版本（推荐 ' . NNCMS_PHP_RECOMMEND . '+）。当前版本：' . PHP_VERSION);
+    if (!headers_sent()) {
+        http_response_code(503);
+        header('Content-Type: text/html; charset=utf-8');
+    }
+    die('牛牛CMS 需要 PHP ' . NNCMS_PHP_MIN . ' 或更高版本（推荐 ' . NNCMS_PHP_RECOMMEND . '+）。当前版本：' . PHP_VERSION . '。请在主机面板中切换 PHP 版本后重试。');
 }
 // APP_PATH/INSTALL_PATH 由根目录 install.php 预定义；直接访问本文件时兜底（nginx 已 deny core/）
 !defined('APP_PATH') AND define('APP_PATH', realpath(__DIR__ . '/../../') . '/');
@@ -17,7 +18,10 @@ if (version_compare(PHP_VERSION, NNCMS_PHP_MIN, '<')) {
 // 使 core/core.php 打开 display_errors + error_reporting(E_ALL)；已安装站点访问 /install.php
 // 时整条引导链在开调试态下执行（失败即向访客泄漏绝对路径/内部信息）。已安装（install.lock 或
 // config.php 在位）时用生产态 DEBUG=0，安装向导阶段才保留调试态。
-define('DEBUG', (is_file(APP_PATH . 'core/install.lock') || is_file(APP_PATH . 'core/config/config.php')) ? 0 : 2);
+// 旧版 1.0.x 站点标记（根目录 config/config.php、install.lock、install/index.php）：存在即视为「已安装、待升级」，
+// 安装向导一律拒绝（防止先覆盖新版程序包、尚未运行 upgrade.php 的窗口期被他人重装接管）。
+define('NNCMS_LEGACY_MARK', is_file(APP_PATH . 'config/config.php') ? 'config/config.php' : (is_file(APP_PATH . 'install.lock') ? 'install.lock' : (is_file(APP_PATH . 'install/index.php') ? 'install/index.php' : '')));
+define('DEBUG', (is_file(APP_PATH . 'core/install.lock') || is_file(APP_PATH . 'core/config/config.php') || '' !== NNCMS_LEGACY_MARK) ? 0 : 2);
 define('MESSAGE_HTM_PATH', INSTALL_PATH . 'html/message.html');
 $conf = (include APP_PATH . 'core/config/config.default.php');
 $conf['log_path'] = APP_PATH .'runtime/log/';
@@ -29,6 +33,10 @@ $lang=include APP_PATH . 'core/lang/zh_cn.php';
 $_SERVER['lang'] = $lang;
 is_file(APP_PATH . 'core/install.lock') AND message(0, jump($lang['already_installed'], '../'));
 is_file(APP_PATH . 'core/config/config.php') AND message(0, jump($lang['installed_tips'], '../'));
+if ('' !== NNCMS_LEGACY_MARK) {
+    http_response_code(403);
+    message(-1, '检测到旧版牛牛CMS 的数据（' . NNCMS_LEGACY_MARK . '），这是一个待升级的站点，安装向导已禁用。请上传并运行 upgrade.php 完成升级；如确实要全新安装，请先删除旧版的 config/、install/ 目录与根目录 install.lock。');
+}
 // 安装入口文件名（修正：html 内硬编码 index.php 相对跳转在 install.php 入口下
 // 解析为站点前台 index.php 导致"继续安装不跳转"；改为动态取当前脚本名，白名单过滤防注入）
 $install_entry = basename($_SERVER['SCRIPT_NAME'] ?? 'install.php');
@@ -58,6 +66,8 @@ if (empty($action)) {
         $myisam_support = extension_loaded('pdo_mysql');
         $innodb_support = extension_loaded('pdo_mysql'); 
         !$pdo_mysql_support AND message(-1, lang('evn_not_support_php_mysql')); 
+        // 跳过环境检测页直达本步时同样拦截（必需扩展 / 可写目录 / 核心文件）
+        ($precheck = install_precheck_error()) AND message(-1, $precheck);
         include INSTALL_PATH . "html/database.html";
     } else {
         $type = 'pdo_mysql';
@@ -87,6 +97,9 @@ if (empty($action)) {
         }
         // POST 直达时同样拦截缺少 pdo_mysql 的环境（GET 页已拦截，防绕过）
         !extension_loaded('pdo_mysql') AND message(-1, lang('evn_not_support_php_mysql'));
+        // 写库前先做环境前置检查：缺必需扩展、目录不可写、核心文件缺失都在这里给出明确提示，
+        // 避免写到一半才因权限失败（以前会冒出 array_merge() TypeError）
+        ($precheck = install_precheck_error()) AND message(-1, $precheck);
         // 表前缀标识符校验（install_sql_file 将其拼接进建表 SQL，防反引号逃逸）
         if (!_db_is_valid_ident($tablepre)) {
             message('tablepre', '表前缀不合法：仅允许字母、数字、下划线，且以字母或下划线开头');
@@ -154,7 +167,9 @@ if (empty($action)) {
                 message(-1, "$errstr (errno: $errno)");
             }
         } 
-        copy(APP_PATH . 'core/config/config.default.php', APP_PATH . 'core/config/config.php');
+        if (!@copy(APP_PATH . 'core/config/config.default.php', APP_PATH . 'core/config/config.php') || !is_file(APP_PATH . 'core/config/config.php')) {
+            message(-1, '无法写入配置文件 core/config/config.php：请确认 core/config/ 目录对运行 PHP 的用户（如 www）可写后重试。');
+        }
         $replace = array();
         $replace['db'] = $conf['db'];
         // 添加多层缓存配置（最快优先顺序）
@@ -185,7 +200,10 @@ if (empty($action)) {
         // 显式写一次 admin_entry，避免与会随机改名的历史包产生混淆。
         $replace['admin_entry'] = 'admin.php';
         $conf['admin_entry'] = 'admin.php'; // done.html 展示实际入口名
-        file_replace_var(APP_PATH . 'core/config/config.php', $replace); 
+        if (!file_replace_var(APP_PATH . 'core/config/config.php', $replace)) {
+            @unlink(APP_PATH . 'core/config/config.php');
+            message(-1, '写入配置文件 core/config/config.php 失败：请确认 core/config/ 目录及该文件对运行 PHP 的用户（如 www）可写后重试。');
+        }
         // 安装完成后移除仓库自带的独立数据库配置（config/database.php 会整体覆盖写盘配置），确保安装填写的驱动/凭据生效
         $dbConfigFile = APP_PATH . 'core/config/database.php';
         is_file($dbConfigFile) and @rename($dbConfigFile, $dbConfigFile . '.installed.bak');
@@ -234,7 +252,9 @@ if (empty($action)) {
                 xn_log('install report skipped: cloud_api is empty', 'install_report');
             }
         }
-        file_put_contents(APP_PATH . 'core/install.lock',  'install_time:'.date('Y-m-d H:i:s'));
+        if (FALSE === @file_put_contents(APP_PATH . 'core/install.lock',  'install_time:'.date('Y-m-d H:i:s'))) {
+            message(-1, '无法写入 core/install.lock：请确认 core/ 目录对运行 PHP 的用户（如 www）可写。数据库与配置已写入，修正权限后手动创建该文件（内容任意）即可完成安装。');
+        }
         // 生成8位随机后台目录名
         /*$admin_path = strtolower(xn_rand(8));
         // 重命名后台目录（兼容交付包目录 x9m2k7qa 与开发/常规形态目录 admin）
@@ -251,7 +271,9 @@ if (empty($action)) {
         // 将新的 admin 路径写入配置
         $replace = array();
         $replace['admin_path'] = $admin_path;*/
-        file_replace_var(APP_PATH . 'core/config/config.php', $replace);
+        if (!file_replace_var(APP_PATH . 'core/config/config.php', $replace)) {
+            message(-1, '写入配置文件 core/config/config.php 失败：请确认该文件对运行 PHP 的用户（如 www）可写。');
+        }
         // 独立安装完成页（成功走专用完成页，风格与安装向导一致；失败仍走 message.html）
         include INSTALL_PATH . 'html/done.html';
         exit;
@@ -262,10 +284,11 @@ if (empty($action)) {
  *
  *  · $env：系统/PHP 版本检查项，每项 {name,must,current,need,status}；status 由 version_compare
  *    对 PHP 下限（NNCMS_PHP_MIN，现 8.0）取值，os 项恒 status=1（仅展示 Unix-like 建议，不做实际阻断）。
- *  · $funclist：扩展/函数依赖清单 [{name,tip,ok,must}]，pdo_mysql 是唯一 must=TRUE 的硬依赖，
- *    缺失时 chenk.html 置 $succeed=0 阻断下一步；其余（curl/pdo/openssl/gd/glob/gzinflate/mb_substr）
- *    只提示不阻断。
- *  · $write：可写目录检测（runtime/log、runtime/cache、upload、plugins、template 五项）。目录不存在时
+ *  · $funclist：扩展/函数依赖清单 [{name,tip,msg,ok,must}]，来自 install_ext_list()：
+ *    must=TRUE（pdo/pdo_mysql/mbstring/ctype/tokenizer/iconv/json/openssl/filter）缺失时 chenk.html
+ *    置 $succeed=0 阻断下一步；其余（curl/gd/zip/fileinfo/glob/gzinflate）只提示不阻断。
+ *  · $write：可写目录检测（来自 install_writable_dirs()：runtime/log、runtime/cache、upload、plugins、
+ *    template、core/config、core 七项）。目录不存在时
  *    先 @mkdir(0755, recursive) 再判 xn_is_writable()；检测用 APP_PATH 绝对路径（原相对 CWD 写法在
  *    HTTP 下工作目录不可控会全部误报不可写，已修）。
  *
@@ -288,27 +311,18 @@ function get_env(&$env, &$write, &$funclist)
     $env['php_version']['current'] = PHP_VERSION;
     $env['php_version']['need'] = NNCMS_PHP_MIN;
     $env['php_version']['status'] = version_compare(PHP_VERSION, NNCMS_PHP_MIN) >= 0;
-    // 函数/扩展依赖检查（迁移：原扩展检查从运行环境区移至此，
-    // 与既有 curl/pdo/pdo_mysql/glob/gzinflate/mb_substr 硬编码行合并为数组驱动；
-    // must=TRUE 缺失时阻断安装（succeed=0），其余缺失仅提示不阻断）
-    $funclist = array(
-        array('name' => 'curl',       'tip' => 'function_curl_not_exists',     'ok' => extension_loaded('curl'),       'must' => FALSE),
-        array('name' => 'pdo',        'tip' => 'function_pdo_not_exists',      'ok' => extension_loaded('pdo'),        'must' => FALSE),
-        array('name' => 'pdo_mysql',  'tip' => 'function_pdo_mysql_not_exists','ok' => extension_loaded('pdo_mysql'),  'must' => TRUE),
-        array('name' => 'openssl',    'tip' => 'function_openssl_not_exists',  'ok' => extension_loaded('openssl'),    'must' => FALSE),
-        array('name' => 'gd',         'tip' => 'function_gd_not_exists',       'ok' => extension_loaded('gd'),         'must' => FALSE),
-        array('name' => 'zip',        'tip' => 'function_zip_not_exists',      'ok' => class_exists('ZipArchive'),     'must' => FALSE),
-        array('name' => 'glob',       'tip' => 'function_glob_not_exists',     'ok' => function_exists('glob'),        'must' => FALSE),
-        array('name' => 'gzinflate',  'tip' => 'function_gzcompress_not_exists','ok' => function_exists('gzinflate'),   'must' => FALSE),
-        array('name' => 'mb_substr',  'tip' => 'function_mb_substr_not_exists','ok' => function_exists('mb_substr'),    'must' => FALSE),
-    );
-    $writedir = array(
-        '../runtime/log/'   => APP_PATH . 'runtime/log/',
-        '../runtime/cache/' => APP_PATH . 'runtime/cache/',
-        '../upload/'        => APP_PATH . 'upload/',
-        '../plugins/'        => APP_PATH . 'plugins/',
-        '../template/'      => APP_PATH . 'template/',
-    );
+    // 核心文件完整性（NNCMS_CORE_FILES_CHECK）：引导链直接引用的类文件缺一即全站 500。
+    // 典型诱因是主机安全软件把含高危函数名黑名单的文件（TemplateService.php 等）误判隔离，
+    // 或上传不完整；在安装前拦下并点名缺失文件，避免「安装完成后首页/后台 HTTP 500」。
+    $coreMissing = install_missing_core_files();
+    $env['core_files']['name'] = '核心文件完整性';
+    $env['core_files']['must'] = TRUE;
+    $env['core_files']['current'] = $coreMissing ? '缺失：' . implode('、', $coreMissing) . '（可能被主机安全软件隔离或上传不完整，请重新上传并加白名单）' : '完整';
+    $env['core_files']['need'] = '完整';
+    $env['core_files']['status'] = $coreMissing ? 0 : 1;
+    // 函数/扩展依赖检查：清单见 install_ext_list()；must=TRUE 缺失时阻断安装（succeed=0），其余仅提示
+    $funclist = install_ext_list();
+    $writedir = install_writable_dirs();
     $write = array();
     foreach ($writedir as $label => $dir) {
         // 修正：原实现用相对 CWD 路径 './../xxx'，HTTP 下工作目录不可控导致
@@ -320,6 +334,115 @@ function get_env(&$env, &$write, &$funclist)
         $write[$label] = xn_is_writable($dir);
     }
 }
+/**
+ * 安装期扩展依赖清单（依据代码实际用法核对）：
+ *  - 必需（缺失会在安装后前台/后台直接 fatal）：pdo + pdo_mysql（数据库）、mbstring（mb_* 无兜底，
+ *    前台路由/登录限流/校验函数都用）、ctype（ctype_digit 用于登录态与路由校验）、tokenizer
+ *    （模板/插件编译管线与安全闸用 token_get_all，缺失时首页空白、后台 500）、iconv（分词与截断）、
+ *    json、openssl（加密与 Cookie，拒绝降级）、filter（filter_var，每个请求解析域名都用）。
+ *  - 可选（缺失只影响对应功能）：curl（采集/云端/升级）、gd（缩略图）、zip（模板/插件安装与在线升级）、
+ *    fileinfo（上传 MIME 检测，缺失降级为扩展名白名单）、glob / gzinflate 函数。
+ * @return array[] [{name,tip,msg,ok,must}]
+ */
+function install_ext_list()
+{
+    $req = '（必需）缺失将导致安装后页面 500 或空白，请在 PHP 设置中安装/启用该扩展后刷新本页';
+    return array(
+        array('name' => 'pdo',        'tip' => 'function_pdo_not_exists',       'msg' => 'PDO ' . $req,       'ok' => extension_loaded('pdo'),        'must' => TRUE),
+        array('name' => 'pdo_mysql',  'tip' => 'function_pdo_mysql_not_exists', 'msg' => 'pdo_mysql ' . $req, 'ok' => extension_loaded('pdo_mysql'),  'must' => TRUE),
+        array('name' => 'mbstring',   'tip' => 'function_mb_substr_not_exists', 'msg' => 'mbstring ' . $req,  'ok' => extension_loaded('mbstring'),   'must' => TRUE),
+        array('name' => 'ctype',      'tip' => '',                              'msg' => 'ctype ' . $req,     'ok' => extension_loaded('ctype'),      'must' => TRUE),
+        array('name' => 'tokenizer',  'tip' => '',                              'msg' => 'tokenizer ' . $req, 'ok' => function_exists('token_get_all'), 'must' => TRUE),
+        array('name' => 'iconv',      'tip' => '',                              'msg' => 'iconv ' . $req,     'ok' => function_exists('iconv'),       'must' => TRUE),
+        array('name' => 'json',       'tip' => '',                              'msg' => 'json ' . $req,      'ok' => function_exists('json_encode'), 'must' => TRUE),
+        array('name' => 'openssl',    'tip' => 'function_openssl_not_exists',   'msg' => 'openssl ' . $req,   'ok' => extension_loaded('openssl'),    'must' => TRUE),
+        array('name' => 'filter',     'tip' => '',                              'msg' => 'filter ' . $req,    'ok' => function_exists('filter_var'),  'must' => TRUE),
+        array('name' => 'curl',       'tip' => 'function_curl_not_exists',      'msg' => '（可选）curl 未安装：采集、云端服务与在线升级不可用', 'ok' => extension_loaded('curl'), 'must' => FALSE),
+        array('name' => 'gd',         'tip' => 'function_gd_not_exists',        'msg' => '（可选）gd 未安装：图片缩略功能不可用', 'ok' => extension_loaded('gd'), 'must' => FALSE),
+        array('name' => 'zip',        'tip' => 'function_zip_not_exists',       'msg' => '（可选）zip 未安装：模板/插件下载安装与在线升级不可用', 'ok' => class_exists('ZipArchive'), 'must' => FALSE),
+        array('name' => 'fileinfo',   'tip' => 'function_fileinfo_not_exists',  'msg' => '（可选）fileinfo 未安装：上传文件改用扩展名白名单校验', 'ok' => function_exists('finfo_open'), 'must' => FALSE),
+        array('name' => 'glob',       'tip' => 'function_glob_not_exists',      'msg' => '（可选）glob 函数被禁用：部分目录扫描功能不可用（php.ini 的 disable_functions 中去掉 glob）', 'ok' => function_exists('glob'), 'must' => FALSE),
+        array('name' => 'gzinflate',  'tip' => 'function_gzcompress_not_exists','msg' => '（可选）zlib 不可用：压缩相关功能不可用', 'ok' => function_exists('gzinflate'), 'must' => FALSE),
+    );
+}
+
+/**
+ * 安装与运行必须可写的目录（标签 => 绝对路径）。core/config/ 要写 config.php，core/ 要写 install.lock。
+ * @return array
+ */
+function install_writable_dirs()
+{
+    return array(
+        '../runtime/log/'   => APP_PATH . 'runtime/log/',
+        '../runtime/cache/' => APP_PATH . 'runtime/cache/',
+        '../upload/'        => APP_PATH . 'upload/',
+        '../plugins/'       => APP_PATH . 'plugins/',
+        '../template/'      => APP_PATH . 'template/',
+        '../core/config/'   => APP_PATH . 'core/config/',
+        '../core/'          => APP_PATH . 'core/',
+    );
+}
+
+/**
+ * 核心文件完整性：引导链直接引用的类文件与模板安全规则数据，缺一即全站 500 或模板全部被拒。
+ * 典型诱因是主机安全软件误判隔离或上传不完整。
+ * @return string[] 缺失（或为空）的相对路径
+ */
+function install_missing_core_files()
+{
+    $coreFiles = array(
+        'core/app/Service/System/TemplateService.php',
+        'core/app/Service/System/LexicalSafetyService.php',
+        'core/app/Service/System/AddonService.php',
+        'core/app/Service/System/MiddlewarePipelineService.php',
+        'core/app/Service/System/TaskQueueService.php',
+        'core/app/Service/System/CloudOpsService.php',
+        'core/app/Service/Account/SessionService.php',
+        'core/app/Service/Collection/ApiExecutionService.php',
+        'core/app/Service/Front/RouteMetaService.php',
+        'core/app/Service/Front/TypeService.php',
+        'core/config/template_guard.json',
+    );
+    $missing = array();
+    foreach ($coreFiles as $cf) {
+        if (!is_file(APP_PATH . $cf) || filesize(APP_PATH . $cf) <= 0) $missing[] = $cf;
+    }
+    if (!in_array('core/config/template_guard.json', $missing, TRUE)
+        && class_exists('\\App\\Service\\System\\TemplateService')
+        && !\App\Service\System\TemplateService::guardAvailable()) {
+        $missing[] = 'core/config/template_guard.json（内容损坏）';
+    }
+    return $missing;
+}
+
+/**
+ * 写库前的环境前置检查（数据库步骤 GET/POST 共用，防止跳过环境检测页直达）。
+ * @return string 空串=通过；否则为给站长看的错误说明
+ */
+function install_precheck_error()
+{
+    $missingExt = array();
+    foreach (install_ext_list() as $e) {
+        if ($e['must'] && !$e['ok']) $missingExt[] = $e['name'];
+    }
+    if ($missingExt) {
+        return '缺少必需的 PHP 扩展：' . implode('、', $missingExt) . '。请在主机面板的 PHP 设置中安装/启用后重试（缺失会导致安装后页面 500 或空白）。';
+    }
+    $bad = array();
+    foreach (install_writable_dirs() as $label => $dir) {
+        is_dir($dir) or @mkdir($dir, 0755, TRUE);
+        if (!is_dir($dir) || !xn_is_writable($dir)) $bad[] = substr($label, 3);
+    }
+    if ($bad) {
+        return '以下目录不可写：' . implode('、', $bad) . '。请把站点目录的属主改为运行 PHP 的用户（如 www），或授予写权限后重试。';
+    }
+    $core = install_missing_core_files();
+    if ($core) {
+        return '核心文件缺失：' . implode('、', $core) . '。可能被主机安全软件隔离或上传不完整，请重新上传并加入白名单后重试。';
+    }
+    return '';
+}
+
 /**
  * 执行安装 SQL 文件（建表 + 初始数据），安装器专用。
  *

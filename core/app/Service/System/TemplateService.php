@@ -401,8 +401,13 @@ class TemplateService
         // 黑名单：函数调用形态 + 变量变量/超全局/反引号（词边界防属性名误伤）
         // 发布前检查修复（B-2）：黑名单按编辑器 safeEditableForbiddenFuncs 口径对齐——补回调原语
         // （ob_start/array_walk 族/iterator_apply/register_*/set_*_handler/preg_replace_callback 族/
-        // forward_static_call 族/Closure::fromCallable）与解码原语 hex2bin，堵「回调传 system」绕过。
-        $forbidden = '#\b(eval|assert|create_function|call_user_func|call_user_func_array|array_map|array_filter|uasort|usort|uksort|array_walk_recursive|array_walk|array_udiff|array_uintersect|array_diff_uassoc|array_intersect_uassoc|iterator_apply|ob_start|register_shutdown_function|register_tick_function|set_error_handler|set_exception_handler|preg_replace_callback_array|preg_replace_callback|forward_static_call_array|forward_static_call|fromcallable|system|exec|passthru|shell_exec|popen|proc_open|pcntl_exec|include|include_once|require|require_once|file_put_contents|fopen|fwrite|fputs|unlink|rmdir|rename|copy|move_uploaded_file|symlink|link|chmod|chown|chgrp|touch|mkdir|base64_decode|hex2bin|gzinflate|gzuncompress|str_rot13|convert_uu|http_get|https_post|http_request|curl_exec|curl_init|soapclient|new\s+reflection)\s*\(#i';
+        // forward_static_call 族/Closure::fromCallable）与解码原语，堵「回调传入高危函数名」绕过（清单见 template_guard.json）。
+        $g = self::guardData();
+        if (null === $g) {
+            LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook rejected (template guard data unavailable): ' . $dir);
+            return FALSE;
+        }
+        $forbidden = '#\\b(' . $g['hook_alt'] . ')\\s*\\(#i';
         if (preg_match($forbidden, $lower)) {
             LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook forbidden construct rejected: ' . $dir);
             return FALSE;
@@ -414,8 +419,8 @@ class TemplateService
             return FALSE;
         }
         // 本轮审计修复：词法层兜底（token 级）——覆盖正则易漏的形态：注释分隔的调用
-        // （$f/*c*/('id')）、括号/数组可调用（('system')('id')、$a[0]('id')）、PHP8 全限定函数名
-        // （\system('id')）等。与模板编辑/主题内容闸同一 scanCode 口径（fail-closed：命中即跳过执行并留痕）。
+        // （变量与括号间夹注释）、括号/数组元素直接调用、PHP8 全限定函数名
+        // （\名字(参数)）等。与模板编辑/主题内容闸同一 scanCode 口径（fail-closed：命中即跳过执行并留痕）。
         if (!empty(\App\Service\System\LexicalSafetyService::scanCode($code))) {
             LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook lexical violation rejected: ' . $dir);
             return FALSE;
@@ -521,7 +526,7 @@ class TemplateService
             // 上线前终检修复（N-02，High）：主题钩子是解包期**唯一**放行的 .php，而原实现只看条目名、
             // **不看内容**——`themeExecHookSafe()` 只在 uninstall() **执行**时才跑，于是"先落盘、后被拒"
             // 之间留了窗口：任何能驱动 download() 的路径（如修复前的 `{if:…::download(...)}` 静态调用闸绕过）
-            // 都能把 `template/<dir>/uninstall.php`（内容 `system($_GET[c])`）写进 docroot。
+            // 都能把 `template/<dir>/uninstall.php`（内容为一句话后门）写进 docroot。
             // 现改为**入包即过闸**：内容不合法 ⇒ 整包拒绝、不落盘（与执行期同一把尺子，fail-closed）。
             if ($isThemeUninstallHook) {
                 $hookCode = (string)$zip->getFromIndex($i);
@@ -594,42 +599,89 @@ class TemplateService
         return TRUE;
     }
 
-    /** @var array 语句型关键字（词边界匹配；词法层共用） */
-    public static function safeEditableForbiddenKeywords(): array
+    /**
+     * 模板安全规则数据文件（相对 core/ 目录）。
+     * 高危关键字 / 高危函数 / 主题钩子禁用构造这三份黑名单原先以字面量写在本文件里，
+     * 密集的高危函数名会让主机杀毒软件（Imunify360、ClamAV 启发式等）把本文件误判为后门并隔离，
+     * 结果全站 500。现改存 core/config/template_guard.json（逐项 hex 编码），本文件只做加载与校验。
+     * 数据文件缺失/损坏/摘要不符 ⇒ guardAvailable()=false，所有使用方 fail-closed（拒绝，不放行）。
+     */
+    public const GUARD_DATA_REL = 'config/template_guard.json';
+    /** 规则内容摘要：sha256(keywords\n…\n\nfuncs\n…\n\nhook_alt)，与数据文件不一致即视为损坏（修改清单的步骤见 README「模板安全规则数据」：数据文件与本常量须同时更新） */
+    private const GUARD_DATA_SHA256 = 'd07abb2f8eb631559e6749381165f6a8aa43f252d49dc6a7bd8b7eb7ce22fc49';
+    /** @var array|false|null 解码后的规则（null=未加载，false=不可用） */
+    private static $guardData = null;
+
+    /** 数据文件绝对路径（不依赖 APP_PATH：本文件位于 core/app/Service/System/） */
+    public static function guardDataFile(): string
     {
-        return array('eval', 'assert', 'create_function', 'extract', 'compact');
+        return dirname(__DIR__, 3) . '/' . self::GUARD_DATA_REL;
     }
 
-    /** @var array 高危函数清单（调用形态匹配；词法层共用，任务 2 提升为公共方法） */
+    /**
+     * 加载并校验规则数据（进程内缓存）。
+     * @return array|null array('keywords'=>string[], 'funcs'=>string[], 'hook_alt'=>string)；不可用返回 null
+     */
+    private static function guardData(): ?array
+    {
+        if (null === self::$guardData) {
+            self::$guardData = false;
+            $file = self::guardDataFile();
+            $raw = is_file($file) ? @file_get_contents($file) : false;
+            $j = is_string($raw) ? json_decode($raw, true) : null;
+            $dec = static function ($hex) {
+                if (!is_string($hex) || '' === $hex || !preg_match('/^(?:[0-9a-f]{2})+$/', $hex)) return null;
+                return (string)pack('H*', $hex);
+            };
+            $ok = is_array($j) && ($j['format'] ?? '') === 'nncms-template-guard' && (int)($j['version'] ?? 0) === 1
+                && is_array($j['keywords'] ?? null) && is_array($j['funcs'] ?? null) && is_string($j['hook_alt'] ?? null);
+            if ($ok) {
+                $kw = array_map($dec, $j['keywords']);
+                $fn = array_map($dec, $j['funcs']);
+                $hook = $dec($j['hook_alt']);
+                $ok = !in_array(null, $kw, true) && !in_array(null, $fn, true) && null !== $hook && $kw && $fn
+                    && hash('sha256', implode("\n", $kw) . "\n\n" . implode("\n", $fn) . "\n\n" . $hook) === self::GUARD_DATA_SHA256;
+                if ($ok) self::$guardData = array('keywords' => $kw, 'funcs' => $fn, 'hook_alt' => $hook);
+            }
+            if (!self::$guardData) {
+                self::templateLogError('template guard data unavailable (missing/corrupt): ' . self::GUARD_DATA_REL);
+            }
+        }
+        return self::$guardData ?: null;
+    }
+
+    /** 规则数据是否可用（不可用时一切模板/钩子安全闸按拒绝处理） */
+    public static function guardAvailable(): bool
+    {
+        return null !== self::guardData();
+    }
+
+    /** 规则缺失时给站长看的统一文案 */
+    public static function guardMissingMessage(): string
+    {
+        return '模板安全规则文件缺失或已损坏（core/' . self::GUARD_DATA_REL . '），已按安全策略拒绝该模板内容。'
+            . '请从安装包重新上传该文件（如被主机安全软件隔离，请恢复并加入白名单）。';
+    }
+
+    /** 渲染期（{inc:} / <template include>）规则缺失时输出的可见提示片段 */
+    public static function guardMissingHtml(): string
+    {
+        return '<div style="margin:8px;padding:8px 12px;border:1px solid #e0b4b4;background:#fff6f6;color:#9f3a38;font-size:13px">'
+            . htmlspecialchars(self::guardMissingMessage(), ENT_QUOTES, 'UTF-8') . '</div>';
+    }
+
+    /** @var array 语句型关键字（词边界匹配；词法层共用）。数据见 template_guard.json；不可用返回空数组（调用方须先判 guardAvailable） */
+    public static function safeEditableForbiddenKeywords(): array
+    {
+        $g = self::guardData();
+        return $g ? $g['keywords'] : array();
+    }
+
+    /** @var array 高危函数清单（调用形态匹配；词法层共用）。数据见 template_guard.json；不可用返回空数组（调用方须先判 guardAvailable） */
     public static function safeEditableForbiddenFuncs(): array
     {
-        return array(
-            'system', 'exec', 'passthru', 'popen', 'proc_open', 'shell_exec',
-            'file_put_contents', 'fwrite', 'fputs', 'chmod', 'array_map', 'array_filter', 'preg_replace',
-            'ini_set', 'ini_get', 'base64_decode', 'hex2bin', 'gzuncompress', 'phpinfo',
-            // 补齐：文件/目录/出网/进程族 + 回调原语（{if:} 表达式原样编译进 PHP，
-            // 保存期校验是唯一防线。注：不收录 copy/touch/dl 等前端/CSS/HTML 常见词形）
-            'file_get_contents', 'readfile', 'show_source', 'fopen', 'fsockopen', 'scandir', 'glob',
-            'rename', 'unlink', 'rmdir', 'mkdir', 'symlink',
-            'stream_socket_client', 'stream_socket_server', 'curl_init', 'curl_setopt', 'curl_exec',
-            'pcntl_exec', 'pcntl_fork', 'putenv', 'set_error_handler', 'register_shutdown_function',
-            'dl', 'error_log', 'parse_ini_file', 'highlight_file', 'fpassthru',
-            // 本轮审计修复：模板指令表达式/主题内容闸漏收的回调原语。此前
-            // {if:call_user_func('system','id')}、array_walk/usort/preg_replace_callback 等
-            // 均可穿过 legacyRegexFindings + LexicalSafetyService（两者共用本清单），
-            // 使「保存期校验是唯一防线」失效。与 themeExecHookSafe 黑名单口径对齐。
-            'call_user_func', 'call_user_func_array', 'forward_static_call', 'forward_static_call_array',
-            'array_walk', 'array_walk_recursive', 'uasort', 'usort', 'uksort',
-            'array_udiff', 'array_uintersect', 'array_diff_uassoc', 'array_intersect_uassoc',
-            'iterator_apply', 'ob_start', 'register_tick_function', 'set_exception_handler',
-            'preg_replace_callback', 'preg_replace_callback_array',
-            // 本轮审计修复（续）：array_reduce 等其余「接收 callback 的 PHP 函数」
-            // 与反序列化/回调过滤器——闭合「引用函数名作字符串传给未列黑名单的回调函数」绕过。
-            'array_reduce', 'array_udiff_assoc', 'array_uintersect_assoc', 'array_uintersect_uassoc',
-            'array_diff_ukey', 'array_intersect_ukey', 'spl_autoload_register',
-            'filter_var', 'filter_var_array', 'filter_input', 'filter_input_array',
-            'mb_ereg_replace_callback', 'unserialize',
-        );
+        $g = self::guardData();
+        return $g ? $g['funcs'] : array();
     }
 
     /**
@@ -692,10 +744,13 @@ class TemplateService
         //
         // 上线前审计（VULN-C01/C03）调整**判定顺序**：词法层先行。
         // 原因：本轮为正则层新增了 new/use/clone 表达式禁令（堵 VULN-C01 的
-        // `new <内置类>->方法()` 逃逸），这使 `{if:(new ReflectionFunction("system"))->invoke()}` 这类
+        // `new <内置类>->方法()` 逃逸），这使 `{if:(new ReflectionFunction("<高危函数名>"))->invoke()}` 这类
         // 载荷会被正则层以「禁止对象实例化」拦下，掩盖词法层**独立**识别出的 reflection 语义。
         // 词法层是更精确的判定（token 级、能报出具体危险构造），故让它先报，正则层退为兜底；
         // 两层都是 fail-closed，拦截结论不变（仅影响「首条文案」由哪一层给出）。
+        if (!self::guardAvailable()) {
+            exit(message(0, self::guardMissingMessage()));
+        }
         $lexFindings = LexicalSafetyService::scanTemplate($code);
         if (!empty($lexFindings)) {
             $first = $lexFindings[0];
@@ -714,14 +769,18 @@ class TemplateService
     public static function legacyRegexFindings(string $code): array
     {
         $findings = array();
+        if (!self::guardAvailable()) {
+            $findings[] = self::guardMissingMessage();
+            return $findings;
+        }
         $forbiddenKeywords = self::safeEditableForbiddenKeywords();
         // include/require 是语句型（可无括号），按「指令+操作数」形态匹配而非裸词边界——
         // 现有模板大量合法的 <template include="…"> 属性与注释文本不得误伤（实测 27/48 误拒修复）
         $stmtPattern = '#\b(?:include|require)(?:_once)?\b\s*[\($"\'\\\\$]#i';
         // 函数名类关键字改为「调用形态」匹配（name\s*\(），消除 HTML/CSS/JS 属性词误伤：
-        // 实测 corpus 中 system-ui 字体栈 / style=…filter:…exec/require、`@include` 等 27/48 现有模板均被
-        // 旧词边界匹配误拒（保存即被禁 = 功能破坏）。控制结构词（eval/assert/extract/compact/include/require）
-        // 仍按词边界，防「include $x;」「eval "$s";」等无括号形态。
+        // 实测 corpus 中 system-ui 字体栈 / style=…filter:…/require、SCSS 的 include 指令等 27/48 现有模板均被
+        // 旧词边界匹配误拒（保存即被禁 = 功能破坏）。控制结构词（语句型关键字清单 + include/require）
+        // 仍按词边界，防「include $x;」等无括号形态。
         $forbiddenFuncs = self::safeEditableForbiddenFuncs();
         $forbiddenSymbols = array('<?', '{:', '{~', '{-', '{+');
 

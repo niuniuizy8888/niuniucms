@@ -68,7 +68,7 @@
                     </tr>
                     <?php foreach($funclist as $f) { ?>
                     <tr>
-                      <td colspan="3"><?php echo xn_h($f['name']); ?>()<?php if(!$f['ok']) { ?><p class="text-small text-danger mb-0"><?php echo lang($f['tip']);?></p><?php } ?></td>
+                      <td colspan="3"><?php echo xn_h($f['name']); ?>()<?php if(!$f['ok']) { ?><p class="text-small text-danger mb-0"><?php echo isset($f['msg']) ? xn_h($f['msg']) : lang($f['tip']);?></p><?php } ?></td>
                       <td class="text-center"><?php if($f['ok']) { ?><span class="badge badge-pass">✓ <?php echo lang('supported');?></span><?php } else { if($f['must']) $succeed = 0; ?><span class="badge badge-fail">✕ <?php echo lang('not_supported');?></span><?php } ?></td>
                     </tr>
                     <?php } ?>

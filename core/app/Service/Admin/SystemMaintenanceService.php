@@ -160,11 +160,11 @@ class SystemMaintenanceService
      * @param string $input 多行域名清单原始文本
      * @return array{success:true, msg:string} msg 为 siteBatchAdd 的结果摘要（success 恒为 true，失败信息看 msg）
      */
-    public static function batchAddDomainSites(string $input): array
+    public static function batchAddDomainSites(array $domain, string $input): array
     {
-        $res = \App\Service\System\CloudOpsService::siteBatchAdd($input);
-        admin_audit_log('domain_batch_add', array());
-        return array('success' => true, 'msg' => $res);
+        $res = ConfigBootstrapService::batchAddDomainSites($domain, $input);
+        admin_audit_log('domain_batch_add', array('added' => intval($res['added'] ?? 0)));
+        return $res;
     }
 
     /**

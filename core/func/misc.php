@@ -530,7 +530,7 @@ function http_location($url)
 function http_referer()
 {
     $referer = param('referer');
-    empty($referer) and $referer = _SERVER('HTTP_REFERER');
+    empty($referer) and $referer = (string)_SERVER('HTTP_REFERER'); // 无 Referer 时 _SERVER() 回 NULL，PHP 8.1+ strpos/parse_url 传 NULL 弃用
     if (strpos($referer, url('user-login')) !== false || strpos($referer, url('user-logout')) !== false || strpos($referer, url('user-create')) !== false) {
         $referer = http_url_path();
     }
@@ -1030,7 +1030,9 @@ $g_dir_file = FALSE;
  * @param array $extra Keys: view (override template), adlist, extra_json
  */
 function route_list_page($type, $cid, $cate, $num, $page, $pagesize, $page_url, $items, $conf, $extra = array()) {
-    global $json, $seo, $api_json, $cate_nav, $path_tpl, $nncms, $search_url, $user_logout, $pku_url, $nav_active, $nav_route, $nav_home, $nav_pku;
+    // 修复：模板头部 {if:(group_access($gid, 'intoadmin'))}（后台入口）在本函数作用域内读不到 $gid/$admin_entry——
+    // 分类/列表页管理员看不到「后台管理」入口，且每次渲染刷 Undefined variable $gid 警告
+    global $json, $seo, $api_json, $cate_nav, $path_tpl, $nncms, $search_url, $user_logout, $pku_url, $nav_active, $nav_route, $nav_home, $nav_pku, $uid, $gid, $user, $admin_entry;
     $_SESSION['cid'] = $cid;
     $_SESSION['num'] = $num;
     $_SESSION['page'] = $page;
@@ -1218,10 +1220,25 @@ function page_cache_version()
     return $ver;
 }
 
-/** 页缓存键叠加内容版本（start/end 必须同口径） */
+/** 页缓存键叠加内容版本 + 站群站点（start/end 必须同口径） */
 function page_cache_vkey($cacheKey)
 {
-    return $cacheKey . '_cv' . page_cache_version();
+    return $cacheKey . page_cache_site_suffix() . '_cv' . page_cache_version();
+}
+
+/**
+ * 站群修复：整页缓存此前不区分访问域名——各路由的键只含 URI/gid/伪静态档位，站群站点的站点名、模板（path）
+ * 与主站或其他同档位站点不同，却共用同一份缓存，先访问的站点内容会被回放给其他域名 1800s。
+ * 只对 domain.php 里登记过的站点追加后缀（键空间有界，Host 头随意伪造不会造出新键）；主站后缀为空，原有缓存不失效。
+ */
+function page_cache_site_suffix()
+{
+    static $suffix = NULL;
+    if (NULL !== $suffix) return $suffix;
+    $hosts = $GLOBALS['hosts'] ?? '';
+    $domain = $GLOBALS['domain'] ?? array();
+    $suffix = ('' !== (string)$hosts && is_array($domain) && isset($domain['site'][$hosts])) ? '_s' . substr(md5((string)$hosts), 0, 12) : '';
+    return $suffix;
 }
 
 /**

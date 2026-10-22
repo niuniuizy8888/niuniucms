@@ -1,10 +1,10 @@
 <?php
 /**
- * PHP 7.4+ 兼容 polyfill。
+ * 字符串辅助函数 polyfill（项目下限 PHP 8.0，这些函数 8.0 已内置；保留仅作兜底，不影响 8.x）。
  *
  * 说明：
  * - PHP 8+ 已内建 str_contains/str_starts_with/str_ends_with，这里仅在缺失时补定义。
- * - 必须在核心函数与业务代码之前加载，保证 7.4 运行时不因字符串辅助函数缺失而 fatal。
+ * - 必须在核心函数与业务代码之前加载。
  */
 
 if (!function_exists('str_contains')) {

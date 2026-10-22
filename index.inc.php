@@ -128,6 +128,11 @@ if (is_array($kv_bind)) $conf['bind'] = $kv_bind;
 $kv_vodplayer = kv_cache_get('vodplayer');
 if (is_array($kv_vodplayer)) $conf['vodplayer'] = $kv_vodplayer;
 
+// 站群修复：后台「网站设置」保存的 sitename 存在 KV 运行时配置里，上面 config_runtime_apply 会把
+// index.php 按访问域名注入的站点名覆盖回主站名称（站群各站显示的都是主站名）。这里按域名重新套用一次。
+if (!empty($siteconf) && is_array($siteconf) && isset($siteconf['site_name']) && '' !== (string)$siteconf['site_name']) {
+    $conf['site_name'] = $conf['sitename'] = $siteconf['site_name'];
+}
 // 容器方案 P1：kv 合并后的 conf 终值统一经容器写入口（写透镜像同步 $_SERVER）
 if (class_exists('App')) App::set('conf', $conf);
 

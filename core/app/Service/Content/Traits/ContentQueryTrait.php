@@ -467,12 +467,19 @@ trait ContentQueryTrait
         static $cache = array();
         if (isset($cache[$id])) return $cache[$id];
         $key = self::queryCachePrefix() . intval($id);
+        // 站群修复：缓存的是格式化后的行（含按伪静态档位生成的 url/cate_url/tag_url），站群站点的
+        // site_rewrite 与主站不同时不能共用主站的键，否则链接形态串站。主站档位键名不变；
+        // 其他档位另起键并缩短 TTL（各处 cache_delete 只删主键，短 TTL 兜底内容更新的可见延迟）。
+        $conf = (array)_SERVER('conf');
+        $rw = intval($conf['url_rewrite_on'] ?? 0);
+        $variant = isset($conf['url_rewrite_base']) && $rw !== intval($conf['url_rewrite_base']);
+        $variant and $key .= '_rw' . $rw;
         $r = cache_get($key);
         if (NULL === $r) {
             $r = self::queryReadShell($id);
             if ($r) {
                 self::queryFormatRow($r);
-                cache_set($key, $r, self::queryReadTtl());
+                cache_set($key, $r, $variant ? min(300, self::queryReadTtl()) : self::queryReadTtl());
             }
         }
         $cache[$id] = $r ? $r : NULL;

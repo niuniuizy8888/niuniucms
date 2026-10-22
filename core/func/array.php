@@ -68,8 +68,11 @@ function array_htmlspecialchars(&$var)
         foreach ($var as $k => &$v) {
             array_htmlspecialchars($v);
         }
+    } elseif (is_object($var)) {
+        return $var;
     } else {
-        $var = str_replace(array('&', '"', '<', '>'), array('&amp;', '&quot;', '&lt;', '&gt;'), $var);
+        // NULL/数字先转字符串：PHP 8.1+ 向 str_replace 传 NULL 弃用（结果与原来一致：NULL ⇒ ''）
+        $var = str_replace(array('&', '"', '<', '>'), array('&amp;', '&quot;', '&lt;', '&gt;'), (string)$var);
     }
     return $var;
 }

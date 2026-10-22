@@ -39,16 +39,8 @@ class VodManageService
             $cond['sticky'] = 0;
         }
         if ($range) {
-            $now = time();
-            $start = 0;
-            if ('today' == $range) {
-                $start = strtotime(date('Y-m-d 00:00:00', $now));
-            } elseif ('7d' == $range) {
-                $start = strtotime('-7 day', $now);
-            } elseif ('30d' == $range) {
-                $start = strtotime('-30 day', $now);
-            }
-            $start and $cond['create_date'] = array('>=' => $start, '<' => $now + 1);
+            $start = self::rangeStart($range);
+            $start and $cond['create_date'] = array('>=' => $start, '<' => time() + 1);
         }
 
         $use_index = empty($cond) || (1 == count($cond) && isset($cond['cid']));
@@ -75,6 +67,7 @@ class VodManageService
             $n = \App\Service\Content\VideoService::count($cond);
             $videolist = $n ? \App\Service\Content\VideoService::findPageByCond($cond, $page, $pagesize, array('vid' => -1), TRUE) : NULL;
         }
+        $videolist and $videolist = self::attachPlayFrom($videolist);
 
         return array(
             'header' => array(
@@ -99,30 +92,92 @@ class VodManageService
      * @param int $uid 当前管理员 uid
      * @return array 结构同 listPage（filter 为默认值：sticky=-1/pagesize=20/range=''）
      */
-    public static function searchPage(string $keyword, int $uid): array
+    public static function searchPage(string $keyword, int $uid, array $filters = array()): array
     {
         $catelist = cate_list_cache();
+        $cid = intval($filters['cid'] ?? 0);
+        $sticky = intval($filters['sticky'] ?? -1);
+        $range = (string)($filters['range'] ?? '');
+        $pagesize = intval($filters['pagesize'] ?? 20) ?: 20;
         $videolist = NULL;
         if ($keyword !== '') {
+            $videolist = array();
+            // 纯数字：先按 vid 精确命中，再并上片名匹配（修复：片名本身是数字时如「1917」「2046」此前搜不到）
             if (ctype_digit($keyword)) {
                 $video = \App\Service\Content\VideoService::read(intval($keyword));
-                $videolist = $video ? array($video['vid'] => $video) : NULL;
-            } else {
-                $videolist = \App\Service\Content\VideoService::findByKeyword($keyword);
+                $video and $videolist[$video['vid']] = $video;
             }
+            $byName = \App\Service\Content\VideoService::findByKeyword($keyword);
+            if (is_array($byName)) {
+                foreach ($byName as $_vid => $_row) {
+                    isset($videolist[$_vid]) or $videolist[$_vid] = $_row;
+                }
+            }
+            // 与工具栏其余筛选项叠加（搜索结果上限 60 条，内存过滤即可）
+            $start = self::rangeStart($range);
+            foreach ($videolist as $_vid => $_row) {
+                if (($cid && intval($_row['cid'] ?? 0) !== $cid)
+                    || (1 == $sticky && intval($_row['sticky'] ?? 0) <= 0)
+                    || (0 == $sticky && intval($_row['sticky'] ?? 0) > 0)
+                    || ($start && intval($_row['create_date'] ?? 0) < $start)) {
+                    unset($videolist[$_vid]);
+                }
+            }
+            $videolist = $videolist ? self::attachPlayFrom($videolist) : NULL;
         }
         return array(
             'header' => array(
                 'title' => lang('vod_page'),
             ),
-            'cid' => 0,
+            'cid' => $cid,
+            'keyword' => $keyword,
             'videolist' => $videolist,
             'columnlist' => category_list($catelist),
-            'filter' => array('sticky' => -1, 'pagesize' => 20, 'range' => ''),
+            'filter' => array('sticky' => $sticky, 'pagesize' => $pagesize, 'range' => $range),
             'pagination' => '',
             'safe_token' => bull_token_set($uid, 'admin_vod_batch'),
             'poster_token' => bull_token_set($uid, 'admin_vod_poster'), // 海报更新按钮（此前从未下发致功能恒失败）
         );
+    }
+
+    /**
+     * 时间范围筛选起点（today|7d|30d；其余=0 不筛），listPage/searchPage 共用。
+     */
+    private static function rangeStart(string $range): int
+    {
+        $now = time();
+        if ('today' == $range) return intval(strtotime(date('Y-m-d 00:00:00', $now)));
+        if ('7d' == $range) return intval(strtotime('-7 day', $now));
+        if ('30d' == $range) return intval(strtotime('-30 day', $now));
+        return 0;
+    }
+
+    /**
+     * 列表「播放组」列：light 查询不取 play_from（与 play_url 同属播放字段），此前该列恒空且每行一条
+     * Undefined array key 警告（PHP 8.1+ 另有 htmlspecialchars(null) 弃用）。这里只补一列 play_from（varchar 255），
+     * 一次 IN 查询、不拉 play_url 大字段；$$$ 分隔的多源转成「、」便于阅读。
+     */
+    private static function attachPlayFrom(array $videolist): array
+    {
+        $vids = array();
+        foreach ($videolist as $_row) {
+            $_vid = intval($_row['vid'] ?? 0);
+            $_vid > 0 and $vids[] = $_vid;
+        }
+        $map = array();
+        if ($vids) {
+            try {
+                $rows = \App\Repository\RepositoryFactory::vod()->builder()->select(array('vid', 'play_from'))->whereIn('vid', $vids)->get();
+                foreach ((array)$rows as $_r) $map[intval($_r['vid'] ?? 0)] = (string)($_r['play_from'] ?? '');
+            } catch (\Throwable $e) {
+                $map = array();
+            }
+        }
+        foreach ($videolist as $_k => $_row) {
+            $from = isset($_row['play_from']) ? (string)$_row['play_from'] : ($map[intval($_row['vid'] ?? 0)] ?? '');
+            $videolist[$_k]['play_from'] = implode('、', array_filter(array_map('trim', explode('$$$', $from)), 'strlen'));
+        }
+        return $videolist;
     }
 
     /**

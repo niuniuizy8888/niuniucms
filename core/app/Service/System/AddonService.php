@@ -311,6 +311,10 @@ class AddonService
         // 被包含内容只应是模板片段（HTML + 模板指令），不含原生 PHP。
         $r = preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s', '', $r);
         try {
+            // 规则数据缺失：fail-closed 丢弃内容，并输出可见提示（而非静默空白）
+            if (!\App\Service\System\TemplateService::guardAvailable()) {
+                return \App\Service\System\TemplateService::guardMissingHtml();
+            }
             $incFindings = \App\Service\System\TemplateService::legacyRegexFindings($r);
             if (empty($incFindings)) {
                 $incFindings = \App\Service\System\LexicalSafetyService::scanTemplate($r);

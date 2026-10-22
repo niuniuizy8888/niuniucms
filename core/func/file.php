@@ -21,7 +21,11 @@ function file_replace_var($filepath, $replace = array(), $pretty = FALSE)
 {
     $ext = file_ext($filepath);
     if ('php' == $ext) {
+        // 文件不存在/不可读/内容不是 return array(...) 时返回 FALSE，由调用方给出明确提示，
+        // 不再把 include 的 FALSE 直接喂给 array_merge()（PHP 8 下 TypeError → 空白 500）
+        if (!is_file($filepath) || !is_readable($filepath)) return FALSE;
         $arr = include $filepath;
+        if (!is_array($arr)) return FALSE;
         $arr = array_merge($arr, $replace);
         $s = "<?php\r\nreturn " . var_export($arr, true) . ";\r\n?>";
         // 备份文件

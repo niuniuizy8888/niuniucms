@@ -826,46 +826,10 @@ class CloudOpsService
      */
     public static function siteBatchAdd($input_text)
     {
-        global $domain;
-        $site = isset($domain['site']) && is_array($domain['site']) ? $domain['site'] : array();
-        $lines = explode("\n", trim($input_text));
-        $add_count = 0;
-        $available_dirs = \App\Service\System\TemplateService::availableDirs();
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if ($line == '') continue;
-            $parts = explode('|', $line);
-            if (count($parts) < 4) continue;
-            list($site_domain, $site_name, $path, $site_rewrite) = $parts;
-            $site_domain  = get_domain(trim($site_domain));
-            $site_name    = trim($site_name);
-            $path         = trim($path);
-            if (str_contains($path, '..') || str_starts_with($path, '/')) {
-                $path = '';
-            }
-            $site_rewrite = intval(trim($site_rewrite));
-            if ($site_domain == '') continue;
-            if (isset($site[$site_domain])) continue;
-            if (empty($site_rewrite) || $site_rewrite >= 4) {
-                $site_rewrite = rand(0, 3);
-            }
-            $template_dir = \App\Service\System\TemplateService::templateRoot();
-            if ($path == '' || !is_dir($template_dir . $path)) {
-                if (!empty($available_dirs)) {
-                    $path = $available_dirs[array_rand($available_dirs)];
-                } else {
-                    $path = 'default';
-                }
-            }
-            $site[$site_domain] = array(
-                'site_name' => $site_name,
-                'site_domain' => $site_domain,
-                'path' => $path,
-                'site_rewrite' => $site_rewrite,
-            );
-            $add_count++;
-        }
-        file_replace_var(APP_PATH . 'core/config/domain.php', array('site' => $site));
-        return "批量添加完成，共添加 {$add_count} 条记录";
+        // 兼容壳：解析/校验/转义统一在 ConfigBootstrapService::batchAddDomainSites（此前本处 site_name 未转义、
+        // 域名不校验、填 0 的伪静态被随机化）。后台入口已直接调用新实现，本方法仅为旧插件保留。
+        $domain = include APP_PATH . 'core/config/domain.php';
+        $res = \App\Service\Admin\ConfigBootstrapService::batchAddDomainSites(is_array($domain) ? $domain : array(), (string)$input_text);
+        return $res['msg'];
     }
 }

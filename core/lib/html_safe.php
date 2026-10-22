@@ -135,6 +135,12 @@ class XML_HTMLSax3_ClosingTagState
 class XML_HTMLSax3_OpeningTagState
 {
     /**
+     * 当前开标签的属性表（parse() 每次重置）。PHP 8.2+ 动态属性弃用：显式声明。
+     * @var array
+     */
+    var $attrs = array();
+
+    /**
      * Handles attributes
      * @param string attribute name
      * @param string attribute value
@@ -1746,8 +1752,9 @@ class HTML_White
      */
     private function chr_callback($matchs)
     {
-        $s = $matchs[1];
-        return chr($s);
+        // PHP 8.5：chr() 传 0-255 以外的值弃用；原语义就是按 256 取模，显式取模保持结果一致
+        //（10^8 能被 256 整除，只取末 8 位即可避免超长数字溢出）
+        return chr(intval(substr((string)$matchs[1], -8)) % 256);
     }
 
     /**
@@ -1757,8 +1764,8 @@ class HTML_White
      */
     private function chr_hexdec_callback($matchs)
     {
-        $s = $matchs[1];
-        return chr(hexdec($s));
+        // 同上：只取末两位十六进制（= 按 256 取模），避免超长串 hexdec 得到 float 再隐式转 int
+        return chr(intval(hexdec(substr((string)$matchs[1], -2))));
     }
 
     /**

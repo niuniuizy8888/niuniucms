@@ -1288,7 +1288,7 @@ class ApiExecutionService
         ]);
         // 手动跟随重定向（最多 4 跳），每跳 SSRF 校验
         $res = outbound_curl_exec($ch, $url, 10, 4);
-        curl_close($ch);
+        unset($ch); // curl_close() 自 PHP 8.0 起无作用、8.5 起弃用：释放句柄即可
         return $res === false ? '' : $res;
     }
 

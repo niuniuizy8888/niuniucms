@@ -2,6 +2,10 @@
 !defined('DEBUG') and define('DEBUG', 0); // 0: 线上（默认兜底，生产禁用错误显示）；1: 开发，2: 线上调试日志；各入口显式定义
 !defined('APP_PATH') and define('APP_PATH', './');
 !defined('CORE_PATH') and define('CORE_PATH', __DIR__ . '/');
+// PHP 版本下限 8.0（与安装向导 NNCMS_PHP_MIN 一致；覆盖 CLI 等不经 index.php 的入口）
+if (PHP_VERSION_ID < 80000) {
+    exit('NiuNiuCMS requires PHP 8.0+ (current: ' . PHP_VERSION . ') / 牛牛CMS 需要 PHP 8.0 或更高版本' . PHP_EOL);
+}
 include_once CORE_PATH . 'func/polyfill.php';
 
 // ============================================================

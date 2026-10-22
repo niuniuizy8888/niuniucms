@@ -72,7 +72,12 @@ trait SetManageDomainTrait
     public static function addDomain(int $uid): array
     {
         self::verifyToken($uid, 'admin_domain_add');
-        $result = SystemMaintenanceService::batchAddDomainSites(admin_param_text('batch_sites', '', 100000));
+        // 修复：原 trim 剥了 \n 以外的控制符却也剥了换行（admin_param_text 会删 \r\n\t），多行文本被拼成一行，
+        // 批量添加只认第一条；这里按原值取参后自行限长，逐行校验交 ConfigBootstrapService
+        $text = (string)param('batch_sites', '', FALSE);
+        $text = substr(str_replace("\0", '', $text), 0, 100000);
+        $result = SystemMaintenanceService::batchAddDomainSites(self::domainConfig(), $text);
+        $result['success'] || message(1, $result['msg']);
         return array('code' => 0, 'message' => jump($result['msg'], url('set-domain', array(), TRUE), 3));
     }
 
@@ -87,6 +92,7 @@ trait SetManageDomainTrait
     {
         self::verifyToken($uid, 'admin_domain_del');
         $result = ConfigBootstrapService::deleteDomainSite(self::domainConfig(), admin_param_text('site_domain', '', 255));
+        $result['success'] || message(1, $result['msg']);
         return array('code' => 0, 'message' => jump($result['msg'], url('set-domain', array(), TRUE), 3));
     }
 }

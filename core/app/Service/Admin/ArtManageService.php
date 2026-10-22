@@ -88,27 +88,45 @@ class ArtManageService
      * @param int $uid 当前管理员 uid（签发 admin_art_batch 场景 safe_token）
      * @return array 视图数据数组
      */
-    public static function searchPage(string $keyword, int $uid): array
+    public static function searchPage(string $keyword, int $uid, array $filters = array()): array
     {
         $catelist = cate_list_cache();
         $catelists = arrlist_cond_orderby($catelist, array('model' => 1), array(), 1, 200);
+        $cid = intval($filters['cid'] ?? 0);
+        $range = (string)($filters['range'] ?? '');
+        $pagesize = intval($filters['pagesize'] ?? 20) ?: 20;
         $artlist = NULL;
         if ($keyword !== '') {
+            $artlist = array();
+            // 纯数字：aid 精确命中 + 标题匹配合并（标题为纯数字时此前搜不到）
             if (ctype_digit($keyword)) {
                 $art = \App\Service\Content\ArtService::read(intval($keyword));
-                $artlist = $art ? array($art['aid'] => $art) : NULL;
-            } else {
-                $artlist = \App\Service\Content\ArtService::findByKeyword($keyword);
+                $art and $artlist[$art['aid']] = $art;
             }
+            $byName = \App\Service\Content\ArtService::findByKeyword($keyword);
+            if (is_array($byName)) {
+                foreach ($byName as $_aid => $_row) {
+                    isset($artlist[$_aid]) or $artlist[$_aid] = $_row;
+                }
+            }
+            $now = time();
+            $start = 'today' == $range ? strtotime(date('Y-m-d 00:00:00', $now)) : ('7d' == $range ? strtotime('-7 day', $now) : ('30d' == $range ? strtotime('-30 day', $now) : 0));
+            foreach ($artlist as $_aid => $_row) {
+                if (($cid && intval($_row['cid'] ?? 0) !== $cid) || ($start && intval($_row['create_date'] ?? 0) < $start)) {
+                    unset($artlist[$_aid]);
+                }
+            }
+            $artlist or $artlist = NULL;
         }
         return array(
             'header' => array(
                 'title' => lang('art_page'),
             ),
-            'cid' => 0,
+            'cid' => $cid,
+            'keyword' => $keyword,
             'artlist' => $artlist,
             'columnlist' => category_list($catelists),
-            'filter' => array('pagesize' => 20, 'range' => ''),
+            'filter' => array('pagesize' => $pagesize, 'range' => $range),
             'pagination' => '',
             'safe_token' => bull_token_set($uid, 'admin_art_batch'),
         );

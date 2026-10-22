@@ -374,6 +374,10 @@ function process_inc_body($s)
     try {
         if (class_exists('\App\Service\System\TemplateService')
             && class_exists('\App\Service\System\LexicalSafetyService')) {
+            // 规则数据缺失：fail-closed 丢弃内容，并输出可见提示（而非静默空白）
+            if (!\App\Service\System\TemplateService::guardAvailable()) {
+                return \App\Service\System\TemplateService::guardMissingHtml();
+            }
             $findings = \App\Service\System\TemplateService::legacyRegexFindings($s);
             if (empty($findings)) {
                 $findings = \App\Service\System\LexicalSafetyService::scanTemplate($s);

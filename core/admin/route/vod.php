@@ -7,13 +7,20 @@ $action = param(1, 'list');
 switch ($action) {
     case 'list':
         if ('GET' == $method) {
-            $data = \App\Service\Admin\VodManageService::listPage(array(
+            $filters = array(
                 'cid' => admin_param_int('cid', 0, 0),
                 'page' => admin_param_int('page', 1, 1),
                 'pagesize' => admin_param_int('pagesize', 20, 10, 100),
                 'sticky' => admin_param_int('sticky', -1, -1, 1),
                 'range' => admin_param_text('range', '', 16),
-            ), $uid);
+            );
+            // 修复：列表页工具栏「关键词」表单提交到 vod-list（不是 vod-search），此前 list 分支不读 keyword，
+            // 输入片名点「筛选」后关键词被静默丢弃、永远显示全部视频。原生 GET 表单值已由 PHP 解码，不能再 xn_urldecode
+            //（会把 _ 当 % 还原，片名含下划线/百分号时被改坏）。
+            $keyword = admin_param_text('keyword', '', 100);
+            $data = '' !== $keyword
+                ? \App\Service\Admin\VodManageService::searchPage($keyword, $uid, $filters)
+                : \App\Service\Admin\VodManageService::listPage($filters, $uid);
             extract($data, EXTR_SKIP); // S-4：防覆盖路由局部变量
             include _include(ADMIN_PATH . 'html/vod_list.html');
         }
