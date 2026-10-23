@@ -125,6 +125,8 @@ class cache_mysql implements CacheInterface
      *
      * 处置：在写成功后做**有界、低频、可失败**的机会式回收——
      *   ① 频率门：本进程 5 分钟最多一次，且叠加 1/50 概率，避免每次写都扫表；
+     *      若一次删满 200 行（有积压），撤掉 5 分钟门、仅保留 1/50 概率，直到积压清完——
+     *      多层缓存修复后无 Redis/Memcached 主机的每次 cache_set 都会真正落本表，回收速率须能追上写入速率；
      *   ② 有界：单次最多删 200 行，绝不长事务/大删除阻塞写入；
      *   ③ 失败静默：回收异常绝不影响 set() 的返回值（缓存写入的成败与 GC 无关）。
      *
@@ -144,9 +146,12 @@ class cache_mysql implements CacheInterface
             // 用既有助手（自带表名前缀 + 列名白名单校验 + 字面量转义），条件形态由
             // db_cond_to_sqladd 归一：array('expiry' => array('>' => 0, '<' => $now))
             //   ⇒ `DELETE FROM {pre}cache WHERE \`expiry\` > 0 AND \`expiry\` < N AND 1=1 LIMIT 200`
-            db_exec('DELETE FROM ' . $this->db->tablepre . $this->table
+            $n = db_exec('DELETE FROM ' . $this->db->tablepre . $this->table
                 . db_cond_to_sqladd(array('expiry' => array('>' => 0, '<' => $now)), $this->db)
                 . ' AND 1=1 LIMIT 200', $this->db);
+            // 积压自适应：删满 200 行说明还有过期积压 ⇒ 撤掉 5 分钟门，只留 1/50 概率，
+            // 回收能力变为「平均每 50 次写删 200 行」，恒大于写入速率 ⇒ 表行数有界（无 Redis 主机 MySQL 层成为主力后必需）
+            if (is_int($n) && $n >= 200) $lastGc = 0;
         } catch (\Throwable $e) {
             // 静默：回收失败不影响缓存读写
         }
@@ -156,7 +161,7 @@ class cache_mysql implements CacheInterface
      * 删除缓存
      * ⚠ miss≠failure 口径对齐（审查修复）：旧实现 `$r > 0` 把「键不存在（0 行）」当失败，
      *   与 StaticCache 约定及 redis/apcu/memcached 三驱动（miss 恒成功）不一致——mysql 层
-     *   绝大多数键本就不存在（热层短路写），`cache_delete()` 对常规键恒返 false，污染
+     *   绝大多数键本就不存在（有 Redis/Memcached 时热层短路写），`cache_delete()` 对常规键恒返 false，污染
      *   MultiLayerCache::delete() 的 AND 链。现 0 行=成功，仅语句失败（FALSE/异常）为 false。
      */
     public function delete(string $key): bool

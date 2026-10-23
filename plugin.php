@@ -253,7 +253,7 @@ function plugin_scaffold_list($ROOT)
  * 新插件骨架生成器：目录名白名单校验（与 AddonService 路径穿越防护同口径）+ 拒绝覆盖已存在目录，
  * 落盘 conf.json / install.php / uninstall.php / hook/foot_end.php / setting.php 五件套
  * （示例形态=kv 配置 + 页脚注入 + 后台设置页，与 .skills/插件开发.md 手册示例同构）。
- * 生成后立即自检：conf.json 可解析、hook 文件带 exit 头、三个 PHP 脚本 exec php -l——
+ * 生成后立即自检：conf.json 可解析、hook 文件带 exit 头、三个 PHP 脚本 token_get_all(TOKEN_PARSE) 语法检查——
  * 任一项告警则 exit 1 提示修复。骨架内含的注入位置/双写口径等约定见各 heredoc 内注释。
  * @param string $ROOT 站点根（带尾斜杠）
  * @param string $dir 插件目录名（[A-Za-z0-9_-]{1,64}，非法即 exit 1）
@@ -397,9 +397,12 @@ PHP;
         $ok = FALSE;
     }
     foreach (array('install.php', 'uninstall.php', 'setting.php') as $pf) {
-        exec('php -l ' . escapeshellarg($target . $pf) . ' 2>&1', $out, $rc);
-        if (0 !== $rc) {
-            fwrite(STDERR, "⚠ {$pf} 语法错误：" . implode("\n", $out) . "\n");
+        // 进程内语法自检（token_get_all + TOKEN_PARSE 遇语法错误抛 ParseError），
+        // 不再 shell 出去跑 `php -l`：免依赖 PATH 中的 php 版本，也让发行包里不含进程执行调用
+        try {
+            token_get_all((string)file_get_contents($target . $pf), TOKEN_PARSE);
+        } catch (\ParseError $e) {
+            fwrite(STDERR, "⚠ {$pf} 语法错误：" . $e->getMessage() . '（第 ' . $e->getLine() . " 行）\n");
             $ok = FALSE;
         }
     }

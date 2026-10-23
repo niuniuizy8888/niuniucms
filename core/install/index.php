@@ -304,7 +304,7 @@ if (empty($action)) {
  *    对 PHP 下限（NNCMS_PHP_MIN，现 8.0）取值，os 项恒 status=1（仅展示 Unix-like 建议，不做实际阻断）。
  *  · $funclist：扩展/函数依赖清单 [{name,tip,msg,ok,must}]，来自 install_ext_list()：
  *    must=TRUE（pdo/pdo_mysql/mbstring/ctype/tokenizer/iconv/json/openssl/filter）缺失时 chenk.html
- *    置 $succeed=0 阻断下一步；其余（curl/gd/zip/fileinfo/glob/gzinflate）只提示不阻断。
+ *    置 $succeed=0 阻断下一步；其余（curl/gd/zip/fileinfo/glob/zlib）只提示不阻断。
  *  · $write：可写目录检测（来自 install_writable_dirs()：runtime/log、runtime/cache、upload、plugins、
  *    template、core/config、core 七项）。目录不存在时
  *    先 @mkdir(0755, recursive) 再判 xn_is_writable()；检测用 APP_PATH 绝对路径（原相对 CWD 写法在
@@ -359,7 +359,7 @@ function get_env(&$env, &$write, &$funclist)
  *    （模板/插件编译管线与安全闸用 token_get_all，缺失时首页空白、后台 500）、iconv（分词与截断）、
  *    json、openssl（加密与 Cookie，拒绝降级）、filter（filter_var，每个请求解析域名都用）。
  *  - 可选（缺失只影响对应功能）：curl（采集/云端/升级）、gd（缩略图）、zip（模板/插件安装与在线升级）、
- *    fileinfo（上传 MIME 检测，缺失降级为扩展名白名单）、glob / gzinflate 函数。
+ *    fileinfo（上传 MIME 检测，缺失降级为扩展名白名单）、glob 函数、zlib（zlib_encode/zlib_decode）。
  * @return array[] [{name,tip,msg,ok,must}]
  */
 function install_ext_list()
@@ -380,7 +380,7 @@ function install_ext_list()
         array('name' => 'zip',        'tip' => 'function_zip_not_exists',       'msg' => '（可选）zip 未安装：模板/插件下载安装与在线升级不可用', 'ok' => class_exists('ZipArchive'), 'must' => FALSE),
         array('name' => 'fileinfo',   'tip' => 'function_fileinfo_not_exists',  'msg' => '（可选）fileinfo 未安装：上传文件改用扩展名白名单校验', 'ok' => function_exists('finfo_open'), 'must' => FALSE),
         array('name' => 'glob',       'tip' => 'function_glob_not_exists',      'msg' => '（可选）glob 函数被禁用：部分目录扫描功能不可用（php.ini 的 disable_functions 中去掉 glob）', 'ok' => function_exists('glob'), 'must' => FALSE),
-        array('name' => 'gzinflate',  'tip' => 'function_gzcompress_not_exists','msg' => '（可选）zlib 不可用：压缩相关功能不可用', 'ok' => function_exists('gzinflate'), 'must' => FALSE),
+        array('name' => 'zlib',       'tip' => 'function_gzcompress_not_exists','msg' => '（可选）zlib 不可用：页缓存压缩不可用（自动退回不压缩）', 'ok' => function_exists('zlib_encode') && function_exists('zlib_decode'), 'must' => FALSE),
     );
 }
 

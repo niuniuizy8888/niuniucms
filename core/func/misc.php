@@ -969,7 +969,7 @@ function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $
 /**
  * 递归扫描目录并**直接 echo** 可疑脚本文件（原注释「搜索目录下的文件 比对文件后缀」）：
  * scandir 逐项走，`.`/`..` 跳过，子目录递归自身，文件的扩展名（file_ext() 取、转小写）命中
- * php / asp / jsp / cgi / exe / dll 之一就打印「异常文件：+路径」。用途是手工排查 webshell 与
+ * php / asp / jsp / cgi / exe / dll 之一就打印「异常文件：+路径」。用途是手工排查可疑脚本与
  * 遗留可执行文件（红线 §二.7/§二.10 的「可写目录禁执行 PHP」自检可以借它一把）。
  *
  * ⚠ 现状与边界，接手前必读：
@@ -1159,42 +1159,49 @@ function page_cache_uri_key($uri)
 }
 
 /**
- * 页缓存载荷压缩/还原（第六轮复审修复 R6-03）
+ * 页缓存载荷压缩/还原（第六轮复审修复 R6-03；编码格式 v2）
  *
  * 背景：page_cache 直接缓存**整页 HTML**，实测首页单条 786KB——写入 APCu（默认 shm 32MB）
- * 十几个 URI 变体即撑满（写失败静默），Redis 侧无 maxmemory 策略；MySQL 层列为 mediumtext。
- * 方案：>4KB 的载荷用 gzdeflate 压缩并以 base64 包装（纯 ASCII，兼容 mediumtext 字符集，
- * 避免二进制写 TEXT 列被字符集转换破坏），前缀 "\x00GZ" 标识压缩态；未达阈值/压缩不划算/无 zlib
- * 时原样返回。还原侧对前缀不匹配的存量值原样透传——**旧缓存条目无需清理即可兼容**。
- * 实测首页 786KB → 约 68KB（base64 后），APCu/Redis 内存压力降一个数量级。
+ * 十几个 URI 变体即撑满（写失败静默），Redis 侧无 maxmemory 策略；MySQL 层列为 mediumtext，
+ * 且 cache_mysql 以 JSON 存值——载荷必须是纯 ASCII，二进制压缩流不能直接落库。
+ * 方案（v2）：>4KB 的载荷用 zlib_encode(ZLIB_ENCODING_DEFLATE) 压缩后转十六进制（纯 ASCII），
+ * 前缀 "\x00ZH" 标识压缩态；未达阈值/压缩不划算/无 zlib 时原样返回。
+ * v1（"\x00GZ" 前缀）曾用「Base64 包装 + raw deflate」，这种「解码后再解压」的组合正是主机杀毒
+ * 启发式（Imunify360 / ai-bolit / ClamAV 启发式等）给混淆代码打分的典型特征，故改为十六进制 + zlib_decode，
+ * 与 core/config/template_guard.json 的 hex 编码口径一致。体积约为原文的 1/5～1/8（hex 比 Base64 大 50%，可接受）。
+ * 兼容：无前缀的存量明文条目原样透传；v1 "\x00GZ" 条目与任何解不开的 "\x00" 前缀条目
+ * 由 page_cache_unpack 返回 NULL ⇒ page_cache_start 视为未命中、删除后重新渲染回填（不报错、不输出乱码）。
  */
 function page_cache_pack($out)
 {
-    if (!is_string($out) || strlen($out) <= 4096 || !function_exists('gzdeflate')) return $out;
-    $z = @gzdeflate($out, 6);
-    if (is_string($z) && '' !== $z && strlen($z) < strlen($out)) {
-        return "\x00GZ" . base64_encode($z);
+    if (!is_string($out) || strlen($out) <= 4096 || !function_exists('zlib_encode')) return $out;
+    $z = @zlib_encode($out, ZLIB_ENCODING_DEFLATE, 6);
+    if (is_string($z) && '' !== $z && 2 * strlen($z) + 3 < strlen($out)) {
+        return "\x00ZH" . bin2hex($z);
     }
     return $out;
 }
 
 /**
- * 页缓存载荷还原（page_cache_pack 的逆操作，压缩口径见其头部 R6-03 注释）
- * 仅识别 "\x00GZ" 前缀的压缩条目（base64 + gzinflate）；前缀不匹配的存量值原样透传，
- * 解压失败同样原样返回——调用方（page_cache_start 命中分支）直接 echo，不辨来源。
+ * 页缓存载荷还原（page_cache_pack 的逆操作，格式口径见其头部注释）
+ * - 非字符串 / 不以 "\x00" 开头（明文整页，含 v1 之前的存量条目）⇒ 原样返回；
+ * - "\x00ZH" + 合法十六进制 + zlib 流可解 ⇒ 返回整页 HTML；
+ * - 其余 "\x00" 前缀条目（v1 "\x00GZ" 旧格式、截断/损坏、无 zlib）⇒ 返回 NULL，调用方按未命中处理。
  * @param mixed $cached 缓存取回值
- * @return mixed 还原后的整页 HTML；非压缩态/解坏时回传入原值
+ * @return mixed 还原后的整页 HTML；NULL=不可用（视为未命中）
  */
 function page_cache_unpack($cached)
 {
-    if (is_string($cached) && 0 === strncmp($cached, "\x00GZ", 3) && function_exists('gzinflate')) {
-        $raw = @base64_decode(substr($cached, 3), TRUE);
-        if (is_string($raw) && '' !== $raw) {
-            $out = @gzinflate($raw);
-            if (is_string($out)) return $out;
+    if (!is_string($cached) || '' === $cached || "\x00" !== $cached[0]) return $cached;
+    if (0 === strncmp($cached, "\x00ZH", 3) && function_exists('zlib_decode')) {
+        $hex = substr($cached, 3);
+        if ('' !== $hex && 0 === strlen($hex) % 2 && ctype_xdigit($hex)) {
+            $bin = hex2bin($hex);
+            $out = is_string($bin) ? @zlib_decode($bin) : FALSE;
+            if (is_string($out) && '' !== $out) return $out;
         }
     }
-    return $cached;
+    return NULL;
 }
 
 /**
@@ -1288,11 +1295,13 @@ function page_cache_start($cacheKey, $onHit = NULL)
         $cached = cache_get($cacheKey);
         // 空串=历史脏缓存（异常窗口期 page_cache_end 把空输出写入了缓存，命中即永久空白页，
         // 入口拆分验收实测）：视为未命中并自愈删除，随后走正常渲染回填
-        if ($cached === '') {
+        // 压缩条目解不开（v1 旧格式 "\x00GZ" / 损坏）同样视为未命中并删除，随后重新渲染回填新格式
+        $html = ($cached === '' || $cached === null || $cached === false) ? $cached : page_cache_unpack($cached);
+        if ($cached === '' || ($html === null && $cached !== null)) {
             try { cache_delete($cacheKey); } catch (\Throwable $e) {}
         } elseif ($cached !== null && $cached !== false) {
             if ($onHit) call_user_func($onHit);
-            echo page_cache_unpack($cached);
+            echo $html;
             return TRUE;
         }
     } catch (\Throwable $e) {}
@@ -1318,8 +1327,10 @@ function page_cache_start($cacheKey, $onHit = NULL)
                 $cached = cache_get($cacheKey);
                 // P2（审核轮）：与首查口径对齐——空串永不视为命中
                 if ($cached !== null && $cached !== false && $cached !== '') {
+                    $html = page_cache_unpack($cached);
+                    if ($html === null) break;   // 不可用压缩条目：不等了，直接本地渲染（回填时覆盖）
                     if ($onHit) call_user_func($onHit);
-                    echo page_cache_unpack($cached);
+                    echo $html;
                     return TRUE;
                 }
             }

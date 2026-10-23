@@ -40,6 +40,16 @@ class MultiLayerCache
     /** @var string|null 空值标记（数据源返回 null 时以此标记写入缓存防击穿） */
     private const NULL_MARKER = "\0__NULL_CACHE__\0";
 
+    /**
+     * 跨进程共享的热层：只有这些层写成功，MySQL 层的副本才算冗余（set/setMultiple 才会改为删 MySQL 旧值）。
+     * ⚠ 修复（MySQL 兜底层从不落盘）：原判定是「任一非 mysql 层写成功」，而 static 层（StaticCache，
+     *   请求内数组）恒在且 set 恒返回 true ⇒ hotSet 每次都成立 ⇒ 无 APCu/Redis/Memcached 的主机上
+     *   每次写都去**删** MySQL 行，缓存（页缓存、kv_cache、内容版本令牌）永远跨不过请求；Redis 中途熔断时同理。
+     *   apcu/yac 也不算：sharedGet()（内容版本令牌 page_content_ver 等）只读 redis/memcached/mysql，
+     *   若 APCu 写成功就删 MySQL，令牌对 sharedGet 永远不可见 ⇒ 内容更新后页缓存不失效。
+     */
+    private const SHARED_LAYERS = ['redis', 'memcached'];
+
     /** @var int 空值缓存 TTL（秒），数据源返回 null 时以此 TTL 缓存标记防止重复查询 */
     private $nullCacheTtl = 30;
 
@@ -366,6 +376,7 @@ class MultiLayerCache
         }
         $limit = ($hitLayer < 0) ? count($this->layers) : $hitLayer;
         for ($i = 0; $i < $limit; $i++) {
+            if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
             foreach ($groups as $ttl => $chunk) {
                 try {
                     $this->layers[$i]->setMultiple($chunk, (int)$ttl);
@@ -379,7 +390,8 @@ class MultiLayerCache
 
     /**
      * 多层批量写入（R7 性能项）：每层一次 setMultiple（Redis=pipeline、Memcached=setMulti）。
-     * MySQL 层写懒惰与 set() 同口径：任一热层写成功即删除 MySQL 旧值防脏读复活。
+     * MySQL 层写懒惰与 set() 同口径：共享热层（redis/memcached）写成功即删除 MySQL 旧值防脏读复活；
+     * 否则（只有 static/apcu/yac，或共享层熔断/写失败）照常写 MySQL。
      * @return bool
      */
     public function setMultiple(array $items, int $ttl = 0)
@@ -401,14 +413,19 @@ class MultiLayerCache
             }
             try {
                 $r = $layer->setMultiple($items, $ttl);
-                if ($r && $name !== 'mysql') {
+                if ($r && in_array($name, self::SHARED_LAYERS, true)) {
                     $hotSet = true;
                 } elseif (!$r && in_array($name, ['redis', 'memcached'], true)) {
+                    // 写失败 ⇒ 该层可能留着旧值：熔断 + 登记补删（同 delete() 失败口径）；MySQL 随后照常写入
                     $this->tripBreaker($name);
+                    $this->addPendingDeletes($name, array_keys($items));
                 }
                 $ok = $ok && $r;
             } catch (\Throwable $e) {
-                if (in_array($name, ['redis', 'memcached'], true)) $this->tripBreaker($name);
+                if (in_array($name, ['redis', 'memcached'], true)) {
+                    $this->tripBreaker($name);
+                    $this->addPendingDeletes($name, array_keys($items));
+                }
                 $this->log('error', 'multi', $name, 0, $e->getMessage());
                 $ok = false;
             }
@@ -492,6 +509,7 @@ class MultiLayerCache
 
         // 空值标记窗口内直接返回 null，不重复回源（get() 已将标记归一为 null，这里回查原始层）
         foreach ($this->layers as $layer) {
+            if ($this->isBreakerOpen($layer->getName())) continue; // 熔断层不再探测（避免每次回源都去连故障 Redis）
             try {
                 if ($layer->get($key) === self::NULL_MARKER) return null;
             } catch (\Throwable $e) {}
@@ -516,8 +534,9 @@ class MultiLayerCache
     /**
      * 设置缓存（写入所有层级）
      *
-     * MySQL 层写懒惰：当任意热层（非 MySQL）写入成功后跳过 MySQL。
-     * MySQL 仅作为读时兜底，不需要每次 set 都写。
+     * MySQL 层写懒惰：仅当**跨进程共享热层**（redis/memcached，见 SHARED_LAYERS）写入成功后，
+     * 才删除 MySQL 旧值而不写；static/apcu/yac 写成功不算（请求内 / sharedGet 不可见），
+     * 共享层熔断或写失败时同样照常写 MySQL——保证无 Redis 主机与 Redis 故障窗口内缓存仍能跨请求持久。
      */
     /** @return bool */
     public function set(string $key, $value, int $ttl = 0)
@@ -545,15 +564,18 @@ class MultiLayerCache
             }
             try {
                 $r = $layer->set($key, $value, $ttl);
-                if ($r && $name !== 'mysql') {
+                if ($r && in_array($name, self::SHARED_LAYERS, true)) {
                     $hotSet = true;
                 } elseif (!$r && in_array($name, ['redis', 'memcached'], true)) {
+                    // 写失败（Redis 中途故障）⇒ 熔断 + 登记补删防旧值复活；hotSet 保持 false ⇒ MySQL 照常写入
                     $this->tripBreaker($name);
+                    $this->addPendingDeletes($name, array($key));
                 }
                 $ok = $ok && $r;
             } catch (\Throwable $e) {
                 if (in_array($name, ['redis', 'memcached'], true)) {
                     $this->tripBreaker($name);
+                    $this->addPendingDeletes($name, array($key));
                 }
                 $this->log('error', $key, $name, 0, $e->getMessage());
                 $ok = false;
@@ -664,6 +686,7 @@ class MultiLayerCache
                 try {
                     // 双查：获取锁后再查一次（跳过空值标记）
                     foreach ($this->layers as $layer) {
+                        if ($this->isBreakerOpen($layer->getName())) continue;
                         try {
                             $val = $layer->get($key);
                             // falsy 中的 false 按合法缓存值对待，不归一成 null（false≠miss；
@@ -822,6 +845,8 @@ class MultiLayerCache
         $ttl = $ttlOverride ?? ($this->ttlCache[$key] ?? 0);
         $limit = ($hitLayer < 0) ? count($this->layers) : $hitLayer;
         for ($i = 0; $i < $limit; $i++) {
+            // 熔断窗口内不回填故障层（回填值来自下层，窗口内的 set/delete 已登记 pending 补删）
+            if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
             try {
                 $this->layers[$i]->set($key, $value, $ttl);
                 $this->log('backfill', $key, $this->layers[$i]->getName());

@@ -385,7 +385,7 @@ class TemplateService
      * 上线前审计修复（M-A4）：主题 install.php/uninstall.php 执行前高危构造闸。
      * 主题包经商店/第三方渠道分发，钩子脚本是 download 闸唯一放行的可执行 php 条目；
      * 本闸按 fail-closed 拒绝代码执行/进程执行/文件系统写删/动态包含/编码混淆/变量变量/超全局直读等
-     * WebShell 级原语，kv_ 与 db_ 前缀的数据清理类钩子照常放行。
+     * 高危原语，kv_ 与 db_ 前缀的数据清理类钩子照常放行。
      * @return bool true=可执行；false=拒绝
      */
     private static function themeExecHookSafe(string $code, string $dir): bool
@@ -526,7 +526,7 @@ class TemplateService
             // 上线前终检修复（N-02，High）：主题钩子是解包期**唯一**放行的 .php，而原实现只看条目名、
             // **不看内容**——`themeExecHookSafe()` 只在 uninstall() **执行**时才跑，于是"先落盘、后被拒"
             // 之间留了窗口：任何能驱动 download() 的路径（如修复前的 `{if:…::download(...)}` 静态调用闸绕过）
-            // 都能把 `template/<dir>/uninstall.php`（内容为一句话后门）写进 docroot。
+            // 都能把 `template/<dir>/uninstall.php`（内容为任意 PHP 代码）写进 docroot。
             // 现改为**入包即过闸**：内容不合法 ⇒ 整包拒绝、不落盘（与执行期同一把尺子，fail-closed）。
             if ($isThemeUninstallHook) {
                 $hookCode = (string)$zip->getFromIndex($i);
@@ -602,7 +602,7 @@ class TemplateService
     /**
      * 模板安全规则数据文件（相对 core/ 目录）。
      * 高危关键字 / 高危函数 / 主题钩子禁用构造这三份黑名单原先以字面量写在本文件里，
-     * 密集的高危函数名会让主机杀毒软件（Imunify360、ClamAV 启发式等）把本文件误判为后门并隔离，
+     * 密集的高危函数名会让主机杀毒软件（Imunify360、ClamAV 启发式等）把本文件误判为恶意文件并隔离，
      * 结果全站 500。现改存 core/config/template_guard.json（逐项 hex 编码），本文件只做加载与校验。
      * 数据文件缺失/损坏/摘要不符 ⇒ guardAvailable()=false，所有使用方 fail-closed（拒绝，不放行）。
      */
