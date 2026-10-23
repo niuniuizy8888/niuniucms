@@ -34,6 +34,35 @@ $include_model_files = array(
     APP_PATH . 'core/model/phpanalys.php', APP_PATH . 'core/model/top.php',
 );
 
+// 每个模型文件的「哨兵」定义（函数名；'class:' 前缀为类名）。用于：①model.min 构建时校验各段完整；
+// ②include model.min 后运行期自检——缺任一哨兵（典型：杀毒把 core_model_view.php 清成 0 字节后被拼进 min，
+// 报 Call to undefined function _file()）即删 min、补载缺失文件，站点当场自愈而不是永久 fatal。
+$model_sentinels = array(
+    'runtime.php' => 'runtime_init', 'kv.php' => 'kv_get', 'config_runtime.php' => 'config_runtime_all',
+    'user.php' => 'user__create', 'session.php' => 'session_read', 'cate.php' => 'cate_create',
+    'vod.php' => 'video__update', 'art.php' => 'art__update', 'tag.php' => 'tag__create',
+    'like.php' => 'art_like', 'favorites.php' => 'art_favorites', 'link.php' => 'link_count',
+    'view.php' => array('_file', 'view_load'), 'ad.php' => 'ad__create',
+    'api_import_batch.php' => 'api_import_batch_table', 'phpanalysis.php' => 'class:PhpAnalysis',
+    'phpanalys.php' => 'get_tag', 'top.php' => 'art_del',
+);
+$model_sentinel_missing = function ($file, $code = NULL) use ($model_sentinels) {
+    $k = basename($file);
+    if (empty($model_sentinels[$k])) return array();
+    $miss = array();
+    foreach ((array)$model_sentinels[$k] as $sym) {
+        $isClass = (0 === strpos($sym, 'class:'));
+        $name = $isClass ? substr($sym, 6) : $sym;
+        if (NULL === $code) {
+            $ok = $isClass ? class_exists($name, FALSE) : function_exists($name);
+        } else {
+            $ok = (bool)preg_match('#\\b' . ($isClass ? 'class' : 'function') . '\\s+' . preg_quote($name, '#') . '\\b#i', $code);
+        }
+        $ok or $miss[] = $name;
+    }
+    return $miss;
+};
+
 // 生产模式：使用合并缓存（仅加载 min 文件，不单独加载）
 if (!DEBUG) {
     $model_min_file = $conf['cache_path'] . 'model.min.php';
@@ -55,12 +84,16 @@ if (!DEBUG) {
         $lockname = 'build_model_min';
         if (xn_lock_start($lockname, 30)) {
             $s = '';
+            $build_bad = array();
+            \App\Service\System\AddonService::$degraded = 0;
             foreach ($include_model_files as $model_files) {
-                $t = file_get_contents(_include($model_files));
-                if ($t === false) {
-                    xn_log("index.inc.php: failed to read $model_files", 'build_error');
-                    continue;
-                }
+                $t = @file_get_contents(_include($model_files));
+                // 空段/读失败/缺哨兵定义 ⇒ 整次构建作废（原逻辑只跳过 false，空串照拼，
+                // 拼出缺 _file() 的 min 并登记签名后永不重建 = 用户报告的永久 fatal）
+                $emptyErr = \App\Service\System\AddonService::artifactEmptyError($t, $model_files);
+                if (NULL !== $emptyErr) { $build_bad[] = basename($model_files) . ': ' . $emptyErr; continue; }
+                $miss = $model_sentinel_missing($model_files, $t);
+                if ($miss) { $build_bad[] = basename($model_files) . ': missing ' . implode(',', $miss); continue; }
                 $t = trim($t);
                 // ㉑-b：前缀化剥离——原 ltrim/rtrim 是字符集剥离（理论上会吞 php 关键字粘连形态的首字符）
                 $t = preg_replace('/^<\?php\s?/', '', $t, 1);
@@ -72,15 +105,24 @@ if (!DEBUG) {
             // 任一插件在 overwrite/core/model/（白名单前缀）留下未闭合结构，或某次 file_get_contents 读短，
             // 就会写出坏 model.min.php、签名还被"祝福"成当前版本（此后永不再重建）⇒ DEBUG=0 下全站白屏 500。
             // 现按「坏产物拒写 + 不登记签名」处理：跳过本次构建，直接走下面的单文件 include 兜底（站仍可用）。
-            $parseErr = \App\Service\System\AddonService::artifactParseError($s);
+            $parseErr = $build_bad ? ('incomplete parts: ' . implode(' | ', $build_bad)) : \App\Service\System\AddonService::artifactParseError($s);
             if (NULL !== $parseErr) {
+                // 拒建时连同旧 min 一起删除（旧 min 可能正是缺段的坏产物），下面走单文件 include
+                is_file($model_min_file) && @unlink($model_min_file);
+                function_exists('opcache_invalidate') && @opcache_invalidate($model_min_file, TRUE);
                 xn_log('index.inc.php: model.min.php build rejected :: ' . $parseErr, 'addon_compile_error');
                 $need_build = false;
             } else {
                 $written = file_put_contents_try($model_min_file, $s);
+                // 同路径重写后让 opcache 立即丢弃旧编译结果（否则 revalidate_freq 窗口内仍执行旧的缺段 min）
+                function_exists('opcache_invalidate') && @opcache_invalidate($model_min_file, TRUE);
                 if (FALSE === $written || !is_file($model_min_file) || filesize($model_min_file) <= 0) {
                     // 写盘失败绝不登记签名：否则 is_file+filesize 判定落空，下次仍会重建（保持原语义）
                     xn_log('index.inc.php: model.min.php write failed', 'build_error');
+                    $need_build = false;
+                } elseif (\App\Service\System\AddonService::$degraded > 0) {
+                    // 有段落降级为直接 include 源（未内联 hook）：产物可用，但不登记签名，有插件时下次请求重试编译
+                    xn_log('index.inc.php: model.min.php built with degraded parts, signature not saved', 'addon_compile_error');
                     $need_build = false;
                 }
             }
@@ -96,6 +138,24 @@ if (!DEBUG) {
     if (is_file($model_min_file) && filesize($model_min_file) > 0) {
         if ($need_build) { \App\Service\System\AddonService::hookSigSave($model_min_file); }   // P1-14：构建成功后登记签名
         include $model_min_file;
+        // 运行期自检：旧版本可能已留下缺段的 min（如 view 段为空），此处发现即删 min + 清 0 字节单文件产物，
+        // 并只补载缺哨兵的模型文件（其余已定义，重复 include 会 redeclare）
+        $model_heal = array();
+        foreach ($include_model_files as $model_files) {
+            if ($model_sentinel_missing($model_files)) $model_heal[] = $model_files;
+        }
+        if ($model_heal) {
+            xn_log('index.inc.php: model.min.php incomplete (' . implode(',', array_map('basename', $model_heal)) . '), self-healing', 'build_error');
+            @unlink($model_min_file);
+            function_exists('opcache_invalidate') && @opcache_invalidate($model_min_file, TRUE);
+            foreach ((array)glob($conf['cache_path'] . 'core_model_*.php') as $model_cache_f) {
+                if (is_file($model_cache_f) && 0 === (int)@filesize($model_cache_f)) @unlink($model_cache_f);
+            }
+            foreach ($model_heal as $model_files) {
+                include _include($model_files);
+            }
+        }
+        unset($model_heal, $model_cache_f);
     } else {
         // 开发模式或 min 文件不可用时：单独加载
         foreach ($include_model_files as $model_files) {

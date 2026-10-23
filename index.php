@@ -47,7 +47,8 @@ register_shutdown_function(function () {
         $rel = 'core/app/' . str_replace('\\', '/', substr($cm[1], 4)) . '.php';
         if (!is_file(APP_PATH . $rel)) {
             if (!headers_sent()) {
-                http_response_code(503);
+                // 致命错误后引擎已写入 "HTTP/1.0 500" 状态行，http_response_code() 覆盖不了，须显式替换状态行
+                header((isset($_SERVER['SERVER_PROTOCOL']) && is_string($_SERVER['SERVER_PROTOCOL']) && preg_match('#^HTTP/\d(\.\d)?$#', $_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.1') . ' 503 Service Unavailable', true, 503);
                 header('Content-Type: text/html; charset=utf-8');
             }
             echo '<!doctype html><meta charset="utf-8"><title>核心文件缺失</title>'
@@ -56,6 +57,35 @@ register_shutdown_function(function () {
                 . '<p>找不到程序文件 <code>' . htmlspecialchars($rel, ENT_QUOTES, 'UTF-8') . '</code>。</p>'
                 . '<p>常见原因：主机的安全/杀毒软件（如 Imunify360、ClamAV、面板的木马扫描）把该文件误判为后门并隔离或删除；或程序包没有完整上传。</p>'
                 . '<p>处理方法：从原始安装包重新上传该文件，并在安全软件里把它加入白名单（或从隔离区恢复），然后刷新本页。</p></div>';
+        }
+    }
+    // 核心函数未定义（NNCMS_MISSING_FUNC_HINT）：典型为编译缓存被清空/截断（如 core_model_view.php=0 字节后
+    // 拼进 model.min.php ⇒ Call to undefined function _file()）。自动删除合并缓存与 0 字节模型产物，
+    // 下个请求即重建；同时给出明确提示（不含绝对路径），而不是空白 500。
+    elseif (preg_match('/Call to undefined function ([A-Za-z0-9_\\\\]+)\(\)/', $msg, $fm)) {
+        $cacheDir = (isset($GLOBALS['conf']['cache_path']) && is_string($GLOBALS['conf']['cache_path']) && '' !== $GLOBALS['conf']['cache_path'])
+            ? $GLOBALS['conf']['cache_path'] : APP_PATH . 'runtime/cache/';
+        // 只认核心模型哨兵函数：模板里调用不存在的函数属模板问题，不应触发清缓存/误导提示
+        $coreFns = array('_file', 'view_load', 'kv_get', 'runtime_init', 'cate_create', 'user__create', 'session_read', 'art__update', 'video__update', 'tag__create', 'get_tag');
+        if (in_array($fm[1], $coreFns, true)) {
+            $healed = 0;
+            if (is_file($cacheDir . 'model.min.php') && @unlink($cacheDir . 'model.min.php')) $healed++;
+            function_exists('opcache_invalidate') && @opcache_invalidate($cacheDir . 'model.min.php', TRUE);
+            foreach ((array)@glob($cacheDir . 'core_model_*.php') as $cf) {
+                if (is_file($cf) && 0 === (int)@filesize($cf) && @unlink($cf)) $healed++;
+            }
+            if (!headers_sent()) {
+                header((isset($_SERVER['SERVER_PROTOCOL']) && is_string($_SERVER['SERVER_PROTOCOL']) && preg_match('#^HTTP/\d(\.\d)?$#', $_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.1') . ' 503 Service Unavailable', true, 503);
+                header('Retry-After: 5');
+                header('Content-Type: text/html; charset=utf-8');
+            }
+            echo '<!doctype html><meta charset="utf-8"><title>编译缓存异常</title>'
+                . '<div style="max-width:680px;margin:60px auto;padding:0 16px;font:15px/1.8 sans-serif;color:#333">'
+                . '<h2>牛牛CMS：编译缓存异常</h2>'
+                . '<p>核心函数 <code>' . htmlspecialchars($fm[1], ENT_QUOTES, 'UTF-8') . '()</code> 未加载，通常是编译缓存文件被清空或截断。</p>'
+                . ($healed ? '<p>已自动清理损坏的缓存（' . $healed . ' 个文件），请<b>刷新本页</b>。</p>' : '<p>请删除 <code>runtime/cache/</code> 目录下的文件后刷新本页。</p>')
+                . '<p>如果刷新后仍反复出现：请检查 <code>core/model/view.php</code> 等核心文件是否被主机安全软件（Imunify360、ClamAV、面板木马扫描）清空或隔离，'
+                . '从原始安装包重新上传并加入白名单；同时确认空间磁盘配额未满。</p></div>';
         }
     }
 });

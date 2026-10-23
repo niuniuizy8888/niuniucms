@@ -95,6 +95,13 @@ class AddonService
             // ㉑：最终产物语法闸——解析失败拒写坏内容并响亮记日志；有旧产物沿用旧码；
             // 无旧产物降级为**合法空产物**（include=no-op，页面缺块但站活——写坏内容=include 即 parse error 全站白屏）。
             // 降级路径不推进签名 → 每请求重试直至源/hook 修复后自动恢复正常编译（推会使空产物固化）。
+            // 空产物闸（用户实测：主机杀毒清空中间文件/源文件 → 编译结果为空串，空串能过语法闸，
+            // 原逻辑会写出 0 字节 core_model_view.php 并推进签名 ⇒ _file() 未定义全站 fatal 且永不自愈）。
+            // 源非空而产物为空 / 非字符串 ⇒ 拒写、记日志，沿用旧的非空产物，否则直接 include 源文件。
+            $emptyErr = self::artifactEmptyError($s, $srcfile);
+            if (NULL !== $emptyErr) {
+                return self::degradeToSource($srcfile, $tmpfile, $tmpEmpty, $emptyErr);
+            }
             $parseErr = self::artifactParseError($s);
             $fgRejected = (NULL !== $parseErr);
             if ($fgRejected) {
@@ -102,11 +109,19 @@ class AddonService
                 if (!$tmpEmpty && is_file($tmpfile) && (int)filesize($tmpfile) > 0) {
                     return $tmpfile;
                 }
+                // 核心 PHP 源本身可解析时直接 include 源（不内联 hook，但函数齐全、站点可用），
+                // 只有源也坏/非 PHP 时才降级为合法空产物
+                if (self::sourceIncludable($srcfile)) {
+                    self::$degraded++;
+                    return $srcfile;
+                }
                 $s = "<?php "; // 合法空产物降级
                 file_put_contents_try($tmpfile, $s);
                 return $tmpfile; // 签名不推进（hooksSigSet 跳过）→ 每请求重试
             }
-            file_put_contents_try($tmpfile, $s);
+            if (!self::writeArtifact($tmpfile, $s)) {
+                return self::degradeToSource($srcfile, $tmpfile, FALSE, 'artifact write/verify failed');
+            }
             self::hooksSigSet($tmpfile, $hookSig);
         } elseif ($srcMtime && $tmpMtime && $srcMtime < $tmpMtime) {
             // mtime 错乱防护：源时间戳早于缓存（文件复制/恢复导致时间戳倒退）时 mtime 判定失效，
@@ -116,12 +131,81 @@ class AddonService
             $s = self::compileSourceFile($srcfile);
             $s = self::processTemplateIncludes($s);
             $s = self::compressOutput($s, $tmpfile);
+            // 同样不允许用空/坏产物覆盖现有缓存
+            if (NULL !== self::artifactEmptyError($s, $srcfile) || NULL !== self::artifactParseError($s)) {
+                xn_log('compile artifact (mtime-guard) empty/invalid, keep old ' . $tmpfile, 'addon_compile_error');
+                return $tmpfile;
+            }
             if (md5($s) !== md5((string)$old)) {
-                file_put_contents_try($tmpfile, $s);
+                if (!self::writeArtifact($tmpfile, $s)) {
+                    return self::degradeToSource($srcfile, $tmpfile, FALSE, 'artifact write/verify failed');
+                }
             }
             self::hooksSigSet($tmpfile, $hookSig);
         }
         return $tmpfile;
+    }
+
+    /** 本请求内编译降级（直接 include 源文件 / 空产物）次数；model.min 构建据此决定是否推进签名 */
+    public static $degraded = 0;
+
+    /**
+     * 空产物判定：编译结果非字符串，或去掉 PHP 开标签/空白后为空、而源文件本身非空。
+     * @return string|NULL 失败原因；NULL=产物非空可继续
+     */
+    public static function artifactEmptyError($s, $srcfile)
+    {
+        if (!is_string($s)) return 'compile result is not a string (source unreadable?)';
+        if (!self::codeBodyEmpty($s)) return NULL;
+        $srcSize = is_file($srcfile) ? (int)@filesize($srcfile) : 0;
+        if ($srcSize <= 0) return 'source file missing or 0 bytes: ' . $srcfile;
+        // 源本身去注释后也为空（纯注释/占位文件）⇒ 空产物是合法结果
+        if ('php' === file_ext($srcfile) && self::codeBodyEmpty((string)@php_strip_whitespace($srcfile))) return NULL;
+        return 'empty artifact from non-empty source (' . $srcSize . ' bytes; antivirus/disk quota?)';
+    }
+
+    /** 去掉首个 php 开标签、末尾闭标签与空白后是否为空 */
+    private static function codeBodyEmpty($s)
+    {
+        $body = preg_replace(array('#^\s*<\?php#i', '#\?>\s*$#'), '', (string)$s);
+        return '' === trim((string)$body);
+    }
+
+    /** 源文件可直接 include：PHP 后缀、非空、可读且通过语法闸 */
+    private static function sourceIncludable($srcfile)
+    {
+        if ('php' !== file_ext($srcfile) || !is_file($srcfile) || (int)@filesize($srcfile) <= 0) return FALSE;
+        $src = @file_get_contents($srcfile);
+        return is_string($src) && '' !== trim($src) && NULL === self::artifactParseError($src);
+    }
+
+    /**
+     * 编译失败降级：记日志；有旧的非空产物用旧的；否则源可 include 时返回源路径；
+     * 都不行才返回产物路径（不写空文件，删掉 0 字节残留，让下个请求重试）。
+     */
+    private static function degradeToSource($srcfile, $tmpfile, $tmpEmpty, $why)
+    {
+        xn_log('compile degraded ' . $tmpfile . ' :: ' . $why, 'addon_compile_error');
+        clearstatcache(TRUE, $tmpfile);
+        if (!$tmpEmpty && is_file($tmpfile) && (int)@filesize($tmpfile) > 0) return $tmpfile;
+        if (is_file($tmpfile) && 0 === (int)@filesize($tmpfile)) @unlink($tmpfile);
+        self::$degraded++;
+        if (self::sourceIncludable($srcfile)) return $srcfile;
+        return is_file($srcfile) ? $srcfile : $tmpfile;
+    }
+
+    /** 写产物并回读校验长度；不一致（被截断/清空）则删除并返回 FALSE */
+    private static function writeArtifact($tmpfile, $s)
+    {
+        $n = file_put_contents_try($tmpfile, $s);
+        clearstatcache(TRUE, $tmpfile);
+        if (FALSE !== $n && is_file($tmpfile) && (int)filesize($tmpfile) === strlen($s)) {
+            function_exists('opcache_invalidate') && @opcache_invalidate($tmpfile, TRUE);
+            return TRUE;
+        }
+        @unlink($tmpfile);
+        function_exists('opcache_invalidate') && @opcache_invalidate($tmpfile, TRUE);
+        return FALSE;
     }
 
     /**
@@ -242,15 +326,26 @@ class AddonService
         if ('php' == $ext && 0 == DEBUG && $conf['compress'] > 0) {
             // php_strip_whitespace 需要真实文件：写独立临时文件，避免污染正式缓存（防护分支 $old 比对依赖）
             $stripFile = $tmpfile . '.strip.tmp';
+            $orig = $s;
             file_put_contents_try($stripFile, $s);
             $s = trim(php_strip_whitespace($stripFile));
             @unlink($stripFile);
+            // 中间文件被杀毒/配额清掉时 strip 读回空串 ⇒ 用未压缩原文（功能等价），不产出空产物
+            if ('' === $s && is_string($orig) && '' !== trim($orig)) {
+                xn_log('php_strip_whitespace returned empty, using uncompressed ' . $tmpfile, 'addon_compile_error');
+                $s = $orig;
+            }
         } elseif ($isHtml && 0 == DEBUG && $conf['compress'] > 0) {
             // HTML 档位口径：先写盘再读回（hook 处理依赖文件），写独立临时文件避免污染正式缓存（防护分支 $old 比对依赖）
             $stripFile = $tmpfile . '.strip.tmp';
+            $orig = $s;
             file_put_contents_try($stripFile, $s);
             $s = self::compileSourceFile($stripFile);
             @unlink($stripFile);
+            if (!is_string($s) || ('' === trim($s) && is_string($orig) && '' !== trim($orig))) {
+                xn_log('html compress read-back empty, using uncompressed ' . $tmpfile, 'addon_compile_error');
+                $s = $orig;
+            }
             if (1 == $conf['compress']) {
                 $s = str_replace(array("\t"), '', $s);
                 $compressed = preg_replace(array("#> *([^ ]*) *<#", "#<!--[\\w\\W\r\\n]*?-->#", "# \"#", '#>\s+<#', "#/\*[^*]*\*/#", "//", '#/\*[\s\S]*?\*/#', "#>\s+\r\n#"), array(">\\1<", '', "\"", '><', '', '', '', '>'), $s);

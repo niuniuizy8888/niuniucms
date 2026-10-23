@@ -72,7 +72,8 @@ trait VideoStickyTrait
         if (empty($arrlist)) return NULL;
         $arr = array();
         foreach ($arrlist as $val) {
-            if (1 == $val['sticky']) {
+            if (!isset($val['vid'])) continue; // 缓存行残缺（缺 vid/sticky/cid）时跳过，避免 Undefined array key
+            if (1 == ($val['sticky'] ?? 0)) {
                 $arr[$val['vid']] = $val;
             }
         }
@@ -95,12 +96,16 @@ trait VideoStickyTrait
         if (empty($arrlist)) return NULL;
 
         $cids = array();
+        $isCategory = 1 == ($cate['category'] ?? 0);
+        $cateCup = $cate['cup'] ?? 0;
+        $cateCid = $cate['cid'] ?? $cid;
         foreach ($catelist_show as $val) {
-            if ($val['type'] && $val['display']) {
-                if (1 == $cate['category']) {
-                    if ($val['cup'] == $cid) $cids[] = $val['cid'];
+            if (!isset($val['cid'])) continue;
+            if (!empty($val['type']) && !empty($val['display'])) {
+                if ($isCategory) {
+                    if (($val['cup'] ?? 0) == $cid) $cids[] = $val['cid'];
                 } else {
-                    if ($val['cup'] == $cate['cup']) $cids[] = $val['cid'];
+                    if (($val['cup'] ?? 0) == $cateCup) $cids[] = $val['cid'];
                 }
             }
         }
@@ -108,21 +113,27 @@ trait VideoStickyTrait
         $sticky1 = array();
         $sticky2 = array();
         $sticky3 = array();
-        if (1 == $cate['category']) {
+        if ($isCategory) {
             foreach ($arrlist as $val) {
-                if (in_array($val['cid'], $cids) && 2 == $val['sticky']) {
+                if (!isset($val['vid'])) continue; // 缓存行残缺（缺 cid/sticky）时跳过
+                $vCid = $val['cid'] ?? 0;
+                $vSticky = $val['sticky'] ?? 0;
+                if (in_array($vCid, $cids) && 2 == $vSticky) {
                     $sticky2[$val['vid']] = $val;
-                } elseif (3 == $val['sticky']) {
+                } elseif (3 == $vSticky) {
                     $sticky3[$val['vid']] = $val;
                 }
             }
         } else {
             foreach ($arrlist as $val) {
-                if ($cate['cid'] == $val['cid'] && 1 == $val['sticky']) {
+                if (!isset($val['vid'])) continue;
+                $vCid = $val['cid'] ?? 0;
+                $vSticky = $val['sticky'] ?? 0;
+                if ($cateCid == $vCid && 1 == $vSticky) {
                     $sticky1[$val['vid']] = $val;
-                } elseif (in_array($val['cid'], $cids) && 2 == $val['sticky']) {
+                } elseif (in_array($vCid, $cids) && 2 == $vSticky) {
                     $sticky2[$val['vid']] = $val;
-                } elseif (3 == $val['sticky']) {
+                } elseif (3 == $vSticky) {
                     $sticky3[$val['vid']] = $val;
                 }
             }

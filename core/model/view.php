@@ -60,7 +60,9 @@ function _file($srcfile)
     $tmpfile = $conf['cache_path'] . substr(str_replace('/', '_', $srcfile), strlen(APP_PATH));
     $srcM = is_file($srcfile) ? filemtime($srcfile) : 0;
     $tmpM = is_file($tmpfile) ? filemtime($tmpfile) : 0;
-    if (!is_file($tmpfile) || DEBUG > 1 || ($srcM && $tmpM && $srcM > $tmpM) || \App\Service\System\AddonService::hookSigStaleFor($tmpfile)) {
+    // 0 字节产物（杀毒清空/磁盘配额/写一半）且源非空 ⇒ 视为失效重建，不让空产物长期驻留
+    $tmpZero = $tmpM && 0 === (int)@filesize($tmpfile) && $srcM && (int)@filesize($srcfile) > 0;
+    if (!is_file($tmpfile) || $tmpZero || DEBUG > 1 || ($srcM && $tmpM && $srcM > $tmpM) || \App\Service\System\AddonService::hookSigStaleFor($tmpfile)) {
         // 顺序修正：先剥离模板源的原生 php（tpl_allow_php=0 安全规则，只作用于模板作者内容），
         // 再内联插件 hook（受信代码，其 php 逻辑段不参与剥离——此前内联在前、剥离在后，wrapped 格式
         // hook 的 kv 读取/变量赋值整段被清空，只剩 HTML 壳无条件输出=配置开关失效）。
@@ -142,13 +144,17 @@ function _file($srcfile)
         }
         $ext = file_ext($tmpfile);
         $is_html = in_array($ext, array('htm', 'html'));
+        $preCompress = $s;
         if ('php' == $ext && 0 == DEBUG && $conf['compress'] > 0) {
             file_put_contents_try($tmpfile, $s);
             $s = trim(php_strip_whitespace($tmpfile));
+            // 压缩读回为空（中间文件被杀毒/配额清掉）⇒ 用未压缩内容，绝不写空产物
+            if ('' === $s && '' !== trim($preCompress)) { xn_log('template compress empty, fallback uncompressed ' . $tmpfile, 'compile_error'); $s = $preCompress; }
             file_put_contents_try($tmpfile, $s);
         } elseif ($is_html && 0 == DEBUG && $conf['compress'] > 0) {
             file_put_contents_try($tmpfile, $s);
             $s = addons_compile_srcfile($tmpfile);
+            if (!is_string($s) || ('' === trim($s) && '' !== trim($preCompress))) { xn_log('template compress empty, fallback uncompressed ' . $tmpfile, 'compile_error'); $s = $preCompress; }
             if (1 == $conf['compress']) {
                 $s = str_replace(array("\t"), '', $s);
                 $s = preg_replace(array("#> *([^ ]*) *<#", "#<!--[\\w\\W\r\\n]*?-->#", "# \"#", '#>\s+<#', "#/\*[^*]*\*/#", "//", '#\/\*(\s|.)*?\*\/#', "#>\s+\r\n#"), array(">\\1<", '', "\"", '><', '', '', '', '>'), $s);
@@ -356,8 +362,10 @@ function process_inc($matches, $basedir = '')
  * 根因：主模板在 _file() 里先执行 `preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s','',$s)` 剥离原生 PHP，
  * **之后**才由 process_inc() 把 {inc:} 指向的文件原样拼入，且**不再重剥** ⇒ 被引入文件里的
  * `<?php ?>` 直达编译产物并执行。叠加主题 zip 内容闸只扫 `.html/.htm` 条目、`$dangerExt` 也不含
- * .txt，构成完整 RCE 链：zip 内 index.html=`{inc:x.txt}`（过闸）+ x.txt=`<?php system("id"); ?>`
- * （永不扫描）⇒ 产物即 webshell。
+ * .txt，构成完整执行链：zip 内 index.html=`{inc:x.txt}`（过闸）+ x.txt 内含原生 PHP 开标签片段
+ * （永不扫描）⇒ 产物可执行任意代码。
+ * 注：此处刻意不写出可执行的 PHP 片段示例——主机杀毒（Imunify360/ClamAV 等）按特征串扫描，
+ * 注释里的「开标签+高危函数」字面量曾让本文件或其编译中间产物被清空（用户实测 core_model_view.php=0 字节）。
  *
  * 处置（两道，缺一不可——只做其中一道仍可绕）：①与主模板同口径重剥原生 PHP；
  * ②重跑与模板编辑器同口径的内容闸（legacyRegexFindings + LexicalSafetyService::scanTemplate），

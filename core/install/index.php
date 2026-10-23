@@ -24,6 +24,13 @@ define('NNCMS_LEGACY_MARK', is_file(APP_PATH . 'config/config.php') ? 'config/co
 define('DEBUG', (is_file(APP_PATH . 'core/install.lock') || is_file(APP_PATH . 'core/config/config.php') || '' !== NNCMS_LEGACY_MARK) ? 0 : 2);
 define('MESSAGE_HTM_PATH', INSTALL_PATH . 'html/message.html');
 $conf = (include APP_PATH . 'core/config/config.default.php');
+// 安装向导阶段 config.php 尚未生成，出厂 auth_key 为空 ⇒ core.php 会走 xn_auth_key_fallback()：
+// 每个向导页都往 auth_key_error 写一条「缺 key」并落一个 .auth_key_fallback.php——纯误报（用户报告日志里
+// 5 条 auth_key_error 全是 /install.php 请求）。向导期给一个仅内存、跨请求稳定的临时值即可；
+// 真正的站点密钥由下方 xn_rand(64) 写入 config.php 并回读校验。
+if (empty($conf['auth_key'])) {
+    $conf['auth_key'] = hash('sha256', 'nncms-installer|' . APP_PATH . '|' . @filemtime(APP_PATH . 'core/config/config.default.php') . '|' . php_uname('n'));
+}
 $conf['log_path'] = APP_PATH .'runtime/log/';
 $conf['cache_path'] = APP_PATH . 'runtime/cache/';
 include APP_PATH . 'core/core.php';
@@ -204,6 +211,17 @@ if (empty($action)) {
             @unlink(APP_PATH . 'core/config/config.php');
             message(-1, '写入配置文件 core/config/config.php 失败：请确认 core/config/ 目录及该文件对运行 PHP 的用户（如 www）可写后重试。');
         }
+        // 回读校验 auth_key 确实落盘（64 位）：写入"成功"但内容未替换（模板格式被改/opcache 旧值）时站点会
+        // 长期依赖回退密钥，安装阶段就拦下
+        clearstatcache(TRUE, APP_PATH . 'core/config/config.php');
+        function_exists('opcache_invalidate') && @opcache_invalidate(APP_PATH . 'core/config/config.php', TRUE);
+        $writtenConf = call_user_func(function ($f) { return @include $f; }, APP_PATH . 'core/config/config.php'); // 隔离作用域，避免 config 顶部变量污染向导
+        if (!is_array($writtenConf) || !isset($writtenConf['auth_key']) || $writtenConf['auth_key'] !== $rand || 64 !== strlen((string)$writtenConf['auth_key'])) {
+            @unlink(APP_PATH . 'core/config/config.php');
+            message(-1, '写入配置文件 core/config/config.php 后校验失败（auth_key 未写入）：请确认该文件可写且未被安全软件拦截后重新安装。');
+        }
+        unset($writtenConf);
+        $conf['auth_key'] = $rand;
         // 安装完成后移除仓库自带的独立数据库配置（config/database.php 会整体覆盖写盘配置），确保安装填写的驱动/凭据生效
         $dbConfigFile = APP_PATH . 'core/config/database.php';
         is_file($dbConfigFile) and @rename($dbConfigFile, $dbConfigFile . '.installed.bak');
@@ -402,10 +420,38 @@ function install_missing_core_files()
         'core/app/Service/Front/RouteMetaService.php',
         'core/app/Service/Front/TypeService.php',
         'core/config/template_guard.json',
+        // 入口引导链与模型层：index.inc.php 合并加载 core/model/*.php，任一被清空/隔离即全站 fatal
+        // （用户实测：core/model/view.php 含安全注释样例被杀毒清空 ⇒ Call to undefined function _file()）
+        'index.inc.php',
+        'core/core.php',
+        'core/func/misc.php',
+        'core/func/file.php',
+        'core/model/addons.php',
     );
+    foreach (array('runtime', 'kv', 'config_runtime', 'user', 'session', 'cate', 'vod', 'art', 'tag', 'like',
+                   'favorites', 'link', 'view', 'ad', 'api_import_batch', 'block', 'phpanalysis', 'phpanalys', 'top') as $m) {
+        $coreFiles[] = 'core/model/' . $m . '.php';
+    }
     $missing = array();
     foreach ($coreFiles as $cf) {
         if (!is_file(APP_PATH . $cf) || filesize(APP_PATH . $cf) <= 0) $missing[] = $cf;
+    }
+    // 关键函数定义抽检：文件在但内容被杀毒「清洗」（截断/挖空）时 filesize>0 也会漏判
+    $mustDefine = array(
+        'core/model/view.php' => array('_file', 'view_load'),
+        'core/model/kv.php' => array('kv_get'),
+        'core/model/runtime.php' => array('runtime_init'),
+        'core/model/addons.php' => array('_include'),
+    );
+    foreach ($mustDefine as $cf => $fns) {
+        if (in_array($cf, $missing, TRUE)) continue;
+        $code = (string)@file_get_contents(APP_PATH . $cf);
+        foreach ($fns as $fn) {
+            if (!preg_match('#\bfunction\s+' . preg_quote($fn, '#') . '\s*\(#i', $code)) {
+                $missing[] = $cf . '（内容不完整，缺 ' . $fn . '()）';
+                break;
+            }
+        }
     }
     if (!in_array('core/config/template_guard.json', $missing, TRUE)
         && class_exists('\\App\\Service\\System\\TemplateService')
