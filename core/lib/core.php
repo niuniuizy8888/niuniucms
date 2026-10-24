@@ -67,11 +67,12 @@ function core_decrypt(string $encoded): string
 
     $iv  = str_repeat("\0", 16);
 
-    // 先用当前密钥解密
+    // 上线前审计 INFRA-01：仅用当前 SECRET 解密；已移除源码内硬编码旧密钥回退（fail-closed）。
+    // 新数据请使用 xn_encrypt / xn_decrypt（AES-256-GCM）。若仍有旧版 CBC 密文，请用离线工具
+    // 以历史密钥解密后重新写入，勿把旧密钥留在公开源码。
     $key = hash('sha256', SECRET, true);
     $decrypted = @openssl_decrypt($ciphertext, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv);
     if ($decrypted !== false && $decrypted !== '') {
-        // PKCS#7 padding removal
         $len = strlen($decrypted);
         if ($len > 0) {
             $pad = ord($decrypted[$len - 1]);
@@ -80,26 +81,6 @@ function core_decrypt(string $encoded): string
             }
         }
         return $decrypted;
-    }
-
-    // fallback: 用旧版硬编码密钥解密（兼容已加密的存量数据）
-    // SECURITY: 此为旧版回退密钥，所有新数据使用 SECRET 常量加密。
-    // TODO: 确认所有存量加密数据已迁移后移除此回退路径。
-    /** @deprecated 仅用于兼容旧数据，禁止用于新加密 */
-    $legacy_secret = '12codeikqu981212uyjOPdfqB73iuKHJ';
-    if (SECRET !== $legacy_secret) {
-        $old_key = hash('sha256', $legacy_secret, true);
-        $decrypted = @openssl_decrypt($ciphertext, 'AES-256-CBC', $old_key, OPENSSL_RAW_DATA, $iv);
-        if ($decrypted !== false && $decrypted !== '') {
-            $len = strlen($decrypted);
-            if ($len > 0) {
-                $pad = ord($decrypted[$len - 1]);
-                if ($pad > 0 && $pad <= 16 && substr($decrypted, -$pad) === str_repeat(chr($pad), $pad)) {
-                    return substr($decrypted, 0, -$pad);
-                }
-            }
-            return $decrypted;
-        }
     }
 
     return '';

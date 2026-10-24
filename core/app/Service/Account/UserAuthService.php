@@ -10,7 +10,17 @@ class UserAuthService
     public static function rest()
     {
         $uid = intval(_SESSION('uid'));
-        empty($uid) and $uid = self::tokenGet() and $_SESSION['uid'] = $uid;
+        if (empty($uid)) {
+            $fromToken = self::tokenGet();
+            if (!empty($fromToken)) {
+                $_SESSION['uid'] = $fromToken;
+                // 上线前审计 AUTH-01：remember-me 提升登录态时轮换会话 ID，打断会话固定
+                if (PHP_SESSION_ACTIVE === session_status()) {
+                    @session_regenerate_id(true);
+                }
+                $uid = intval($fromToken);
+            }
+        }
         return user_read($uid);
     }
 

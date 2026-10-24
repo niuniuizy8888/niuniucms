@@ -1248,9 +1248,20 @@ function page_cache_site_suffix()
 {
     static $suffix = NULL;
     if (NULL !== $suffix) return $suffix;
-    $hosts = $GLOBALS['hosts'] ?? '';
-    $domain = $GLOBALS['domain'] ?? array();
-    $suffix = ('' !== (string)$hosts && is_array($domain) && isset($domain['site'][$hosts])) ? '_s' . substr(md5((string)$hosts), 0, 12) : '';
+    // 上线前审计 WEB-01：所有站点页缓存键都带 Host 后缀（不只站群），避免 Host 头投毒污染共享缓存
+    $host = '';
+    if (function_exists('get_host_name')) {
+        $host = (string)get_host_name();
+    }
+    if ('' === $host) {
+        $host = (string)($GLOBALS['hosts'] ?? '');
+    }
+    if ('' === $host) {
+        $raw = (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'default');
+        $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', $raw);
+    }
+    if ('' === $host) $host = 'default';
+    $suffix = '_h' . substr(md5(strtolower($host)), 0, 12);
     return $suffix;
 }
 

@@ -9,7 +9,7 @@ class PlayerConfigService
      * 校验顺序：code/name 为空 → message() 直接渲染提示页（后台 AJAX 走 JSON 分支）并 exit 终止请求，不返回错误数组，调用方别指望 try/catch；
      * 地址形态用前台同款 player_parse_kind() 判定，不另写 scheme 规则——空串/@local=inline（站内内置播放器）、
      * / 开头=same（同源 iframe）、http(s)=remote（第三方解析站）、其余 bad 直接拒绝返回 success=false。
-     * remote 分支的 SSRF 闸：仅当 conf['outbound_block_private']=1 时解析 host 并拒私有/保留地址
+     * remote 分支的 SSRF 闸：outbound_block_private() 为真时解析 host 并拒私有/保留地址（出厂拦截）
      * （用户裁定默认关闭，局域网部署下解析站常在 LAN）。inline 会把地址归零成空串存储。
      *
      * 落库 kv_set('vodplayer') 并同步失效缓存，随后 admin_audit_log('player_add') 留痕（记 code/name/kind，不记地址）。
@@ -37,7 +37,7 @@ class PlayerConfigService
         }
         if ('remote' === $kind) {
             // 用户裁定：内网/保留地址限制**默认关闭**（局域网部署下解析站常在 LAN），
-            // 仅当 conf['outbound_block_private']=1 时恢复拒绝——与出站闸共用同一开关，保持单一口径。
+            // 与出站闸共用 outbound_block_private()（含 INFRA-02 override 口径）。
             $parsed_url = parse_url($player_url);
             if (outbound_block_private() && !empty($parsed_url['host'])) {
                 $host = $parsed_url['host'];

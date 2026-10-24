@@ -71,6 +71,13 @@ class UserService
         $result = user__update($uid, $data);
         cache_delete('user-' . $uid);
         isset(self::$g_static_users[$uid]) and self::$g_static_users[$uid] = array_merge(self::$g_static_users[$uid], $data);
+        // 上线前审计 AUTH-02：改密/改盐后吊销该 uid 其它会话（保留当前 sid，由调用方 regenerate）
+        if (FALSE !== $result && (isset($data['password']) || isset($data['salt']))) {
+            $curSid = (PHP_SESSION_ACTIVE === session_status()) ? (string)session_id() : '';
+            try {
+                \App\Service\Account\SessionService::destroyByUid((int)$uid, $curSid);
+            } catch (\Throwable $e) {}
+        }
         return $result;
     }
 

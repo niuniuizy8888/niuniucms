@@ -293,6 +293,8 @@ class UserService
         FALSE === \App\Service\Account\UserService::update($uid, array('password' => $password_new_hash, 'salt' => '')) and message(-1, lang('password_modify_failed'));
         // 上线前审计修复（VULN-L08）：改密是敏感凭据事件，必须留痕（原零审计）
         self::memberAudit('password_changed', array('uid' => $uid));
+        // 上线前审计 AUTH-02：清 remember-me Cookie；其它会话已在 UserService::update 内按 uid 销毁
+        \App\Service\Account\UserAuthService::tokenClear();
         // 上线前安全审计修复（VULN-005）：改密成功后轮换会话 ID。
         // 旧 sid 即刻作废；历史会话里的 bull_token 指纹因绑定密码哈希（md5(password)）
         // 在新哈希生效后一并失效，remember-me 亦因令牌签名含密码哈希而作废。

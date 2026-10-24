@@ -360,6 +360,7 @@ class SetManageService
             'input' => array(
                 'clear_data' => form_checkbox('clear_data', 1),
                 'safe_token' => form_hidden('safe_token', bull_token_set($uid, 'admin_rm')),
+                'confirm_word' => form_text('confirm_word', ''),
             ),
         );
     }
@@ -377,6 +378,9 @@ class SetManageService
     public static function clearData(array $conf, int $uid): array
     {
         self::verifyToken($uid, 'admin_rm');
+        if ('清空' !== trim((string)param('confirm_word', '', FALSE))) {
+            return array('code' => 1, 'message' => '请在确认框中输入「清空」两个字后再提交');
+        }
         $result = SystemMaintenanceService::clearAllData(
             admin_param_int('clear_data', 0, 0, 1),
             $conf['cache_path']

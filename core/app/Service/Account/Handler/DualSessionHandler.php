@@ -1,6 +1,6 @@
 <?php
 namespace App\Service\Account\Handler;
-class DualSessionHandler implements \SessionHandlerInterface
+class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTimestampHandlerInterface
 {
     private $ttl;
 
@@ -204,6 +204,36 @@ class DualSessionHandler implements \SessionHandlerInterface
             }
         }
         return true;
+    }
+
+    /**
+     * 上线前审计 AUTH-01：实现 validateId，使 session.use_strict_mode 真正生效。
+     * 仅当服务端已有该 sid（Redis 或 MySQL）时才接受客户端提交的会话 ID，否则 PHP 换发新 ID。
+     */
+    public function validateId($id): bool
+    {
+        if (!is_string($id) || $id === '' || strlen($id) > 128 || !preg_match('#^[A-Za-z0-9,-]+$#', $id)) {
+            return false;
+        }
+        $redis = _sess_redis();
+        if ($redis) {
+            try {
+                if ($redis->exists('sess_' . $id)) return true;
+            } catch (\Throwable $e) {}
+        }
+        try {
+            $arr = session_read($id);
+            if (is_array($arr) && !empty($arr)) return true;
+        } catch (\Throwable $e) {}
+        return false;
+    }
+
+    /**
+     * 滑动续期：仅刷新存储侧 TTL / last_date，避免严格模式下「未改写 data」时会话被 GC。
+     */
+    public function updateTimestamp($id, $data): bool
+    {
+        return $this->write($id, $data);
     }
 
     #[\ReturnTypeWillChange]

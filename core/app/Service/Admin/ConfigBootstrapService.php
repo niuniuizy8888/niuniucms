@@ -33,7 +33,7 @@ class ConfigBootstrapService
      * 新增/更新站群站点域名（写 core/config/domain.php 的 site 映射，物理写同 saveRewrite 理由）。
      * 链路：get_domain() 归一（PSL 三源回退、全程不出网；可注册域收敛到 eTLD+1，IP 与单段主机名原样返回）
      * → 空域拒绝 → 内网/保留 IP 判定
-     * **默认关闭**（仅 conf['outbound_block_private']=1 时恢复拒绝，用户裁定 LAN 部署用）→
+     * **默认拦截**（outbound_block_private 出厂 1；INFRA-02：无 override 时不可关闭）→
      * 有 old_site_domain 且与归一结果不同则删旧键 → 写 site[域名] 四项。
      * 转义口径：site_name 入库前 htmlspecialchars(ENT_QUOTES|ENT_SUBSTITUTE)（审计 XSS-03，该值经
      * $conf['sitename'] 原样进前台模板，模板层裸 echo）；path 只允许主题目录名字符集 [A-Za-z0-9_-]。
@@ -53,7 +53,7 @@ class ConfigBootstrapService
             return array('success' => false, 'msg' => '域名格式不正确：只能填写域名或 IP（如 a.com、www.a.com），不要带引号、空格等字符');
         }
         // 用户裁定：内网/保留 IP 限制**默认关闭**（LAN 部署的站点域名本就常是内网 IP，
-        // 如测试站 192.0.2.100:8744）；仅当 conf['outbound_block_private']=1 时恢复拒绝。
+        // 如测试站 192.0.2.100:8744）；outbound_block_private() 为真时拒绝（出厂拦截；需 LAN 时设 outbound_allow_private_override=1）。
         if (outbound_block_private() && filter_var($site_domain, FILTER_VALIDATE_IP)) {
             if (!filter_var($site_domain, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                 return array('success' => false, 'msg' => '禁止使用内网/保留IP地址作为站点域名');

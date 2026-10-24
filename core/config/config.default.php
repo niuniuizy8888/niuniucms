@@ -98,7 +98,9 @@ return array(
   'runlevel' => 5,    // 0: 站点关闭; 1: 管理员可读写; 2: 会员可读;  3: 会员可读写; 4：所有人只读; 5: 所有人可读写
   'runlevel_reason' => '网站正在维护中，请稍后访问.',
   'cookie_pre' => 'nncms_', // cookie 前缀
-  'cookie_domain' => '',   // cookie使用的域名，为空表示当前域名
+  'cookie_domain' => '',
+  'site_host' => '', // 上线前审计 WEB-01：主站规范主机名（不含端口）；非空时与 allowed_hosts/domain.php 组成 Host 白名单
+  'allowed_hosts' => '', // 额外允许的 Host，逗号分隔；空=仅 site_host + domain.php   // cookie使用的域名，为空表示当前域名
   'cookie_path' => '',     // 为空则表示当前目录和子目录
   'cookie_lifetime' => '8640000', // cookie生命期8640000为100天
   'auth_key' => '',
@@ -149,7 +151,8 @@ return array(
   'search_on' => 1, // 1=开启搜索 0=关闭
   'search_use_fulltext' => 0, // P-4（2026-10-10）：搜索走 MySQL ngram 全文索引（1=启用）。启用前必须先建索引：ALTER TABLE nncms_vod ADD FULLTEXT INDEX ft_name (name) WITH PARSER ngram;（MySQL 5.7.6+/8.x；MariaDB 无 ngram 请勿开启）。0=维持 LIKE '%kw%'（兼容 PG/SQLite）
   'ssl_verify' => 1, // curl HTTPS 证书校验：1=启用(安全默认，防 MITM 篡改升级包/模板下载)，0=禁用(仅自签名源兼容需求时开启)
-  'outbound_block_private' => 1, // 出站内网/保留段拦截（SSRF 闸）：1=拦截（**默认**，安全审查 M-3 2026-10-24：回环/内网/链路本地含云元数据 169.254.169.254/组播/保留段拒绝；cloud_api 商店主机仍豁免，见 outbound_trusted_hosts），0=不拦（局域网采集源/内网 ES 等需要内网直连时由管理员显式改回）。scheme 闸、DNS 解析失败 fail-closed 与 CURLOPT_RESOLVE IP 固定始终生效
+  'outbound_block_private' => 1, // 出站内网/保留段拦截（SSRF 闸）：1=拦截（**默认**）。上线前审计 INFRA-02：单独写 0 无效，须同时 outbound_allow_private_override=1 才放行内网（危险，勿在常规后台暴露）。cloud_api 商店主机仍豁免，见 outbound_trusted_hosts。scheme/DNS fail-closed/CURLOPT_RESOLVE 始终生效
+  'outbound_allow_private_override' => 0, // 危险开关：1 时才允许 outbound_block_private=0 生效；默认 0。不进常规后台表单
   'sitemap_play' => 1,
   'sitemap_tag' => 1,
   'sitemap_num' => 1000,

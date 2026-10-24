@@ -1,6 +1,6 @@
 <?php
 namespace App\Service\Account\Handler;
-class RedisBullSessionHandler implements \SessionHandlerInterface
+class RedisBullSessionHandler implements \SessionHandlerInterface, \SessionUpdateTimestampHandlerInterface
 {
     private $redis = null;
     private $ttl;
@@ -78,6 +78,26 @@ class RedisBullSessionHandler implements \SessionHandlerInterface
     {
         // Redis TTL 自动过期，无需 GC
         return 0;
+    }
+
+    /** 上线前审计 AUTH-01：仅当 Redis 键存在时接受 sid */
+    public function validateId($id): bool
+    {
+        if (!is_string($id) || $id === '' || strlen($id) > 128 || !preg_match('#^[A-Za-z0-9,-]+$#', $id)) {
+            return false;
+        }
+        $redis = $this->conn();
+        if (!$redis) return false;
+        try {
+            return (bool)$redis->exists('sess_' . $id);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    public function updateTimestamp($id, $data): bool
+    {
+        return $this->write($id, $data);
     }
 }
 

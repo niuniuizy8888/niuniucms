@@ -200,6 +200,8 @@ class MemberService
         password_verify_custom($password_old, $user['password'], (string)($user['salt'] ?? '')) or message(-1, lang('old_password_incorrect'));
         $password_new_hash = password_hash($password_new, PASSWORD_BCRYPT);
         FALSE === \App\Service\Account\UserService::update($uid, array('password' => $password_new_hash, 'salt' => '')) and message(-1, lang('password_modify_failed'));
+        // 上线前审计 AUTH-02：清 remember-me Cookie；其它会话已在 UserService::update 内按 uid 销毁
+        \App\Service\Account\UserAuthService::tokenClear();
         // 上线前安全审计修复（VULN-005）：改密成功后轮换会话 ID（与 UserService::handlePasswd 同口径）
         session_regenerate_id(true);
         message(0, lang('password_modify_successfully'));

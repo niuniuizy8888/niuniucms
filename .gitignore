@@ -25,6 +25,9 @@ runtime/throttle/*
 !runtime/throttle/.gitkeep
 
 # Local environment files
+.env
+.env.*
+!.env.example
 .user.ini
 .htaccess
 # 安全审查 M-4：随包分发的目录级防护 .htaccess（根目录 .htaccess 仍属站点本地伪静态配置，不入库）

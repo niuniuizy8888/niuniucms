@@ -39,17 +39,88 @@ function xn_urldecode($s)
 // [URL] URL 函数
 // ============================================================================
 
+/**
+ * 上线前审计 WEB-01：Host 白名单。
+ * 允许：conf['allowed_hosts']（逗号分隔或数组）、conf['site_host']、domain.php 全部 site 键、
+ * conf['cookie_domain']（去前导点）。列表皆空时放行（兼容未配置的单站），但仍做字符净化。
+ * @param string|null $host 主机（可带端口）；NULL 取当前请求
+ * @param array|null $domain 站群配置；NULL 取 $GLOBALS['domain']
+ * @param array|null $conf 站点配置；NULL 取 _SERVER('conf') / $GLOBALS['conf']
+ * @return bool
+ */
+function http_host_allowed($host = null, $domain = null, $conf = null)
+{
+    if ($host === null) {
+        $host = (string)(_SERVER('HTTP_HOST') ?? ($_SERVER['HTTP_HOST'] ?? ''));
+    }
+    $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', (string)$host);
+    if ($host === '') return false;
+    // 去端口比白名单
+    $name = $host;
+    if (preg_match('/^\[(.+)\](?::\d+)?$/', $name, $m)) {
+        $name = $m[1];
+    } else {
+        $name = preg_replace('/:\d+$/', '', $name);
+    }
+    $name = strtolower(rtrim((string)$name, '.'));
+    if ($name === '') return false;
+
+    if (!is_array($conf)) {
+        $conf = function_exists('_SERVER') ? _SERVER('conf') : null;
+        if (!is_array($conf)) $conf = (isset($GLOBALS['conf']) && is_array($GLOBALS['conf'])) ? $GLOBALS['conf'] : array();
+    }
+    if (!is_array($domain)) {
+        $domain = (isset($GLOBALS['domain']) && is_array($GLOBALS['domain'])) ? $GLOBALS['domain'] : array();
+    }
+
+    $allow = array();
+    if (!empty($conf['allowed_hosts'])) {
+        $raw = $conf['allowed_hosts'];
+        $parts = is_array($raw) ? $raw : preg_split('/[\s,]+/', (string)$raw, -1, PREG_SPLIT_NO_EMPTY);
+        foreach ($parts as $p) {
+            $p = strtolower(rtrim(preg_replace('/:\d+$/', '', trim((string)$p)), '.'));
+            if ($p !== '') $allow[$p] = true;
+        }
+    }
+    if (!empty($conf['site_host'])) {
+        $p = strtolower(rtrim(preg_replace('/:\d+$/', '', trim((string)$conf['site_host'])), '.'));
+        if ($p !== '') $allow[$p] = true;
+    }
+    if (!empty($conf['cookie_domain'])) {
+        $p = strtolower(ltrim(trim((string)$conf['cookie_domain']), '.'));
+        if ($p !== '') $allow[$p] = true;
+    }
+    if (!empty($domain['site']) && is_array($domain['site'])) {
+        foreach (array_keys($domain['site']) as $k) {
+            $p = strtolower(rtrim(preg_replace('/:\d+$/', '', trim((string)$k)), '.'));
+            if ($p !== '') $allow[$p] = true;
+        }
+    }
+    // 未配置任何白名单：不在 PHP 层硬拒（依赖 nginx server_name），避免锁死未填 site_host 的单站
+    if (!$allow) return true;
+    if (isset($allow[$name])) return true;
+    // cookie_domain 形态：请求为子域时也放行（与 Cookie 作用域一致）
+    foreach (array_keys($allow) as $a) {
+        if ($a !== '' && (str_ends_with($name, '.' . $a) || $name === $a)) return true;
+    }
+    return false;
+}
+
 function http_url_path()
 {
     $conf = _SERVER('conf');
     $port = _SERVER('SERVER_PORT');
     $host = _SERVER('HTTP_HOST');
-    // 审计修复（XSS-01）：HTTP_HOST 客户端可控且原样反射进 {$nncms.site_url}/head href。
-    // 仅保留合法主机名字符（字母数字 . - : [ ]）；非法则回退 SERVER_NAME 并同样过滤。
-    // 当前 nginx 对非法 Host 直接 400，但代理/通配 vhost 场景下原始 Host 会到达 PHP，属纵深。
+    // 审计修复（XSS-01）+ WEB-01：净化 Host；不在白名单时回退 site_host / SERVER_NAME，避免 canonical/og:url 反射攻击者域名。
     $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', (string)$host);
-    if ('' === $host) $host = (string)_SERVER('SERVER_NAME');
-    $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', (string)$host);
+    $domain = (isset($GLOBALS['domain']) && is_array($GLOBALS['domain'])) ? $GLOBALS['domain'] : array();
+    if ('' === $host || !http_host_allowed($host, $domain, is_array($conf) ? $conf : array())) {
+        $fallback = '';
+        if (is_array($conf) && !empty($conf['site_host'])) $fallback = (string)$conf['site_host'];
+        if ('' === $fallback) $fallback = (string)_SERVER('SERVER_NAME');
+        $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', $fallback);
+    }
+    if ('' === $host) $host = 'localhost';
     $https_off = _SERVER('HTTPS', 'off');
     $https = $https_off ? strtolower($https_off) : '';
     $http_proto = _SERVER('HTTP_X_FORWARDED_PROTO');

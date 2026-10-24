@@ -36,7 +36,12 @@ class VodService
             return array('found' => false, 'reason' => 'cate_not_found');
         }
         $cup = $cate['cup'];
-        $sonlist = $cup != 0 ? ($cate_nav[$cup]['sonlist'] ?? null) : null;
+        // 上线前审计 N-DYN-01：空分类/导航缺失时 sonlist 不得为 null（模板 foreach 在 PHP 8+ TypeError 500）
+        $sonlist = array();
+        if ($cup != 0 && is_array($cate_nav) && isset($cate_nav[$cup]) && is_array($cate_nav[$cup])) {
+            $sonlist = isset($cate_nav[$cup]['sonlist']) && is_array($cate_nav[$cup]['sonlist'])
+                ? $cate_nav[$cup]['sonlist'] : array();
+        }
         $user_access = \App\Service\Content\CateService::accessUser($cid, $gid, 'allowread');
         $like_state = \App\Service\Content\LikeService::check($vid, $uid, 0) ? 'un' : '';
         $favorite_state = \App\Service\Content\FavoriteService::check($vid, $uid, 0) ? 'un' : '';

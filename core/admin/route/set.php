@@ -83,6 +83,8 @@ switch ($action) {
         }
         break;
     case 'upgrade':
+        // 上线前审计 AUTH-03：升级包覆盖全站代码——仅超级管理员（与 authkey 同门禁）
+        1 !== intval($gid) and message(1, '仅超级管理员可以执行系统升级');
         if ('POST' == $method && 1 == admin_param_int('type')) {
             $result = \App\Service\Admin\SetManageService::upgrade($uid, $cloud_version, $conf['cache_path']);
             message($result['code'], $result['message']);
@@ -101,6 +103,8 @@ switch ($action) {
         }
         break;
     case 'rep':
+        // 上线前审计 AUTH-03：全站地址替换影响播放源——仅超级管理员
+        1 !== intval($gid) and message(1, '仅超级管理员可以执行地址替换');
         if ('GET' == $method) {
             extract(\App\Service\Admin\SetManageService::repPage(intval($uid)), EXTR_SKIP);
             include _include(ADMIN_PATH . 'html/set_rep.html');
@@ -116,6 +120,8 @@ switch ($action) {
         }
         break;
     case 'rm':
+        // 上线前审计 AUTH-03：清空全站数据——仅超级管理员 + 确认词
+        1 !== intval($gid) and message(1, '仅超级管理员可以清空全站数据');
         if ('GET' == $method) {
             extract(\App\Service\Admin\SetManageService::clearDataPage($uid), EXTR_SKIP);
             include _include(ADMIN_PATH . 'html/set_rm.html');
@@ -125,6 +131,8 @@ switch ($action) {
         }
         break;
     case 'domain':
+        // 上线前审计 AUTH-03：站群域名配置影响 Host/站点隔离——仅超级管理员
+        1 !== intval($gid) and message(1, '仅超级管理员可以管理站群域名');
         if ('GET' == $method) {
             extract(\App\Service\Admin\SetManageService::domainPage($uid), EXTR_SKIP);
             include _include(ADMIN_PATH . 'html/set_domain.html');
@@ -134,12 +142,14 @@ switch ($action) {
         }
         break;
     case 'domain_add':
+        1 !== intval($gid) and message(1, '仅超级管理员可以管理站群域名');
         if ('POST' == $method) {
             $result = \App\Service\Admin\SetManageService::addDomain($uid);
             message($result['code'], $result['message']);
         }
         break;
     case 'domain_del':
+        1 !== intval($gid) and message(1, '仅超级管理员可以管理站群域名');
         if ('POST' == $method) {
             $result = \App\Service\Admin\SetManageService::deleteDomain($uid);
             message($result['code'], $result['message']);

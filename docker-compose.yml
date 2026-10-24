@@ -1,0 +1,62 @@
+# NiuNiuCMS: PHP 8.5 + nginx + MySQL 8
+#   cp .env.example .env && docker compose up -d --build
+#   http://127.0.0.1:8080/install.php
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PHP_IMAGE: ${PHP_IMAGE:-php:8.5-fpm}
+    image: niuniucms:local
+    container_name: nncms-app
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      NN_DB_HOST: db
+      NN_DB_PORT: "3306"
+      NN_DB_NAME: ${NN_DB_NAME:-nncms}
+      NN_DB_USER: ${NN_DB_USER:-nncms}
+      NN_DB_PASSWORD: ${NN_DB_PASSWORD:-nncms_change_me}
+      TZ: Asia/Shanghai
+    volumes:
+      - nncms_data:/var/www/nncms/data
+      - nncms_runtime:/var/www/nncms/runtime
+      - nncms_upload:/var/www/nncms/upload
+    restart: unless-stopped
+    networks:
+      - nncms_net
+
+  db:
+    image: ${MYSQL_IMAGE:-mysql:8.0}
+    container_name: nncms-db
+    environment:
+      MYSQL_DATABASE: ${NN_DB_NAME:-nncms}
+      MYSQL_USER: ${NN_DB_USER:-nncms}
+      MYSQL_PASSWORD: ${NN_DB_PASSWORD:-nncms_change_me}
+      MYSQL_ROOT_PASSWORD: ${NN_DB_ROOT_PASSWORD:-nncms_root_change_me}
+      TZ: Asia/Shanghai
+    volumes:
+      - nncms_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${NN_DB_ROOT_PASSWORD:-nncms_root_change_me}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - nncms_net
+
+volumes:
+  nncms_data:
+  nncms_runtime:
+  nncms_upload:
+  nncms_mysql:
+
+networks:
+  nncms_net:
+    driver: bridge

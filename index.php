@@ -173,6 +173,14 @@ foreach (['log_path', 'cache_path', 'upload_path'] as $p) {
 include_once CORE_PATH . 'App.php';
 App::set('conf', $conf);
 include CORE_PATH . 'core.php';
+// 上线前审计 WEB-01：函数层已装载后校验 Host（白名单空则放行，见 http_host_allowed）
+if (function_exists('http_host_allowed') && !http_host_allowed(null, $domain, is_array($conf) ? $conf : array())) {
+    if (!headers_sent()) {
+        http_response_code(400);
+        header('Content-Type: text/plain; charset=utf-8');
+    }
+    exit('Bad Request: invalid Host');
+}
 include APP_PATH . 'core/model/addons.php';
 
 // 类自动加载：统一由 core/core.php 注册（App\ → core/app/、Psr\ → core/psr/，所有入口共用）。

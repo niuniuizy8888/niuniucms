@@ -1,6 +1,6 @@
 <?php
 namespace App\Service\Account\Handler;
-class BullSessionHandler implements \SessionHandlerInterface
+class BullSessionHandler implements \SessionHandlerInterface, \SessionUpdateTimestampHandlerInterface
 {
     /** @param string $savePath @param string $sessionName */
     public function open($savePath, $sessionName): bool
@@ -37,5 +37,24 @@ class BullSessionHandler implements \SessionHandlerInterface
     {
         $r = sess_gc($maxlifetime);
         return is_int($r) ? $r : 0;
+    }
+
+    /** 上线前审计 AUTH-01：仅当 MySQL 会话行存在时接受 sid */
+    public function validateId($id): bool
+    {
+        if (!is_string($id) || $id === '' || strlen($id) > 128 || !preg_match('#^[A-Za-z0-9,-]+$#', $id)) {
+            return false;
+        }
+        try {
+            $arr = session_read($id);
+            return is_array($arr) && !empty($arr);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    public function updateTimestamp($id, $data): bool
+    {
+        return $this->write($id, $data);
     }
 }

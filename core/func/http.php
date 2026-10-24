@@ -316,7 +316,12 @@ function outbound_block_private()
         // 兼容：容器未注入 conf 时（CLI 探针/单元用例）回落到全局 $conf
         $conf = (isset($GLOBALS['conf']) && is_array($GLOBALS['conf'])) ? $GLOBALS['conf'] : NULL;
     }
-    return (is_array($conf) && !empty($conf['outbound_block_private']));
+    // 上线前审计 INFRA-02：默认拦截。outbound_block_private=0 被忽略，除非显式危险开关
+    // outbound_allow_private_override=1（不出现在常规后台表单；需改配置文件）。
+    if (!is_array($conf)) return true;
+    if (!empty($conf['outbound_block_private'])) return true;
+    if (!empty($conf['outbound_allow_private_override'])) return false;
+    return true;
 }
 
 /**
@@ -340,11 +345,12 @@ function outbound_trusted_hosts()
             if ('' !== $h) $hosts[] = trim($h, '[]');
         }
     }
-    // 上线前审计（VULN-H03）**刻意不**把 es.host 加入本豁免名单。
+    // 上线前审计（VULN-H03 / INFRA-02）**刻意不**把 es.host 加入本豁免名单。
     // 理由：cloud_api 是本系统自有的固定部署目标（内网商店为既定架构），而 es.host 是
-    // 后台可写的自由字段；若把它列为可信主机，等于让该字段自己声明「我可访问内网」，
-    // 反而抹平出站闸的意义。ES 出站现一律过 outbound_url_safe（见 ElasticService::esCurlInit）。
-    // 出厂默认拦截（outbound_block_private=1，安全审查 M-3）⇒ 内网/回环 ES 会被 fail-closed 拦下：需要内网 ES 的站点把开关改为 0，或在此显式登记主机名。
+    // 后台可写的自由字段；若把它列为可信主机，等于让该字段自己声明「我可访问内网」。
+    // ES 出站一律过 outbound_url_safe（见 ElasticService::esCurlInit）。
+    // 内网 ES：勿把 outbound_block_private 设为 0（将被忽略）；应设
+    // outbound_allow_private_override=1，或把 ES 主机放到可达的非保留网段 / 经可信代理。
     return $hosts;
 }
 

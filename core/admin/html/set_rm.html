@@ -17,7 +17,12 @@
                             <?php echo $input['clear_data'];?>
                         </div>
                         <div class="col-12">
-                            <p class="text-danger fw-semibold">谨慎操作 — 数据无价</p>
+                            <p class="text-danger fw-semibold">谨慎操作 — 数据无价。仅超级管理员可执行；请在下方输入「清空」确认。</p>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">确认词</label>
+                            <?php echo $input['confirm_word'];?>
+                            <div class="form-text">请输入「清空」两个字</div>
                         </div>
                         <div class="col-12">
                             <button type="submit" class="btn btn-danger" id="submit" data-loading-text="<?php echo lang('submiting');?>..."><?php echo lang('confirm');?></button>

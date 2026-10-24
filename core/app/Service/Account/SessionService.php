@@ -860,4 +860,56 @@ class SessionService
         }
         return $cache[$key];
     }
+
+    /**
+     * 上线前审计 AUTH-02：按 uid 销毁该用户全部会话（MySQL 主行+data 行，以及 Redis sess_*）。
+     * 改密后调用，使其它设备/浏览器上的登录态立即失效（不仅轮换当前 sid）。
+     * @param int $uid 用户 ID
+     * @param string $exceptSid 保留的会话 ID（通常传当前 session_id()，避免本请求立刻失会话）
+     * @return int 销毁条数（近似）
+     */
+    public static function destroyByUid(int $uid, string $exceptSid = ''): int
+    {
+        if ($uid <= 0) return 0;
+        $n = 0;
+        $exceptSid = (string)$exceptSid;
+        try {
+            $rows = \App\Repository\RepositoryFactory::table('session', 'sid')->find(
+                array('uid' => $uid),
+                array(),
+                1,
+                10000,
+                '',
+                array('sid')
+            );
+            foreach ((array)$rows as $row) {
+                $sid = is_array($row) ? (string)($row['sid'] ?? '') : '';
+                if ($sid === '' || ($exceptSid !== '' && hash_equals($exceptSid, $sid))) continue;
+                self::destroy($sid);
+                $n++;
+            }
+        } catch (\Throwable $e) {}
+        $redis = function_exists('_sess_redis') ? _sess_redis() : null;
+        if ($redis) {
+            try {
+                $it = null;
+                do {
+                    $keys = $redis->scan($it, 'sess_*', 100);
+                    if (!is_array($keys)) break;
+                    foreach ($keys as $key) {
+                        $sid = (strpos((string)$key, 'sess_') === 0) ? substr((string)$key, 5) : '';
+                        if ($exceptSid !== '' && $sid !== '' && hash_equals($exceptSid, $sid)) continue;
+                        $val = $redis->get($key);
+                        if ($val === false) continue;
+                        $arr = @unserialize($val, array('allowed_classes' => false));
+                        if (is_array($arr) && intval($arr['uid'] ?? 0) === $uid) {
+                            $redis->del($key);
+                            $n++;
+                        }
+                    }
+                } while ($it > 0);
+            } catch (\Throwable $e) {}
+        }
+        return $n;
+    }
 }
