@@ -38,6 +38,7 @@ runtime/throttle/*
 !/template/.htaccess
 !/template/default/html/.htaccess
 !/template/user/html/.htaccess
+!/data/.htaccess
 404.html
 /index.html
 core/install.lock

@@ -72,6 +72,8 @@ class AdminIndexService
         session_regenerate_id(true);
         // 与前台登录一致：写会话 uid（后台路由权限 group_access 基于 user_rest 读取的 uid）
         $_SESSION['uid'] = intval($_user['uid']);
+        // R3-6：服务端会话后台标记（Cookie 令牌 alone 不够；auth_key 泄露也不能离线伪造后台）
+        $_SESSION['admin_ok'] = 1;
         admin_token_set(intval($_user['uid'])); // S-7：显式绑定签发 uid
         // 同步前台登录态：后台路由权限（group_access managexxx）基于前台会话 gid，
         // 仅发 admin_token 会导致后台登录后所有管理页面"权限不足"
@@ -102,6 +104,7 @@ class AdminIndexService
         user_token_clear();
         // 与前台登出对称：清除会话 uid 并轮换会话 id
         $_SESSION['uid'] = 0;
+        unset($_SESSION['admin_ok']);
         session_regenerate_id(true);
         return array(
             'code' => 0,

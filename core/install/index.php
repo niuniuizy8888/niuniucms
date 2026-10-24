@@ -179,7 +179,7 @@ if (empty($action)) {
             }
         } 
         if (!@copy(APP_PATH . 'core/config/config.default.php', ($cfgFile = nncms_runtime_path_w('config.php'))) || !is_file($cfgFile)) {
-            message(-1, '无法写入配置文件 core/config/config.php：请确认 core/config/ 目录对运行 PHP 的用户（如 www）可写后重试。');
+            message(-1, '无法写入配置文件（' . $cfgFile . '）：请确认 data/ 或 core/config/ 对运行 PHP 的用户可写后重试。');
         }
         $replace = array();
         $replace['db'] = $conf['db'];
@@ -219,7 +219,7 @@ if (empty($action)) {
         $replace['outbound_block_private'] = 1;
         if (!file_replace_var($cfgFile, $replace)) {
             @unlink($cfgFile);
-            message(-1, '写入配置文件 core/config/config.php 失败：请确认 core/config/ 目录及该文件对运行 PHP 的用户（如 www）可写后重试。');
+            message(-1, '写入配置文件失败（' . (isset($cfgFile)?$cfgFile:nncms_runtime_path_w('config.php')) . '）：请确认目录可写后重试。');
         }
         // 回读校验 auth_key 确实落盘（64 位）：写入"成功"但内容未替换（模板格式被改/opcache 旧值）时站点会
         // 长期依赖回退密钥，安装阶段就拦下
@@ -244,7 +244,7 @@ if (empty($action)) {
         $r = db_update('user', array('uid' => 1), $update);
         if (!$r) {
             // 覆盖失败将保留 install.sql 内置默认 admin 凭据（公开已知散列），必须阻断上线
-            message(-1, '管理员账号写入失败（请检查数据库权限）。默认凭据未被覆盖，安装已中止：请删除 core/config/config.php 后重新安装');
+            message(-1, '管理员账号写入失败（请检查数据库权限）。默认凭据未被覆盖，安装已中止：请删除 ' . nncms_runtime_path('config.php') . ' 后重新安装');
         }
         // 安装信息上报：安全审查 M-2 起表单**默认不勾选**（database.html，用户主动勾选才提交 report=1）；
         // 未勾选则 POST 不携带该字段（param 默认 0）；勾选即上报机器通道 token 至云端登记——
@@ -282,7 +282,7 @@ if (empty($action)) {
             }
         }
         if (FALSE === @file_put_contents(NNCMS_INSTALL_LOCK,  'install_time:'.date('Y-m-d H:i:s'))) {
-            message(-1, '无法写入 core/config/install.lock：请确认 core/config/ 目录对运行 PHP 的用户（如 www）可写。数据库与配置已写入，修正权限后手动创建该文件（内容任意）即可完成安装。');
+            message(-1, '无法写入 install.lock（' . nncms_runtime_path_w('install.lock') . '）：请确认 data/ 或 core/config/ 可写。数据库与配置已写入，修正权限后手动创建该文件即可完成安装。');
         }
         // 生成8位随机后台目录名
         /*$admin_path = strtolower(xn_rand(8));
@@ -409,6 +409,7 @@ function install_writable_dirs()
         '../plugins/'       => APP_PATH . 'plugins/',
         '../template/'      => APP_PATH . 'template/',
         '../core/config/'   => APP_PATH . 'core/config/',
+        '../data/'          => APP_PATH . 'data/',
     );
 }
 

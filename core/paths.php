@@ -51,7 +51,20 @@ if (!function_exists('nncms_runtime_path_w')) {
         if (!is_dir($dir)) {
             @mkdir($dir, 0755, true);
         }
+        // R3-3：建目录时写入 Apache 拒绝规则（与随包 data/.htaccess 同口径）
+        if (is_dir($dir)) {
+            $hta = $dir . '.htaccess';
+            if (!is_file($hta)) {
+                @file_put_contents($hta, "Require all denied\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n");
+                @chmod($hta, 0644);
+            }
+        }
         if (!is_dir($dir) || !is_writable($dir)) {
+            // R3-3：data/ 不可写时回退到可写的 core/config/，避免返回死路径 data/<name>
+            $legacyDir = APP_PATH . 'core/config/';
+            if (is_dir($legacyDir) && is_writable($legacyDir)) {
+                return $legacyDir . $name;
+            }
             return nncms_runtime_path($name);
         }
         $data = $dir . $name;

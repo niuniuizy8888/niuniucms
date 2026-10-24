@@ -77,6 +77,13 @@ $attacks = array(
     '$conf["db"]',
     '$conf.db',
     '$conf.auth_key',
+    '$secret_value',
+    '$secret_conf',
+    '$secret_conf.auth_key',
+    '$dbConf',
+    '$dbConf.host',
+    '$sid',
+    '$_SESSION["admin_ok"]',
     '$__tplconf.cloud_api',
     '\\App\\Service\\System\\TemplateService::download("http://x/e.zip","d")',
 );
@@ -94,7 +101,7 @@ $legit = array(
     "\$conf['user_create_on']",
     'xn_debug_info()',
     "count(\$list) > 0",
-    "in_array(\$id, \$ids)",
+    "in_array(\$cid, \$arrlistall)",
     "\$k==0 ? 'active' : ''",
     "\$conf.url_rewrite_on",
     "\$conf.danmu.stop_ad",
@@ -130,3 +137,12 @@ foreach ($hook_good as $c) hook_allow($c, $fail, $pass);
 
 echo "\nRESULT: pass={$pass} fail={$fail}\n";
 exit($fail === 0 ? 0 : 1);
+
+// R3-1：变量根白名单 —— 机密根名必须被拒；常用展示根名必须放行
+echo "R3-1 var-root whitelist\n";
+foreach (array('$secret_value','$secret_conf.auth_key','$dbConf','$sid','$GLOBALS["conf"]') as $e) {
+    expr_reject($e, $fail, $pass);
+}
+foreach (array('$videolist','$cate.name','$user.username','$gid','$uid','$conf.sitename') as $e) {
+    expr_allow($e, $fail, $pass);
+}

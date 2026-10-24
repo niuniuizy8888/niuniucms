@@ -67,8 +67,22 @@ class LexicalSafetyService
     {
         static $super = array('GLOBALS' => 1, '_GET' => 1, '_POST' => 1, '_COOKIE' => 1, '_REQUEST' => 1,
             '_SERVER' => 1, '_ENV' => 1, '_FILES' => 1, '_SESSION' => 1, 'http_response_header' => 1, 'argv' => 1);
+        // R3-1：引导期机密与其它不可见根 —— 即使误入白名单也拒绝
+        static $denied = array('secret_value' => 1, 'secret_conf' => 1, 'dbConf' => 1, 'sid' => 1,
+            'auth_key' => 1, 'password' => 1);
         if (isset($super[$root])) {
             return array(array('kind' => 'superglobal', 'name' => '$' . $root, 'expr' => $expr));
+        }
+        if (isset($denied[$root])) {
+            return array(array('kind' => 'var_root_denied', 'name' => '$' . $root, 'expr' => $expr));
+        }
+        // R3-1 根治：变量根名白名单（主题模板实测语料）；未登记根一律拒绝
+        static $allow = null;
+        if ($allow === null) {
+            $allow = array_fill_keys(TemplateService::templateVarRootAllowlist(), 1);
+        }
+        if (!isset($allow[$root])) {
+            return array(array('kind' => 'var_root_denied', 'name' => '$' . $root, 'expr' => $expr));
         }
         if (($root === 'conf' || $root === '__tplconf') && $key !== ''
             && !in_array($key, TemplateService::templateConfPublicKeys(), true)

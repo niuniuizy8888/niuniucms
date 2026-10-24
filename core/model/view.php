@@ -170,7 +170,7 @@ function _file($srcfile)
         }
         if ($tplScope && !$fgTplRejected) {
             // 渲染期在模板作用域内构造脱敏 $conf 副本（不动全局 $conf：区块/缓存/编译器渲染中仍需真实配置）
-            $s = '<?php $__tplconf = view_tpl_conf(isset($conf) ? $conf : null); $__tplnull = null; ?>' . $s;
+            $s = '<?php $__tplconf = view_tpl_conf(isset($conf) ? $conf : null); $__tplnull = null; if (isset($user) && is_array($user) && class_exists(\App\Service\Account\UserService::class)) { $user = \App\Service\Account\UserService::safeInfo($user); } $sid = null; ?>' . $s;
         }
         $ext = file_ext($tmpfile);
         $is_html = in_array($ext, array('htm', 'html'));
@@ -512,7 +512,10 @@ function view_tpl_in_scope($srcfile)
 function view_tpl_scope_rewrite($s)
 {
     if (!is_string($s) || $s === '' || strpos($s, '$') === false) return $s;
-    $s = preg_replace('#\$(?:GLOBALS|_(?:SERVER|SESSION|COOKIE|GET|POST|REQUEST|ENV|FILES))\b#', '$__tplnull', $s);
+    // R3-1：超全局 + 引导期机密全局（$secret_* / $dbConf）→ 空变量；$conf → 脱敏副本
+    $s = preg_replace('#\$(?:GLOBALS|_(?:SERVER|SESSION|COOKIE|GET|POST|REQUEST|ENV|FILES)|secret_conf|secret_value|dbConf)\b#', '$__tplnull', $s);
+    // R3-1：$sid（会话 ID）不进主题模板
+    $s = preg_replace('#\$sid\b#', '$__tplnull', $s);
     return preg_replace('#\$conf\b#', '$__tplconf', $s);
 }
 

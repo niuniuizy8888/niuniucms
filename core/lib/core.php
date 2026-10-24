@@ -33,6 +33,9 @@ if (empty(SECRET)) {
         error_log('[CRITICAL] SECRET not configured — missing auth_key in config/config.php');
     }
 }
+// R3-1：读完即丢弃全局中的完整配置与明文 auth_key，避免主题模板作用域残留可读机密
+unset($secret_conf, $secret_value);
+
 
 /**
  * base64 解码兼容函数（支持标准和 URL-safe）

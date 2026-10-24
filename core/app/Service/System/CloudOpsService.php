@@ -424,9 +424,16 @@ class CloudOpsService
      * @param string $sigB64     商店随包下发的 base64 签名（X-Store-Sig 头 或 商店元数据 sig 字段）
      * @return array{ok:bool,msg:string}
      */
-    public static function verifyStoreSignature($sha256Hex, $sigB64)
+    /**
+     * 校验 Ed25519 detached 签名。`$message` 为被签名原文（主题/插件默认=zip 的 hex sha256；
+     * CMS 升级/store_push 用清单串）。fail-closed。
+     * @param string $message 被签名消息
+     * @param string $sigB64  base64 签名
+     * @return array{ok:bool,msg:string}
+     */
+    public static function verifyStoreSignature($message, $sigB64)
     {
-        $sha256Hex = (string)$sha256Hex;
+        $message = (string)$message;
         $sigB64 = trim((string)$sigB64);
         if (!defined('NNCMS_STORE_SIGN_PUBKEY') || '' === (string)NNCMS_STORE_SIGN_PUBKEY) {
             return array('ok' => FALSE, 'msg' => '缺少商店签名公钥（NNCMS_STORE_SIGN_PUBKEY 未定义），已拒绝安装');
@@ -448,10 +455,45 @@ class CloudOpsService
             return array('ok' => FALSE, 'msg' => '商店签名或公钥长度非法，已拒绝安装');
         }
         $ok = FALSE;
-        try { $ok = sodium_crypto_sign_verify_detached($sig, $sha256Hex, $pk); }
+        try { $ok = sodium_crypto_sign_verify_detached($sig, $message, $pk); }
         catch (\Throwable $e) { $ok = FALSE; }
         return $ok ? array('ok' => TRUE, 'msg' => '')
                    : array('ok' => FALSE, 'msg' => '商店包签名校验未通过（包可能被篡改，或密钥不匹配），已拒绝安装');
+    }
+
+    /**
+     * R3-2：CMS 升级包清单验签。消息格式 `cms|upgrade|<version>|<sha256>|<expiry_unix>`；
+     * 亦接受同公钥对纯 sha256 的旧签名（一版兼容窗口）。校验类型、未过期、sha256 一致。
+     * @return array{ok:bool,msg:string}
+     */
+    public static function verifyStoreManifest($type, $name, $version, $sha256Hex, $sigB64, $expiry = 0)
+    {
+        $type = strtolower(trim((string)$type));
+        $name = trim((string)$name);
+        $version = trim((string)$version);
+        $sha256Hex = strtolower(trim((string)$sha256Hex));
+        $expiry = intval($expiry);
+        if (!in_array($type, array('cms', 'upgrade'), true)) {
+            return array('ok' => FALSE, 'msg' => '升级包签名类型不匹配（期望 cms/upgrade）');
+        }
+        if ($expiry > 0 && $expiry < time()) {
+            return array('ok' => FALSE, 'msg' => '升级包签名已过期，已拒绝安装');
+        }
+        if (!preg_match('/^[a-f0-9]{64}$/', $sha256Hex)) {
+            return array('ok' => FALSE, 'msg' => '升级包摘要格式非法，已拒绝安装');
+        }
+        // 优先清单消息（含过期时间；0=不过期）
+        $msg = 'cms|upgrade|' . $version . '|' . $sha256Hex . '|' . $expiry;
+        $chk = self::verifyStoreSignature($msg, $sigB64);
+        if ($chk['ok']) return $chk;
+        // 兼容：cms|upgrade|<version>|<sha256>（无过期字段）
+        $msg2 = 'cms|upgrade|' . $version . '|' . $sha256Hex;
+        $chk2 = self::verifyStoreSignature($msg2, $sigB64);
+        if ($chk2['ok']) return $chk2;
+        // 一版兼容：旧主题同款「只签 sha256」——防现网未重签时整站无法升级；新签包请用清单格式
+        $legacy = self::verifyStoreSignature($sha256Hex, $sigB64);
+        if ($legacy['ok']) return $legacy;
+        return array('ok' => FALSE, 'msg' => '升级包清单签名校验未通过（包可能被篡改、类型不匹配或密钥不符），已拒绝安装');
     }
 
     /**
@@ -518,17 +560,19 @@ class CloudOpsService
             self::upgradeLogError('update_down error: download failed (' . $dl['error'] . ', ' . $dl['bytes'] . 'B)');
             return false;
         }
-        // M-1（R4）：若商店随包下发了签名（X-Store-Sig）则**强制校验**（fail-closed）。
-        // CMS 源码当前统一从 GitHub 获取、不带商店签名 ⇒ 无签名时此处放行，兼容现状；
-        // 商店若启用签名升级包，则篡改/伪造立即被拒。
+        // R3-2：CMS 升级包**强制**验签（fail-closed，与主题/插件同口径）。去掉 X-Store-Sig 即拒绝（防降级）。
+        // 清单绑定类型/版本/sha256（及可选过期）；见 verifyStoreManifest。
         $cmsSig = (string)($dl['store_sig'] ?? '');
-        if ('' !== $cmsSig) {
-            $sigChk = self::verifyStoreSignature((string)$dl['sha256'], $cmsSig);
-            if (!$sigChk['ok']) {
-                @unlink($save_path);
-                self::upgradeLogError('update_down signature rejected: ' . $sigChk['msg']);
-                return false;
-            }
+        if ('' === $cmsSig) {
+            @unlink($save_path);
+            self::upgradeLogError('update_down signature rejected: missing X-Store-Sig (unsigned upgrade packages are not allowed)');
+            return false;
+        }
+        $sigChk = self::verifyStoreManifest('cms', 'upgrade', (string)$cloud_version, (string)$dl['sha256'], $cmsSig, intval($dl['store_sig_exp'] ?? 0));
+        if (!$sigChk['ok']) {
+            @unlink($save_path);
+            self::upgradeLogError('update_down signature rejected: ' . $sigChk['msg']);
+            return false;
         }
         $destpath = APP_PATH;
         $zip = new \ZipArchive();

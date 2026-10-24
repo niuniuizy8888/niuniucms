@@ -653,10 +653,15 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
                 return $len;
             },
             // M-1（R4）：捕获商店随包下发的 Ed25519 签名头（覆盖包体 hex sha256），交由调用方 fail-closed 验签
-            CURLOPT_HEADERFUNCTION => function ($ch2, $line) use (&$storeSig) {
+            CURLOPT_HEADERFUNCTION => function ($ch2, $line) use (&$storeSig, &$storeSigExp) {
                 $p = strpos($line, ':');
-                if (FALSE !== $p && 0 === strcasecmp(substr($line, 0, $p), 'X-Store-Sig')) {
-                    $storeSig = trim(substr($line, $p + 1));
+                if (FALSE === $p) return strlen($line);
+                $name = substr($line, 0, $p);
+                $val = trim(substr($line, $p + 1));
+                if (0 === strcasecmp($name, 'X-Store-Sig')) {
+                    $storeSig = $val;
+                } elseif (0 === strcasecmp($name, 'X-Store-Sig-Exp')) {
+                    $storeSigExp = preg_replace('/[^0-9]/', '', $val);
                 }
                 return strlen($line);
             },
@@ -735,5 +740,6 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
         'error' => 'ok',
         'http_code' => (int)$code,
         'store_sig' => $storeSig,
+        'store_sig_exp' => intval($storeSigExp),
     );
 }

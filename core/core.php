@@ -81,13 +81,15 @@ include CORE_PATH . 'db/db.php';  // 包含 PdoDriver + ProxyDriver + Connection
 include CORE_PATH . 'cache/cache.php';  // cache_* 函数 + 新缓存驱动
 empty($conf) and $conf = array('db' => array(), 'cache' => array(), 'cache_path' => './', 'log_path' => './', 'timezone' => 'Asia/Shanghai');
 // 加载独立数据库配置（如果存在则合并）
-$dbConfigFile = APP_PATH . 'core/config/database.php';
+// R3-3/R3-1：database.php 走运行时路径；合并后立即 unset，避免 $dbConf 留在全局被模板读出
+$dbConfigFile = function_exists('nncms_runtime_path') ? nncms_runtime_path('database.php') : (APP_PATH . 'core/config/database.php');
 if (is_file($dbConfigFile)) {
     $dbConf = include $dbConfigFile;
     if (is_array($dbConf) && !empty($dbConf['master'])) {
         $conf['db'] = $dbConf;
     }
 }
+unset($dbConf);
 // ============================================================
 // 按需加载传统数据库驱动（配置合并后再判断）
 // ============================================================

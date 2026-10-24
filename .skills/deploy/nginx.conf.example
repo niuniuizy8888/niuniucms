@@ -68,7 +68,7 @@ server {
     # 【2026-10-08】原清单里的 .agent 目录已废弃删除，内容归口到 .skills/，故条目改用 .skills。
     # 【2026-09-02】补 .domian（应用商店接口目录，实际目录名带点；未配 mall_api_token
     # 时虽 fail-closed，仍不建议暴露）。
-    location ~* ^/(config|core|lang|model|route|runtime|deploy|dev|install|tests|task|\.skills|\.domian|\.git|\.svn)(/|$) {
+    location ~* ^/(config|core|data|tools|lang|model|route|runtime|deploy|dev|install|tests|task|\.skills|\.domian|\.git|\.svn)(/|$) {
         deny all;
     }
     # 【2026-10-10 文档整合轮实测】**本段不是可选项，是目录级必需项**：
@@ -130,6 +130,7 @@ server {
     # 注意：exact location 优先于下方正则 PHP location，但不会「落回」它，
     #      因此必须在此重复一份 fastcgi 配置（内容与下方 PHP location 保持一致）。
     location = /install.php {
+        if (-f <站点根>/data/install.lock) { return 404; }
         if (-f <站点根>/core/config/install.lock) { return 404; }
         if (-f <站点根>/core/install.lock) { return 404; }
         try_files      $uri =404;

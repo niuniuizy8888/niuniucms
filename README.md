@@ -26,7 +26,7 @@ NiuNiuCMS 是一个基于 PHP + MySQL 的视频内容管理系统，包含前台
 2. 确保 `runtime/`、`upload/`、`template/`、`plugins/`、`core/config/` 对运行 PHP 的用户（如 `www`）可写。`core/` 其余部分（程序代码）建议保持只读，只有 `core/config/` 需要可写（安装锁为 `core/config/install.lock`；旧版本的 `core/install.lock` 仍被识别，并会自动复制到新位置）。后台「在线升级」会改写 `core/` 下的程序文件，使用前需临时放开 `core/` 写权限，升级后再收回。
 3. 访问 `install.php`，按向导完成安装（向导会自动生成 `core/config/config.php`，无需手动准备）。
 4. 如主机装有安全/杀毒软件（Imunify360、ClamAV 等），请确认 `core/` 下的文件未被隔离；缺失核心文件时程序会提示具体文件名。
-5. Apache：目录级防护随包附带在 `core/`、`runtime/`、`tools/`、`.skills/`、`plugins/`、`upload/` 下的 `.htaccess` 中，需要站点开启 `AllowOverride All`（至少 AuthConfig、Limit），安装向导会探测并提示是否生效；根目录 `.htaccess`（伪静态）仍由站点自行维护。Nginx 请参照部署示例配置禁止访问规则。
+5. Apache：目录级防护随包附带在 `core/`、`runtime/`、`tools/`、`.skills/`、`plugins/`、`upload/` 下的 `.htaccess` 中，需要站点开启 `AllowOverride All`（至少 AuthConfig、Limit），安装向导会探测并提示是否生效；根目录 `.htaccess`（伪静态）仍由站点自行维护。Nginx 请参照部署示例配置禁止访问规则（须拒绝 `data/`、`tools/`；`install.php` 的锁文件检测须包含 `data/install.lock`）。
 
 ## 升级说明（安全审查第 1 轮，2026-10-24）
 

@@ -1,7 +1,7 @@
 <?php
 !defined('DEBUG') and exit('Access Denied.');
 // 页面级缓存 1800s（仅 DEBUG=0 线上模式启用）
-$cacheKey = "page_list_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
+$cacheKey = "page_list_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_u' . intval($uid) . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
 if (page_cache_start($cacheKey)) return;
 
 // hook route_list_start.php

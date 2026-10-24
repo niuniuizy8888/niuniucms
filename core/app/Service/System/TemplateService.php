@@ -672,6 +672,19 @@ class TemplateService
      * （仅 defined/function_exists/group_access/count 等）与常用只读函数，凡不在名单内的
      * 普通函数调用一律 fail-closed 拒绝。成员/静态/构造调用不受本名单约束（另有反射/动态调用闸）。
      */
+
+    /**
+     * R3-1：主题模板变量根名白名单（统计自本站/商店前台模板 + 路由预置变量）。
+     * 不在名单内的根名在编译闸/保存闸一律拒绝（含 $secret_value / $dbConf 等）。
+     * @return string[]
+     */
+    public static function templateVarRootAllowlist(): array
+    {
+        static $list = null;
+        if ($list !== null) return $list;
+        $list = array('CUrl','ListUrl','Pic','Rand','__PAGING__','__tplconf','__tplnull','_arr','_bull_token','_pg','action','admin_entry','aid','alias','api_json','arrlistall','art','artlist','body','c','cate','cate_linkarea','cate_nav','catelist','child','chip_n','chips','cid','cid_count','cloud_version','conf','config','content','cup','danmu_list','danmu_send','danmu_token','danmu_token_api','data','ep','errno','errstr','favorite_state','footer','form_action','fsCfg','fsEt','fsIsForum','fsIsHome','fsIsMy','fsIsPost','fsName','fsPostOpen','fsSub','gid','grouplist','h','header','hit_name','hits_url','i','index_page','ip','item','json','k','key','keyword','lang','lfarrlis','like_state','likelist','linklist','list','longip','maccms','method','msg','my','n','name','nav_active','nav_home','nav_pku','nav_route','nnLogged','nncms','num','obj','p','page','page_url','pagesize','pagination','param','passwd_url','path','path_tpl','path_tplstatics','pku_url','play_from','play_json_safe','play_list','play_name','play_urls','player','player_local','referer','req_area','req_lang','req_sort','req_year','request_filename','route','row','runtime','s','safe_token','search_url','seo','sitemap_url','sonlist','st','starttime','sticky_list','stickylist','t','taglist','theme','time','total','type_more','type_parent','type_reset','type_urls','uid','url','user','user_access','user_create','user_favorite','user_index','user_like','user_login','user_logout','user_passwd','useragent','v','v2','version','vid','video','video_jsonld','videolist','vo','vo2','vod','wait');
+        return $list;
+    }
     public static function safeTemplateCallAllowlist(): array
     {
         return array(
@@ -679,8 +692,7 @@ class TemplateService
             'count', 'sizeof', 'in_array', 'array_key_exists', 'array_keys', 'array_values',
             'array_merge', 'array_slice', 'array_reverse', 'array_search', 'array_sum',
             'array_unique', 'array_column', 'array_combine', 'array_flip', 'array_pad',
-            'array_shift', 'array_unshift', 'array_pop', 'array_push', 'array_fill',
-            'sort', 'rsort', 'asort', 'arsort', 'ksort', 'krsort',
+            'array_fill',
             'is_array', 'is_string', 'is_int', 'is_integer', 'is_float', 'is_double',
             'is_numeric', 'is_null', 'is_bool', 'is_object', 'is_callable', 'is_iterable',
             'is_scalar', 'is_resource',
@@ -698,7 +710,7 @@ class TemplateService
             'round', 'floor', 'ceil', 'abs', 'max', 'min', 'intval', 'floatval', 'doubleval',
             'strval', 'boolval', 'pow', 'sqrt', 'fmod',
             'date', 'time', 'mktime', 'strtotime', 'gmdate', 'checkdate',
-            'preg_match', 'preg_match_all', 'preg_split', 'preg_quote',
+            'preg_split', 'preg_quote',
             // 环境/框架上下文读取（只读，无执行面）
             'defined', 'function_exists', 'class_exists', 'method_exists', 'property_exists',
             'extension_loaded', 'group_access', 'group_name', 'lang', 'url', 'param',

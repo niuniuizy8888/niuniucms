@@ -1,6 +1,6 @@
 <?php
 !defined('DEBUG') and exit('Access Denied.');
-$cacheKey = "page_tag_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
+$cacheKey = "page_tag_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_u' . intval($uid) . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
 if (page_cache_start($cacheKey)) return;
 
 // hook route_tag_start.php

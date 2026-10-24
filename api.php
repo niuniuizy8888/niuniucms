@@ -70,9 +70,10 @@ $storeTok = function_exists('store_wire_token') ? (string)store_wire_token() : '
 // 而出厂 config.default.php 里根本没有该键（安装器原样 copy）⇒ 新装站默认接受**原始 auth_key** 当 token，
 // 与「fail-closed / auth_key 不出现在任何 URL」的口径相反。现改为**显式开启才放行**。
 $legacyOk = isset($conf['api_legacy_token']) && intval($conf['api_legacy_token']) === 1;
-$pass = ('' !== $apiTok && hash_equals($apiTok, $token))
-    || ('' !== $storeTok && hash_equals($storeTok, $token))
-    || ($legacyOk && '' !== $authKey && hash_equals($authKey, $token));
+$isApiTok = ('' !== $apiTok && hash_equals($apiTok, $token));
+$isStoreTok = ('' !== $storeTok && hash_equals($storeTok, $token));
+$isLegacy = ($legacyOk && '' !== $authKey && hash_equals($authKey, $token));
+$pass = $isApiTok || $isStoreTok || $isLegacy;
 if (!$pass) {
     http_response_code(403);
     exit('invalid token');
@@ -87,6 +88,14 @@ if ($tokFromGet && function_exists('xn_log')) {
 }
 
 $route = isset($_GET['route']) ? (string)$_GET['route'] : 'api';
+
+// R3-4：商店令牌（store_report_token）只放行健康检测与 rsync；replace / cron / store_push 需站点 api 令牌（store_push 另需开关+签名）。
+if ($isStoreTok && !$isApiTok && !$isLegacy) {
+    if (!in_array($route, array('api', 'rsync'), TRUE)) {
+        http_response_code(403);
+        exit('store token not allowed for this route');
+    }
+}
 
 switch ($route) {
 
@@ -191,7 +200,33 @@ switch ($route) {
     // 应用：play → vod.play_url；pic → vod.pic（预编译 REPLACE 原子替换；幂等：已替换过=0 行）
     case 'store_push':
         header('Content-Type: application/json; charset=utf-8');
+        // R3-4：入站推送双保险——站点显式开启 store_push_on，且清单带商店 Ed25519 签名（同 NNCMS_STORE_SIGN_PUBKEY）。
+        if (1 !== intval($conf['store_push_on'] ?? 0)) {
+            http_response_code(403);
+            echo json_encode(array('code' => 1, 'msg' => 'store_push disabled (store_push_on!=1)'));
+            exit;
+        }
         $pushPayload = isset($_POST['payload']) ? (string)$_POST['payload'] : '';
+        $pushSig = isset($_SERVER['HTTP_X_STORE_SIG']) ? trim((string)$_SERVER['HTTP_X_STORE_SIG']) : '';
+        if ('' === $pushSig && isset($_POST['sig'])) $pushSig = trim((string)$_POST['sig']);
+        $pushExp = isset($_SERVER['HTTP_X_STORE_SIG_EXP']) ? intval($_SERVER['HTTP_X_STORE_SIG_EXP']) : (isset($_POST['sig_exp']) ? intval($_POST['sig_exp']) : 0);
+        $payloadSha = hash('sha256', $pushPayload);
+        $pushMsg = 'store_push|' . $payloadSha . '|' . $pushExp;
+        $pushChk = \App\Service\System\CloudOpsService::verifyStoreSignature($pushMsg, $pushSig);
+        if (!$pushChk['ok'] && $pushExp > 0) {
+            // 兼容无过期字段的清单
+            $pushChk = \App\Service\System\CloudOpsService::verifyStoreSignature('store_push|' . $payloadSha, $pushSig);
+        }
+        if (!$pushChk['ok']) {
+            http_response_code(403);
+            echo json_encode(array('code' => 1, 'msg' => 'store_push signature rejected: ' . $pushChk['msg']));
+            exit;
+        }
+        if ($pushExp > 0 && $pushExp < time()) {
+            http_response_code(403);
+            echo json_encode(array('code' => 1, 'msg' => 'store_push signature expired'));
+            exit;
+        }
         $pushData = json_decode($pushPayload, TRUE);
         // 兼容未升级站点：旧入口未置 XSS_SKIP，全局 XSS 过滤把 payload 里的
         // `"` 转成 `&quot;` ⇒ json_decode 失败。此处还原实体后重试一次（域名仍由下方 $okDomain

@@ -54,6 +54,11 @@ function admin_token_check(): void
             setcookie($conf['cookie_pre'] . 'admin_token', '', admin_cookie_opt($time - 86400));
             message(-1, lang('admin_token_expiry'));
         }
+        // R3-6：必须同时持有服务端会话 admin_ok（登录成功写入）；仅伪造 Cookie 不够
+        if (1 !== intval(_SESSION('admin_ok'))) {
+            setcookie($conf['cookie_pre'] . 'admin_token', '', admin_cookie_opt($time - 86400));
+            message(-1, lang('admin_token_expiry'));
+        }
         $time - $_time > 1800 AND admin_token_set(intval($_uid));
     }
 }
