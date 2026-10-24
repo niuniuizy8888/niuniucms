@@ -2,6 +2,9 @@
 !defined('DEBUG') and define('DEBUG', 0); // 0: 线上（默认兜底，生产禁用错误显示）；1: 开发，2: 线上调试日志；各入口显式定义
 !defined('APP_PATH') and define('APP_PATH', './');
 !defined('CORE_PATH') and define('CORE_PATH', __DIR__ . '/');
+// M-1（R4）：商店包签名 Ed25519 公钥（信任锚；私钥在 /etc/nncms-sign/ed25519.key，root 600，绝不入库/入 web 根）。
+// 客户端下载 CMS 升级包/主题/插件 zip 后，用本公钥校验随包 detached 签名（sig 覆盖 zip 的 hex sha256）。
+!defined('NNCMS_STORE_SIGN_PUBKEY') and define('NNCMS_STORE_SIGN_PUBKEY', 'hla6Qgn1BY8Jh0/8sqUvkPeRdQQE5vCwWUldmndhPjk=');
 // PHP 版本下限 8.0（与安装向导 NNCMS_PHP_MIN 一致；覆盖 CLI 等不经 index.php 的入口）
 if (PHP_VERSION_ID < 80000) {
     exit('NiuNiuCMS requires PHP 8.0+ (current: ' . PHP_VERSION . ') / 牛牛CMS 需要 PHP 8.0 或更高版本' . PHP_EOL);
@@ -13,6 +16,11 @@ include_once CORE_PATH . 'func/polyfill.php';
 // install 等入口不加载 model.inc.php，必须在此注册，否则 xn_log() 等首次使用 Service 类会失败
 // ============================================================
 spl_autoload_register(function (string $class): void {
+    // 安全审查第 2 轮 U-6：类名严格校验——只允许「段\\段」形式、每段 [A-Za-z_][A-Za-z0-9_]*，
+    // 前缀必须精确命中（App\\ / Psr\\），拒绝 ..、/、NUL、前导/连续反斜杠等任何可拼出越界路径的输入
+    // （class_exists($userInput) / 反序列化类名 / 动态 new 等场景下的纵深防御）。
+    $class = ltrim($class, '\\'); // PHP 传入的类名无前导 \，此处仅兜底
+    if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\\\\[A-Za-z_][A-Za-z0-9_]*)+$/D', $class)) return;
     $prefixes = array(
         'App\\' => APP_PATH . 'core/app/',
         'Psr\\' => APP_PATH . 'core/psr/',
@@ -21,6 +29,7 @@ spl_autoload_register(function (string $class): void {
         $len = strlen($prefix);
         if (strncmp($prefix, $class, $len) !== 0) continue;
         $relativeClass = substr($class, $len);
+        if ($relativeClass === '' || str_contains($relativeClass, '..')) return;
         $file = $baseDir . str_replace('\\', '/', $relativeClass) . '.php';
         if (file_exists($file)) { include_once $file; return; }
     }

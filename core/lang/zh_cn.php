@@ -575,7 +575,7 @@ return array(
                 <br>
                 牛牛Cms 主程序为免费提供使用，不提供任何形式的免费服务。使用者不得将本系统应用于任何形式的非法用途，由此产生的一切法律风险，需由使用者自行承担，与本程序和开发者无关。<br>一旦下载、安装、使用牛牛，表示您即承认您已阅读、理解并同意受此条款的约束，并遵守所有相应法律和法规。如果您不同意此类条款，请不要使用本程序。
                ',
-    'already_installed' => '请删除网站 core 目录里的 install.lock 再继续安装',
+    'already_installed' => '请删除网站 core/config 目录里的 install.lock（旧版本还可能在 core 目录里有一份，一并删除）再继续安装',
     'installed_tips' => '程序已经安装过了，如需重新安装，请删除 config/config.php 再次安装',
     'evn_not_support_php_mysql' => '当前 PHP 环境不支持 mysql 和 pdo_mysql，无法继续安装。',
     'dbhost_is_empty' => '数据库主机不能为空',
@@ -620,7 +620,7 @@ return array(
     'admin_pw' => '管理员密码',
     'admin_pw_repeat' => '重复密码',
     'installing_about_moment' => '正在安装，大概需要一分钟左右',
-    'install_report_tip' => '上报安装信息（用于云端异步采集服务登记；不上报将无法使用云端异步采集）',
+    'install_report_tip' => '上报安装信息到商店云端（可选，默认不勾选）。勾选后会发送：站点域名、服务器 IP、CMS/PHP 版本，以及一个由 auth_key 派生的机器通道令牌（不含 auth_key 本身）。该令牌授权云端调用本站 api.php：触发采集任务，并可批量替换视频播放地址/图片域名。不勾选则无法使用云端异步采集与商店地址替换推送；日后更换 auth_key 即可让该令牌失效。',
     'license_title' => '牛牛CMS',
     'agree_license' => '已阅读并同意许可协议',
     'agree_license_to_continue' => '继续安装',

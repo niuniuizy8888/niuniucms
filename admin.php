@@ -3,7 +3,7 @@
  * 牛牛CMS 后台入口（重构，替代原 admin/index.php）
  *
  * 【安全提示】`admin.php` 是众所周知的后台入口文件名，扫描器会主动探测。本项目**默认可直接访问**，
- * 加固靠三道纵深：① 登录限流（`login_rate_check()`，同 IP 与同账号各 10 次/300s）；
+ * 加固靠三道纵深：① 登录限流（`login_rate_check()`，每 IP 10 次/300s + 账号+IP 组合 10 次/300s，L-2 消除纯账号锁定 DoS）；
  * ② 后台写操作三件套（强制 POST + 取参白名单 + `admin_bull_token_guard()` 场景令牌）；
  * ③ 未登录一律被 `admin_token_check()` 改写进登录页。**若想再隐去入口名**：把本文件改成随机名
  * （如 3x9k2m.php）并同步 `core/config/config.php` 的 `admin_entry` 即可，其余代码无需改动

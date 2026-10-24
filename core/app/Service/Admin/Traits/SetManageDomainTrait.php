@@ -20,7 +20,7 @@ trait SetManageDomainTrait
     public static function domainPage(int $uid): array
     {
         $domain = self::domainConfig();
-        $rewrite = array('0' => '默认', '1' => '伪静态1', '2' => '伪静态2', '3' => '伪静态3');
+        $rewrite = array('' => '跟随主站', '0' => '默认', '1' => '伪静态1', '2' => '伪静态2', '3' => '伪静态3');
         bull_token_set($uid, 'admin_domain_add');
         bull_token_set($uid, 'admin_domain_del');
 
@@ -39,7 +39,7 @@ trait SetManageDomainTrait
     /**
      * 保存/改名主站域名配置（后台 set.php?domain 保存，POST，场景令牌 admin_domain）。
      * 取参全部走 admin_param_text/int（长度与范围白名单）；核心校验与转义在
-     * ConfigBootstrapService::saveDomainSite()：域名经 get_domain() 归一 eTLD+1、
+     * ConfigBootstrapService::saveDomainSite()：域名经 get_host_name() 取完整主机名（精确主机优先、主域名兜底）、
      * site_name 写侧 htmlspecialchars（XSS-03——该值原样进前台模板裸 echo）、path 仅留主题目录名字符。
      * 校验失败经 message() 终止（fail-closed）。
      *
@@ -53,7 +53,8 @@ trait SetManageDomainTrait
             'site_name' => admin_param_text('site_name', '', 100),
             'site_domain' => admin_param_text('site_domain', '', 255),
             'path' => admin_param_text('path', '', 255),
-            'site_rewrite' => admin_param_int('site_rewrite', 0, 0, 3),
+            // '' = 跟随主站（第 2 轮 U-8）；其余在 ConfigBootstrapService::normalizeRewrite 钳 0-3
+            'site_rewrite' => admin_param_text('site_rewrite', '', 2),
             'old_site_domain' => admin_param_text('old_site_domain', '', 255),
         );
         $result = ConfigBootstrapService::saveDomainSite(self::domainConfig(), $payload);
@@ -76,7 +77,12 @@ trait SetManageDomainTrait
         // 批量添加只认第一条；这里按原值取参后自行限长，逐行校验交 ConfigBootstrapService
         $text = (string)param('batch_sites', '', FALSE);
         $text = substr(str_replace("\0", '', $text), 0, 100000);
-        $result = SystemMaintenanceService::batchAddDomainSites(self::domainConfig(), $text);
+        // 留空项默认跟随主站；仅勾选「随机」时才随机（第 2 轮 U-8）
+        $opts = array(
+            'random_path' => admin_param_int('random_path', 0, 0, 1) === 1,
+            'random_rewrite' => admin_param_int('random_rewrite', 0, 0, 1) === 1,
+        );
+        $result = SystemMaintenanceService::batchAddDomainSites(self::domainConfig(), $text, $opts);
         $result['success'] || message(1, $result['msg']);
         return array('code' => 0, 'message' => jump($result['msg'], url('set-domain', array(), TRUE), 3));
     }

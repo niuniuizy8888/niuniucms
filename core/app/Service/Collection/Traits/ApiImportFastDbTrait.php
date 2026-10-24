@@ -135,7 +135,7 @@ trait ApiImportFastDbTrait
             // 的 visible 判定；属 KV 注入前就要取用的启动期配置），保留物理写
             $replace = array();
             $replace['fast_api'] = 1;
-            file_replace_var(APP_PATH . 'core/config/config.php', $replace);
+            file_replace_var(\nncms_runtime_path_w('config.php'), $replace);
             if ($batch_id) {
                 api_import_batch_mark_finished($batch_id, 1, '批次导入完成');
             }

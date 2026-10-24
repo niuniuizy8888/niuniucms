@@ -384,7 +384,7 @@ class VideoService
         }
 
         if ($vids) {
-            foreach ($vids as $_vid) cache_delete('vod_' . $_vid);
+            foreach ($vids as $_vid) content_cache_delete('vod_', $_vid);
             \App\Repository\RepositoryFactory::vod()->delete(array('vid' => $vids));
             \App\Repository\RepositoryFactory::vodVid()->delete(array('vid' => $vids));
         }
@@ -455,9 +455,9 @@ class VideoService
             \App\Repository\RepositoryFactory::vodVid()->delete(array('vid' => $vids));
         }
         if (is_array($vid)) {
-            foreach ($vid as $_vid) cache_delete('vod_' . $_vid);
+            foreach ($vid as $_vid) content_cache_delete('vod_', $_vid);
         } else {
-            cache_delete('vod_' . $vid);
+            content_cache_delete('vod_', $vid);
         }
         cache_delete('runtime'); // 计数缓存失效（此前写 'videos-' 键与 runtime_init 的 'vod' 键错配，总数永不更新；审计修复；现恒清，与 ArtService 同口径）
         return $r;

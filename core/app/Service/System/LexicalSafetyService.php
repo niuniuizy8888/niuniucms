@@ -36,48 +36,173 @@ class LexicalSafetyService
     );
 
     /**
-     * 模板安全规则数据（core/config/template_guard.json）不可用时的统一结论：fail-closed，
-     * 任何被扫描内容都视为不通过（不能因为黑名单为空而把一切放行）。
-     * @return array[] findings
-     */
-    private static function guardMissingFindings(): array
-    {
-        return array(array('kind' => 'guard_missing', 'name' => 'core/' . TemplateService::GUARD_DATA_REL, 'expr' => ''));
-    }
-
-    /**
      * 扫描单条模板指令表达式（{if:}/{loop:}/{php:}/{vars:}/{@}/{...}/{$...} 内容——
      * 这些表达式会被编译器原样写入 PHP，是词法校验的主战场）
      * @return array[] findings: array('kind','name','expr')
      */
-    public static function scanExpression(string $expr): array
+    public static function scanExpression(string $expr, bool $strict = true): array
     {
-        if (!TemplateService::guardAvailable()) return self::guardMissingFindings();
         // 包裹为 PHP 片段以获得正确的 token 流（token_get_all 不要求语法合法）
         // 表达式走函数白名单（模板是可直接编译执行的攻击面）；整段源码扫描（主题钩子）不套白名单
-        return self::scanTokens(@token_get_all('<?php ' . $expr . ';'), $expr, true);
+        // $strict=true：指令表达式（{if:}/{elseif:}/{loop:}/{php:}/{vars:}/{@}）——另禁赋值/自增减、
+        // 输出与终止语句、成员/静态访问（安全审查 H-1）。{$...} 变量路径形态传 false（编译器只认纯变量路径，
+        // 不可能含运算符；语料里 maccms 写法 `{$vo.x|mac_default='y'}` 不会被编译，仅原样输出）。
+        $tokens = @token_get_all('<?php ' . $expr . ';');
+        $findings = self::scanTokens($tokens, $expr, true, $strict);
+        // 审查轮 U-1 步骤 2：严格指令表达式再过一道 token 级「默认拒绝」白名单文法（见 scanExprWhitelist）。
+        // scanTokens 给精确语义文案在前；白名单兜住一切未枚举构造（裸标识符/强制转换外符号/插值引号等）。
+        if ($strict) {
+            foreach (self::scanExprWhitelist($tokens, $expr) as $f) $findings[] = $f;
+        }
+        return $findings;
     }
 
     /**
-     * 扫描整段 PHP 源码（含 php 开标签）——与 scanExpression 同一 token 级判定，
-     * 不提取模板指令；主题 install.php/uninstall.php 执行闸直接复用（fail-closed）。
+     * 安全审查 H-1：模板可见变量根名闸——$GLOBALS 与超全局（$_SESSION/$_SERVER/...）一律拒绝；
+     * $conf 的凭据类键（auth_key/db/cache/cloud_api/...）拒绝（运行期模板 $conf 本就是脱敏副本，此处给出保存期明确反馈）。
+     * @param string $root 变量名（不含 $）
+     * @param string $key  第一级下标（可空）
      */
-    public static function scanCode(string $code): array
+    private static function varRootFindings(string $root, string $key, string $expr): array
     {
-        if (!TemplateService::guardAvailable()) return self::guardMissingFindings();
-        return self::scanTokens(@token_get_all($code), $code);
+        static $super = array('GLOBALS' => 1, '_GET' => 1, '_POST' => 1, '_COOKIE' => 1, '_REQUEST' => 1,
+            '_SERVER' => 1, '_ENV' => 1, '_FILES' => 1, '_SESSION' => 1, 'http_response_header' => 1, 'argv' => 1);
+        if (isset($super[$root])) {
+            return array(array('kind' => 'superglobal', 'name' => '$' . $root, 'expr' => $expr));
+        }
+        if (($root === 'conf' || $root === '__tplconf') && $key !== ''
+            && !in_array($key, TemplateService::templateConfPublicKeys(), true)
+            && TemplateService::templateConfKeyLooksSecret($key)) {
+            return array(array('kind' => 'conf_secret', 'name' => '$' . $root . '.' . $key, 'expr' => $expr));
+        }
+        return array();
+    }
+
+    /** {$a.b} / {$a[b]} / {h:$a.b} 形态：取根名与第一级下标做 varRootFindings */
+    private static function varPathFindings(string $path, string $expr): array
+    {
+        if (!preg_match('#^\s*([a-zA-Z_\x80-\xff][\w\x80-\xff]*)\s*(?:\.\s*(\w+)|\[\s*[\'"]?(\w+)[\'"]?\s*\])?#', $path, $m)) {
+            return array();
+        }
+        $key = isset($m[2]) && $m[2] !== '' ? $m[2] : (isset($m[3]) ? $m[3] : '');
+        return self::varRootFindings($m[1], $key, $expr);
+    }
+
+    /**
+     * 审查轮 U-1 步骤 2：主题 install.php/uninstall.php 执行钩子的「默认拒绝」token 白名单
+     * （替换原十六进制黑名单口径）。只放行数据清理类调用：函数名前缀 kv_ / db_，实参仅限
+     * 字符串/数值/bool/null 字面量与 array(...) 字面量；其余一切构造（变量、运算、控制流、
+     * 其他调用、成员访问等）各记一条 finding ⇒ 拒绝执行。商店在架 49 套主题实测均无
+     * install/uninstall 钩子（零回归），此闸为第三方包纵深防线。
+     * @return array[] findings（空=可执行）
+     */
+    public static function scanThemeHook(string $code): array
+    {
+        $findings = array();
+        $tokens = @token_get_all($code);
+        $n = count($tokens);
+        static $allowTypes = null;
+        if ($allowTypes === null) {
+            $allowTypes = array();
+            foreach (array('T_OPEN_TAG', 'T_CLOSE_TAG', 'T_INLINE_HTML', 'T_WHITESPACE',
+                'T_COMMENT', 'T_DOC_COMMENT', 'T_CONSTANT_ENCAPSED_STRING', 'T_LNUMBER',
+                'T_DNUMBER', 'T_ARRAY', 'T_DOUBLE_ARROW') as $c) {
+                if (defined($c)) $allowTypes[constant($c)] = true;
+            }
+        }
+        static $allowChars = array('(' => 1, ')' => 1, '[' => 1, ']' => 1, ',' => 1, ';' => 1, '.' => 1, '-' => 1);
+        static $allowConst = array('true' => 1, 'false' => 1, 'null' => 1);
+        for ($i = 0; $i < $n; $i++) {
+            $tok = $tokens[$i];
+            if (!is_array($tok)) {
+                if (!isset($allowChars[$tok])) $findings[] = array('kind' => 'hook_token', 'name' => (string)$tok, 'expr' => '');
+                continue;
+            }
+            $type = $tok[0];
+            if (isset($allowTypes[$type])) continue;
+            if ($type === T_STRING) {
+                $low = strtolower($tok[1]);
+                $next = self::nextSignificant($tokens, $i + 1);
+                if ($next !== null && $next[0] === '(') {
+                    if (strncmp($low, 'kv_', 3) === 0 || strncmp($low, 'db_', 3) === 0) continue;
+                    $findings[] = array('kind' => 'hook_call', 'name' => $tok[1], 'expr' => '');
+                    continue;
+                }
+                if (isset($allowConst[$low])) continue;
+                $findings[] = array('kind' => 'hook_identifier', 'name' => $tok[1], 'expr' => '');
+                continue;
+            }
+            $findings[] = array('kind' => 'hook_token', 'name' => token_name($type), 'expr' => '');
+        }
+        return $findings;
     }
 
     /**
      * 共享 token 级危险构造扫描（表达式与整段源码同口径）
      * @return array[] findings
      */
-    private static function scanTokens(array $tokens, string $expr, bool $enforceAllowlist = false): array
+    private static function scanTokens(array $tokens, string $expr, bool $enforceAllowlist = false, bool $strict = false): array
     {
         $findings = array();
         $n = count($tokens);
+        // 安全审查 H-1：指令表达式只读——赋值/复合赋值/自增减、输出/终止/全局声明类语句、成员与静态访问一律拒绝
+        static $assignTypes = null, $constructTypes = null, $memberTypes = null;
+        if ($assignTypes === null) {
+            $assignTypes = array();
+            foreach (array('T_PLUS_EQUAL', 'T_MINUS_EQUAL', 'T_MUL_EQUAL', 'T_DIV_EQUAL', 'T_CONCAT_EQUAL',
+                           'T_MOD_EQUAL', 'T_AND_EQUAL', 'T_OR_EQUAL', 'T_XOR_EQUAL', 'T_SL_EQUAL', 'T_SR_EQUAL',
+                           'T_POW_EQUAL', 'T_COALESCE_EQUAL', 'T_INC', 'T_DEC') as $c) {
+                if (defined($c)) $assignTypes[] = constant($c);
+            }
+            $constructTypes = array();
+            foreach (array('T_PRINT', 'T_ECHO', 'T_EXIT', 'T_UNSET', 'T_GLOBAL', 'T_STATIC', 'T_FUNCTION',
+                           'T_FN', 'T_GOTO', 'T_HALT_COMPILER', 'T_CLASS', 'T_DECLARE', 'T_INLINE_HTML',
+                           'T_START_HEREDOC', 'T_YIELD', 'T_YIELD_FROM', 'T_THROW') as $c) {
+                if (defined($c)) $constructTypes[] = constant($c);
+            }
+            $memberTypes = array();
+            foreach (array('T_OBJECT_OPERATOR', 'T_NULLSAFE_OBJECT_OPERATOR', 'T_DOUBLE_COLON') as $c) {
+                if (defined($c)) $memberTypes[] = constant($c);
+            }
+        }
         for ($i = 0; $i < $n; $i++) {
             $tok = $tokens[$i];
+            if ($strict && !is_array($tok) && $tok === '=') {
+                $findings[] = array('kind' => 'assignment', 'name' => '=', 'expr' => $expr);
+                continue;
+            }
+            if ($strict && is_array($tok)) {
+                if (in_array($tok[0], $assignTypes, true)) {
+                    $findings[] = array('kind' => 'assignment', 'name' => $tok[1], 'expr' => $expr);
+                    continue;
+                }
+                if (in_array($tok[0], $constructTypes, true)) {
+                    $findings[] = array('kind' => 'construct', 'name' => $tok[1], 'expr' => $expr);
+                    continue;
+                }
+                if (in_array($tok[0], $memberTypes, true)) {
+                    $findings[] = array('kind' => 'member_access', 'name' => $tok[1], 'expr' => $expr);
+                    continue;
+                }
+            }
+            if ($enforceAllowlist && is_array($tok) && $tok[0] === T_VARIABLE) {
+                $key = '';
+                $nb = self::nextSignificantIndex($tokens, $i + 1);
+                if ($nb !== null && $tokens[$nb] === '[') {
+                    $nk = self::nextSignificantIndex($tokens, $nb + 1);
+                    $nc = $nk === null ? null : self::nextSignificantIndex($tokens, $nk + 1);
+                    $simple = $nk !== null && $nc !== null && $tokens[$nc] === ']' && is_array($tokens[$nk])
+                        && in_array($tokens[$nk][0], array(T_CONSTANT_ENCAPSED_STRING, T_STRING, T_LNUMBER), true);
+                    if ($simple) {
+                        $key = $tokens[$nk][0] === T_CONSTANT_ENCAPSED_STRING
+                            ? self::decodeStringLiteral($tokens[$nk][1]) : $tokens[$nk][1];
+                    } elseif ($tok[1] === '$conf' || $tok[1] === '$__tplconf') {
+                        // $conf[动态下标]（拼接/变量/表达式）无法静态判定是否取凭据键——拒绝
+                        $findings[] = array('kind' => 'conf_secret', 'name' => $tok[1] . '[dynamic]', 'expr' => $expr);
+                    }
+                }
+                foreach (self::varRootFindings(substr($tok[1], 1), $key, $expr) as $f) $findings[] = $f;
+            }
             if (!is_array($tok)) {
                 // 单字符 token：反引号（shell 执行）/ 变量变量 $ / 动态可调用
                 if ($tok === '`') {
@@ -150,18 +275,6 @@ class LexicalSafetyService
                 }
             }
 
-            // ---- (3) 危险函数名以字符串字面量出现（回调名） ----------------------
-            if ($type === T_CONSTANT_ENCAPSED_STRING) {
-                $lit     = self::decodeStringLiteral($text);
-                $litBase = strtolower($lit);
-                $litBs   = strrpos($litBase, '\\');
-                if ($litBs !== false) $litBase = substr($litBase, $litBs + 1);
-                if ($litBase !== '' && in_array($litBase, \App\Service\System\TemplateService::safeEditableForbiddenFuncs(), true)) {
-                    $findings[] = array('kind' => 'callback_string', 'name' => $lit, 'expr' => $expr);
-                    continue;
-                }
-            }
-
             // ---- (3) eval / include 语句型 --------------------------------------
             if ($type === T_EVAL) {
                 $findings[] = array('kind' => 'eval', 'name' => $text, 'expr' => $expr);
@@ -174,10 +287,6 @@ class LexicalSafetyService
 
             // ---- (4) 危险函数调用 / 模板表达式函数白名单 -------------------------
             if ($isName && $next !== null && $next[0] === '(') {
-                if (in_array($base, \App\Service\System\TemplateService::safeEditableForbiddenFuncs(), true)) {
-                    $findings[] = array('kind' => 'dangerous_call', 'name' => $text, 'expr' => $expr);
-                    continue;
-                }
                 if ($base === 'fromcallable') {
                     $findings[] = array('kind' => 'first_class_callable', 'name' => $text, 'expr' => $expr);
                     continue;
@@ -243,7 +352,9 @@ class LexicalSafetyService
                 'eval' => 1, 'include' => 1, 'dangerous_call' => 1, 'callback_string' => 1,
                 'var_func' => 2, 'var_method' => 2, 'var_var' => 2, 'dynamic_call' => 2,
                 'use_import' => 3, 'new_object' => 3, 'unknown_call' => 3,
+                'superglobal' => 1, 'conf_secret' => 1, 'assignment' => 2, 'construct' => 2, 'member_access' => 3,
                 'php_tag' => 4,
+                'bare_identifier' => 3, 'disallowed_token' => 3, 'named_token' => 3,
             );
             $idx = 0;
             foreach ($findings as &$__f) { $__f['_i'] = $idx++; }
@@ -267,7 +378,6 @@ class LexicalSafetyService
      */
     public static function scanTemplate(string $code): array
     {
-        if (!TemplateService::guardAvailable()) return self::guardMissingFindings();
         $findings = array();
         $tokens = @token_get_all($code);
         $phpSeen = '';
@@ -300,13 +410,118 @@ class LexicalSafetyService
         if (preg_match_all('#\{@([^}]*)\}#s', $code, $mm3)) {
             $exprs = array_merge($exprs, $mm3[1]);
         }
-        if (preg_match_all('#\{\$([^{}]*)\}#s', $code, $mm2)) {
-            $exprs = array_merge($exprs, $mm2[1]);
-        }
         foreach ($exprs as $expr) {
             foreach (self::scanExpression($expr) as $f) {
                 $findings[] = $f;
             }
+        }
+        // {$...} 与 {h:$...} 变量路径形态：根名闸（$GLOBALS/超全局/$conf 凭据键）+ 非严格 token 扫描
+        $paths = array();
+        if (preg_match_all('#\{\$([^{}]*)\}#s', $code, $mm2)) {
+            $paths = array_merge($paths, $mm2[1]);
+        }
+        if (preg_match_all('#\{h:\$([^{}]*)\}#s', $code, $mm4)) {
+            $paths = array_merge($paths, $mm4[1]);
+        }
+        foreach ($paths as $expr) {
+            foreach (self::varPathFindings($expr, $expr) as $f) {
+                $findings[] = $f;
+            }
+            foreach (self::scanExpression($expr, false) as $f) {
+                $findings[] = $f;
+            }
+        }
+        return $findings;
+    }
+
+    /**
+     * 审查轮 U-1 步骤 2：严格指令表达式的「默认拒绝」token 文法白名单。
+     * 只放行只读表达式所需的最小 token 集合，其余一律记 finding（与 scanTokens 的精确语义判定叠加）。
+     * 放行：变量读取（T_VARIABLE，变量根闸由 scanTokens 另行施加）、数值/单双引号字面量、
+     *       true/false/null、允许常量（DEBUG）、比较/逻辑/算术/位运算、括号、方括号下标、
+     *       点号数组路径段、三元 ?:、(int)/(float)/(string)/(bool) 转换、函数调用名（具体名单
+     *       由 scanTokens unknown_call 施加）、isset/empty/array 构造、数组 => 。
+     * 拒绝：= / 自增减、-> / :: / new / use（多由 scanTokens 另报）、裸标识符（未闭合常量，
+     *       如 {if:$conf.db} 的 db——改为编译期拒绝，而非 undefined constant 的 500）、
+     *       命名空间限定名、反引号/变量变量/字符串插值引号/heredoc/(array)/(object) 等未枚举 token。
+     * @param array  $tokens token_get_all('<?php EXPR;') 结果
+     * @param string $expr   原表达式（finding 回显）
+     * @return array[] findings
+     */
+    private static function scanExprWhitelist(array $tokens, string $expr): array
+    {
+        $findings = array();
+        // 点号数组路径根名闸：$conf.db / $_SERVER.x 在编译期（view.php rep_dot）转成 $var['key']
+        // 数组下标；此处对根名+首段施加 varRootFindings（$conf 凭据键 / 超全局）。
+        if (preg_match_all('#\$([a-zA-Z_][\w]*)((?:\.[a-zA-Z0-9_]+)+)#', $expr, $dm, PREG_SET_ORDER)) {
+            foreach ($dm as $g) {
+                $seg = explode('.', ltrim($g[2], '.'));
+                foreach (self::varRootFindings($g[1], isset($seg[0]) ? $seg[0] : '', $expr) as $f) $findings[] = $f;
+            }
+        }
+        static $allowTypes = null;
+        if ($allowTypes === null) {
+            $allowTypes = array();
+            foreach (array(
+                'T_OPEN_TAG', 'T_WHITESPACE', 'T_COMMENT', 'T_DOC_COMMENT', 'T_CLOSE_TAG',
+                'T_VARIABLE', 'T_LNUMBER', 'T_DNUMBER', 'T_CONSTANT_ENCAPSED_STRING',
+                'T_ISSET', 'T_EMPTY', 'T_ARRAY', 'T_DOUBLE_ARROW',
+                'T_LOGICAL_AND', 'T_LOGICAL_OR', 'T_LOGICAL_XOR', 'T_BOOLEAN_AND', 'T_BOOLEAN_OR',
+                'T_IS_EQUAL', 'T_IS_NOT_EQUAL', 'T_IS_IDENTICAL', 'T_IS_NOT_IDENTICAL',
+                'T_IS_SMALLER_OR_EQUAL', 'T_IS_GREATER_OR_EQUAL', 'T_SPACESHIP',
+                'T_COALESCE', 'T_POW', 'T_SL', 'T_SR',
+                'T_INT_CAST', 'T_DOUBLE_CAST', 'T_STRING_CAST', 'T_BOOL_CAST',
+            ) as $c) {
+                if (defined($c)) $allowTypes[constant($c)] = true;
+            }
+        }
+        static $allowChars = array(
+            '(' => 1, ')' => 1, '[' => 1, ']' => 1, '+' => 1, '-' => 1, '*' => 1, '/' => 1,
+            '%' => 1, '.' => 1, '!' => 1, '<' => 1, '>' => 1, '?' => 1, ':' => 1, ',' => 1,
+            '&' => 1, '|' => 1, '^' => 1, '~' => 1, ';' => 1,
+        );
+        static $allowConst = array('true' => 1, 'false' => 1, 'null' => 1, 'debug' => 1);
+        // 显著 token 下标序列（跳过空白/注释），便于取前/前前 token 判断点号路径
+        $sig = array();
+        $n = count($tokens);
+        for ($i = 0; $i < $n; $i++) {
+            $t = $tokens[$i];
+            if (is_array($t) && ($t[0] === T_WHITESPACE || $t[0] === T_COMMENT || $t[0] === T_DOC_COMMENT)) continue;
+            $sig[] = $i;
+        }
+        $norm = function ($tok) { return is_array($tok) ? $tok : array(0 => $tok, 1 => (string)$tok); };
+        $m = count($sig);
+        for ($p = 0; $p < $m; $p++) {
+            $tok = $tokens[$sig[$p]];
+            if (!is_array($tok)) {
+                if (!isset($allowChars[$tok])) $findings[] = array('kind' => 'disallowed_token', 'name' => (string)$tok, 'expr' => $expr);
+                continue;
+            }
+            $type = $tok[0];
+            // 裸词数组键 [word]：含 PHP 保留字（list/array 等，token 非 T_STRING）。编译期 rep_vars 会把
+            // [word] 一律转成 ['word'] 字符串键，无副作用，故单个标识符词夹在 [ ] 之间统一放行。
+            $bkPrev = $p - 1 >= 0 ? $norm($tokens[$sig[$p - 1]]) : null;
+            $bkNext = $p + 1 < $m ? $norm($tokens[$sig[$p + 1]]) : null;
+            if ($bkPrev !== null && $bkPrev[1] === '[' && $bkNext !== null && $bkNext[1] === ']'
+                && isset($tok[1]) && preg_match('/^[a-zA-Z_]\w*$/', $tok[1])) continue;
+            if (isset($allowTypes[$type])) continue;
+            $isName = ($type === T_STRING)
+                || (defined('T_NAME_FULLY_QUALIFIED') && $type === T_NAME_FULLY_QUALIFIED)
+                || (defined('T_NAME_QUALIFIED') && $type === T_NAME_QUALIFIED);
+            if ($isName) {
+                if ($type !== T_STRING) { $findings[] = array('kind' => 'named_token', 'name' => $tok[1], 'expr' => $expr); continue; }
+                $low = strtolower($tok[1]);
+                $next = $p + 1 < $m ? $norm($tokens[$sig[$p + 1]]) : null;
+                $prev = $p - 1 >= 0 ? $norm($tokens[$sig[$p - 1]]) : null;
+                $pp   = $p - 2 >= 0 ? $norm($tokens[$sig[$p - 2]]) : null;
+                if ($next !== null && $next[1] === '(') continue;                         // 函数调用（名单由 unknown_call 施加）
+                if (isset($allowConst[$low])) continue;                                   // true/false/null/DEBUG
+                if ($prev !== null && $prev[1] === '[' && $next !== null && $next[1] === ']') continue; // 裸词下标 $v[word]
+                if ($prev !== null && $prev[1] === '.' && $pp !== null && ($pp[0] === T_VARIABLE || $pp[0] === T_STRING)) continue; // 点号路径段
+                $findings[] = array('kind' => 'bare_identifier', 'name' => $tok[1], 'expr' => $expr);
+                continue;
+            }
+            $findings[] = array('kind' => 'disallowed_token', 'name' => token_name($type), 'expr' => $expr);
         }
         return $findings;
     }
@@ -331,6 +546,18 @@ class LexicalSafetyService
             $t = $tokens[$i];
             if (is_array($t) && ($t[0] === T_WHITESPACE || $t[0] === T_COMMENT || $t[0] === T_DOC_COMMENT)) continue;
             return is_array($t) ? $t : array(0 => $t, 1 => (string)$t);
+        }
+        return null;
+    }
+
+    /** 下一个有效 token 的下标（跳过空白与注释；null=无） */
+    private static function nextSignificantIndex(array $tokens, int $from): ?int
+    {
+        $n = count($tokens);
+        for ($i = $from; $i < $n; $i++) {
+            $t = $tokens[$i];
+            if (is_array($t) && ($t[0] === T_WHITESPACE || $t[0] === T_COMMENT || $t[0] === T_DOC_COMMENT)) continue;
+            return $i;
         }
         return null;
     }

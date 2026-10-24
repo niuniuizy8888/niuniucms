@@ -1,0 +1,11 @@
+# 牛牛CMS 安全审查 M-4：上传目录禁止执行任何脚本（Apache 2.2 / 2.4 通用）
+# 同时覆盖 a.php.jpg 这类双扩展名（防 AddHandler 宽松配置把它当 PHP 执行）。图片/附件等静态文件不受影响。
+<FilesMatch "(?i)\.(php\d*|phtml|phar|pht|phps|cgi|pl|py|sh|asp|aspx|jsp|shtml|htaccess|user\.ini)(\.|$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>

@@ -394,6 +394,85 @@ class SetManageService
      * @param string $scene 会话场景指纹键（如 admin_set_seo / admin_rm）
      * @return void
      */
+    /**
+     * 「设置 → 密钥轮换」页数据（GET，仅超级管理员；门禁在 route/set.php）。
+     * 只展示当前 api 派生令牌的掩码，auth_key 本体不出现在页面。
+     * @return array {header, safe_token, api_token_mask, legacy_on}
+     */
+    public static function authKeyPage(int $uid): array
+    {
+        $tok = function_exists('api_wire_token') ? (string)api_wire_token('api') : '';
+        $conf = (array)_SERVER('conf');
+        return array(
+            'header' => array('title' => '更换 auth_key'),
+            'safe_token' => bull_token_set($uid, 'admin_authkey'),
+            'api_token_mask' => '' === $tok ? '（未配置）' : substr($tok, 0, 4) . str_repeat('*', 24) . substr($tok, -4),
+            'legacy_on' => 1 === intval($conf['api_legacy_token'] ?? 0),
+        );
+    }
+
+    /**
+     * 一键更换 auth_key（POST，仅超级管理员；CSRF 场景 admin_authkey；需输入确认词「更换」）。
+     * 效果：config.php 写入新的 64 位随机 auth_key（回读校验）⇒ 后台 admin_token、前台免登录令牌、
+     * api.php 派生令牌全部失效；同时清空 session/session_data 表，所有已登录会话（含本人）立即下线。
+     * 返回新 api 令牌（仅本次显示一次）与后续操作提示。
+     * @return array {code, message}
+     */
+    public static function rotateAuthKey(int $uid): array
+    {
+        self::verifyToken($uid, 'admin_authkey');
+        if ('更换' !== trim((string)param('confirm_word', '', FALSE))) {
+            return array('code' => 1, 'message' => '请在确认框中输入「更换」两个字后再提交');
+        }
+        $file = \nncms_runtime_path_w('config.php');
+        if (!is_file($file) || !is_writable($file)) {
+            return array('code' => 1, 'message' => '更换失败：core/config/config.php 不可写，请检查文件权限（需运行 PHP 的用户可写）');
+        }
+        $newKey = bin2hex(random_bytes(32));
+        // M-2 part2：商店关系令牌与 auth_key 解耦——轮换时若本站尚无（或非法）store_report_token
+        // 则补生成一枚随机值一并落盘（此后商店身份不随 auth_key 轮换漂移）；已有合法值则保留不动。
+        $conf0 = (array)_SERVER('conf');
+        $curStoreTok = isset($conf0['store_report_token']) ? (string)$conf0['store_report_token'] : '';
+        $vars = array('auth_key' => $newKey);
+        $newStoreTok = '';
+        if ('' === $curStoreTok || !preg_match('#^[A-Za-z0-9]{16,64}$#', $curStoreTok)) {
+            $newStoreTok = bin2hex(random_bytes(16));
+            $vars['store_report_token'] = $newStoreTok;
+        }
+        $r = file_replace_var($file, $vars);
+        clearstatcache(TRUE, $file);
+        function_exists('opcache_invalidate') && @opcache_invalidate($file, TRUE);
+        $check = @include $file;
+        if (FALSE === $r || !is_array($check) || !hash_equals($newKey, (string)($check['auth_key'] ?? ''))) {
+            return array('code' => 1, 'message' => '更换失败：写入 core/config/config.php 后回读不一致，auth_key 未变更');
+        }
+        // 当前请求内切到新密钥：派生新的 api 令牌、补登记（如启用了安装上报）都按新值计算
+        $conf = (array)_SERVER('conf');
+        $conf['auth_key'] = $newKey;
+        if ('' !== $newStoreTok) $conf['store_report_token'] = $newStoreTok;
+        class_exists('App', FALSE) and \App::set('conf', $conf);
+        $_SERVER['conf'] = $conf;
+        $GLOBALS['conf'] = $conf;
+        $newApi = (string)api_wire_token('api');
+        // 所有会话下线（前台 + 后台）：会话行本身不依赖 auth_key，需显式清空
+        $s1 = db_truncate('session');
+        $s2 = db_truncate('session_data');
+        admin_token_clean();
+        admin_audit_log('auth_key_rotate', array('uid' => $uid, 'session_cleared' => ($s1 && $s2) ? 1 : 0));
+        $reg = '';
+        if (!empty($conf['install_report']) && class_exists('\\App\\Service\\System\\CloudOpsService')) {
+            $res = \App\Service\System\CloudOpsService::storeInstallRegister(FALSE);
+            $reg = !empty($res['ok']) ? '<br>已向商店补登记新的采集令牌。' : '<br>商店补登记未完成（' . htmlspecialchars((string)($res['msg'] ?? ''), ENT_QUOTES, 'UTF-8') . '），云端采集首次失败时会自动补登记。';
+        }
+        $msg = 'auth_key 已更换。所有用户与管理员（包括你）都需要重新登录。'
+            . '<br>新的 api 令牌（仅显示这一次）：<code>' . htmlspecialchars($newApi, ENT_QUOTES, 'UTF-8') . '</code>'
+            . '<br>宝塔计划任务里的 api.php?token=… 采集/cron 地址需要换成新令牌（「采集 → 接口列表」里的定时采集链接已自动更新）。'
+            . ((1 === intval($conf['api_legacy_token'] ?? 0)) ? '<br>注意：api_legacy_token=1，旧的「auth_key 原文当 token」用法同样已失效。' : '')
+            . (($s1 && $s2) ? '' : '<br>会话表清空失败，已登录用户可能要到会话过期才下线。')
+            . $reg;
+        return array('code' => 0, 'message' => $msg);
+    }
+
     private static function verifyToken(int $uid, string $scene): void
     {
         $safeToken = param('safe_token');

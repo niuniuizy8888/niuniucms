@@ -76,11 +76,11 @@ class FavoriteService
         $aid = intval($aid);
         if (1 == intval($model)) {
             \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid), array('favorites+' => 1));
-            cache_delete('art_' . $aid);
+            content_cache_delete('art_', $aid);
             return;
         }
         \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid), array('favorites+' => 1));
-        cache_delete('vod_' . $aid);
+        content_cache_delete('vod_', $aid);
     }
 
     /** 内容侧收藏数 -1：cond 额外带 favorites > 0 钳制（上线前安全审计 F-10，与 LikeService 同口径），并发重复取消时不会把计数减成负数（unsigned 列减到 0 会被条件挡下）。随后清 'art_<id>'/'vod_<id>' 单行缓存；无返回值。@param int $aid 内容 id @param int $model 1=文章，0=视频 @return void */
@@ -90,11 +90,11 @@ class FavoriteService
         // 上线前安全审计修复（F-10）：与 LikeService 同口径 `>0` 钳制，防并发负漂移。
         if (1 == intval($model)) {
             \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid, 'favorites' => array('>' => 0)), array('favorites-' => 1));
-            cache_delete('art_' . $aid);
+            content_cache_delete('art_', $aid);
             return;
         }
         \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid, 'favorites' => array('>' => 0)), array('favorites-' => 1));
-        cache_delete('vod_' . $aid);
+        content_cache_delete('vod_', $aid);
     }
 
     /** 统计某用户在某类型下的收藏总数（favorites 表 uid + model 计数，不看内容是否已被删——内容删除后可能留悬空计数）。@param int $uid 用户 id @param int $model 1=文章，0=视频 @return int DbTableRepository::count 声明 : int */

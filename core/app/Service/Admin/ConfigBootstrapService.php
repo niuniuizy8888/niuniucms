@@ -24,7 +24,7 @@ class ConfigBootstrapService
             $replace['cookie_path'] = '/';
         }
         // 启动期配置（伪静态/路径/cookie 域）：请求入口在 KV 注入前即依赖这些值，必须物理写入 config/config.php
-        file_replace_var(APP_PATH . 'core/config/config.php', $replace);
+        file_replace_var(\nncms_runtime_path_w('config.php'), $replace);
         admin_audit_log('rewrite_update', array('rewrite' => $rewrite));
         return array('success' => true, 'msg' => lang('modify_successfully'));
     }
@@ -62,11 +62,12 @@ class ConfigBootstrapService
 
         $site = isset($domain['site']) && is_array($domain['site']) ? $domain['site'] : array();
         $old_raw = trim((string)($payload['old_site_domain'] ?? ''));
-        $old_domain = $old_raw === '' ? '' : get_domain($old_raw);
-        // 修复：单个添加（无 old_site_domain）遇到已存在的域名时此前直接覆盖原站点配置；
-        // 改名撞到另一个已存在站点同理。站群按主域名（eTLD+1）匹配，www.a.com 与 a.com 是同一个键。
+        $old_domain = $old_raw === '' ? '' : self::existingSiteKey($site, $old_raw);
+        // 修复：单个添加（无 old_site_domain）遇到已存在的域名时此前直接覆盖原站点配置；改名撞到另一个已存在站点同理。
+        // 第 2 轮 U-8：键按「填写的主机名」精确保存——填 a.com 覆盖 a.com 及其所有未单独登记的子域名，
+        // 填 m.a.com / www.a.com 只作用于该主机（访问时精确主机优先于主域名），两者可分别配置。
         if (isset($site[$site_domain]) && ($old_domain === '' || $old_domain !== $site_domain)) {
-            return array('success' => false, 'msg' => '站点 ' . $site_domain . ' 已存在（站群按主域名匹配，www.a.com、m.a.com 与 a.com 视为同一站点），请在列表中直接修改');
+            return array('success' => false, 'msg' => '站点 ' . $site_domain . ' 已存在，请在列表中直接修改');
         }
         $path = (string)($payload['path'] ?? '');
         $clean_path = self::sanitizeSitePath($path);
@@ -82,7 +83,8 @@ class ConfigBootstrapService
             'site_name' => self::escapeSiteName((string)($payload['site_name'] ?? '')),
             'site_domain' => $site_domain,
             'path' => $clean_path,
-            'site_rewrite' => max(0, min(3, intval($payload['site_rewrite'] ?? 0))),
+            // 伪静态留空 = 跟随主站（存 ''，index.php 只在 0-3 整数档位时覆盖）
+            'site_rewrite' => self::normalizeRewrite($payload['site_rewrite'] ?? ''),
         );
         $domain['site'] = $site;
         // 站群域名属启动期配置（index.php 入口在 KV 注入前读取 domain.php 覆盖 $conf），保留物理写
@@ -91,8 +93,8 @@ class ConfigBootstrapService
         }
         admin_audit_log('domain_update', array('site_domain' => $site_domain));
         $msg = $old_domain === '' ? '添加成功' : '更新成功';
-        if (strtolower($raw_domain) !== $site_domain && get_domain($raw_domain) === $site_domain && strpos($raw_domain, '/') === false) {
-            $msg .= '（站群按主域名匹配，已保存为 ' . $site_domain . '）';
+        if (strtolower($raw_domain) !== $site_domain) {
+            $msg .= '（已保存为 ' . $site_domain . '）';
         }
         return array('success' => true, 'msg' => $msg);
     }
@@ -101,13 +103,19 @@ class ConfigBootstrapService
      * 批量添加站群站点（每行 site_domain|site_name|path|site_rewrite，后三项可省略）。
      * 与 saveDomainSite 同一套校验与转义（此前批量通道 site_name 未转义 = 存储型 XSS、path 只挡 ../、
      * 域名无格式校验、少于 4 段整行静默丢弃、site_rewrite 填 0 也被当「未填」随机化）。
-     * path 为空/不存在 ⇒ 从已安装主题随机挑一个（原行为）；site_rewrite 为空/非 0-3 ⇒ 随机 0-3（原行为）。
+     * 第 2 轮 U-8：path/site_rewrite 留空 = 跟随主站（与单个添加一致）；只有调用方显式传
+     * $opts['random_path'] / $opts['random_rewrite']（后台批量弹窗勾选）时，留空项才随机。
+     * 模板填了但不存在 ⇒ 该行跳过并提示（此前静默改成随机模板）。
      * @param array  $domain     当前 domain.php 全量数组
      * @param string $input_text 多行文本
+     * @param array  $opts       {random_path:bool, random_rewrite:bool}
      * @return array {success:bool, msg:string, added:int}
      */
-    public static function batchAddDomainSites(array $domain, string $input_text): array
+    public static function batchAddDomainSites(array $domain, string $input_text, array $opts = array()): array
     {
+        $random_path = !empty($opts['random_path']);
+        $random_rewrite = !empty($opts['random_rewrite']);
+        $badtpl = array();
         $site = isset($domain['site']) && is_array($domain['site']) ? $domain['site'] : array();
         $dirs = \App\Service\System\TemplateService::availableDirs();
         $added = 0;
@@ -128,11 +136,19 @@ class ConfigBootstrapService
                 $dup[] = $site_domain;
                 continue;
             }
+            $raw_path = $path;
             $path = self::sanitizeSitePath($path);
-            if ($path === '') {
-                $path = !empty($dirs) ? $dirs[array_rand($dirs)] : 'default';
+            if ($raw_path !== '' && $path === '') {
+                $badtpl[] = $no + 1;
+                continue;
             }
-            $site_rewrite = ($site_rewrite !== '' && ctype_digit($site_rewrite) && intval($site_rewrite) <= 3) ? intval($site_rewrite) : rand(0, 3);
+            if ($path === '' && $random_path && !empty($dirs)) {
+                $path = $dirs[array_rand($dirs)];
+            }
+            $site_rewrite = self::normalizeRewrite($site_rewrite);
+            if ($site_rewrite === '' && $random_rewrite) {
+                $site_rewrite = rand(0, 3);
+            }
             $site[$site_domain] = array(
                 'site_name' => self::escapeSiteName($site_name),
                 'site_domain' => $site_domain,
@@ -150,23 +166,50 @@ class ConfigBootstrapService
         $msg = '批量添加完成，共添加 ' . $added . ' 条记录';
         $dup and $msg .= '；已存在跳过 ' . count($dup) . ' 条（' . implode('、', array_slice(array_unique($dup), 0, 10)) . '）';
         $bad and $msg .= '；域名格式错误跳过 ' . count($bad) . ' 行（第 ' . implode('、', array_slice($bad, 0, 10)) . ' 行）';
-        return array('success' => $added > 0 || (empty($dup) && empty($bad)), 'added' => $added, 'msg' => $msg);
+        $badtpl and $msg .= '；模板目录不存在跳过 ' . count($badtpl) . ' 行（第 ' . implode('、', array_slice($badtpl, 0, 10)) . ' 行）';
+        return array('success' => $added > 0 || (empty($dup) && empty($bad) && empty($badtpl)), 'added' => $added, 'msg' => $msg);
     }
 
     /**
-     * 站点域名归一 + 格式校验：get_domain() 折叠到主域名（eTLD+1，与 index.php 的匹配口径一致），
+     * 站点域名归一 + 格式校验：get_host_name() 取完整主机名（去协议/路径/端口、小写、IDN→punycode，
+     * **不再折叠到主域名**——第 2 轮 U-8，index.php 精确主机优先、再回退主域名），
      * 再只放行 IP 或合法主机名（字母/数字/连字符分段，IDN 未转 punycode 时允许 Unicode 字母）。
      * 修复：此前不校验，`a"><x` 这类值会写进 domain.php 并作为表单 id 渲染到后台页面。
      * @return string 归一后的域名；不合法返回 ''
      */
     public static function normalizeSiteDomain(string $input): string
     {
-        $d = get_domain(trim($input));
+        $d = function_exists('get_host_name') ? get_host_name(trim($input)) : get_domain(trim($input));
         if ($d === '') return '';
         if (filter_var($d, FILTER_VALIDATE_IP)) return $d;
         if (strlen($d) > 253) return '';
         $label = '[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?';
         return preg_match('/^' . $label . '(?:\.' . $label . ')*$/u', $d) ? $d : '';
+    }
+
+    /**
+     * 伪静态档位：'' / 非 0-3 ⇒ ''（跟随主站）；0-3 ⇒ int。
+     * @param mixed $v
+     * @return int|string
+     */
+    public static function normalizeRewrite($v)
+    {
+        if (is_int($v)) return ($v >= 0 && $v <= 3) ? $v : '';
+        $v = trim((string)$v);
+        return ($v !== '' && ctype_digit($v) && intval($v) <= 3) ? intval($v) : '';
+    }
+
+    /**
+     * 在 site 表里找已登记的键：先精确主机名，再主域名（兼容旧数据——旧键都是 eTLD+1）。
+     * @return string 命中的键；都不命中时返回精确主机名（可能为 ''）
+     */
+    private static function existingSiteKey(array $site, string $raw): string
+    {
+        $full = function_exists('get_host_name') ? get_host_name($raw) : get_domain($raw);
+        if ($full !== '' && isset($site[$full])) return $full;
+        $main = get_domain($raw);
+        if ($main !== '' && isset($site[$main])) return $main;
+        return $full;
     }
 
     /**
@@ -195,21 +238,21 @@ class ConfigBootstrapService
     /** 写 core/config/domain.php（file_replace_var 返回写入字节数，失败为 FALSE/0）。 */
     private static function writeDomainConfig(array $domain): bool
     {
-        $r = file_replace_var(APP_PATH . 'core/config/domain.php', $domain);
+        $r = file_replace_var(\nncms_runtime_path_w('domain.php'), $domain);
         return $r !== FALSE && intval($r) > 0;
     }
 
     /**
      * 删除站群站点域名（unset site[归一域名] 后整表回写 core/config/domain.php 的 site 键）。
-     * 域名同样先过 get_domain() 归一（与写入侧一致，否则带子域/协议的入参删不掉）。
+     * 域名先按完整主机名精确找，找不到再按主域名找（兼容旧键），否则带子域/协议的入参删不掉。
      * @param array  $domain      当前 domain.php 全量数组
      * @param string $site_domain 待删域名
      * @return array {success:bool, msg:string}
      */
     public static function deleteDomainSite(array $domain, string $site_domain): array
     {
-        $site_domain = get_domain($site_domain);
         $site = isset($domain['site']) && is_array($domain['site']) ? $domain['site'] : array();
+        $site_domain = self::existingSiteKey($site, $site_domain);
         if ($site_domain === '' || !isset($site[$site_domain])) {
             return array('success' => false, 'msg' => '站点不存在或已删除');
         }

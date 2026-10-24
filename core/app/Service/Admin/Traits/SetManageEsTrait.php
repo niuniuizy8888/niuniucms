@@ -141,7 +141,7 @@ trait SetManageEsTrait
      */
     private static function domainConfig(): array
     {
-        return include \APP_PATH . 'core/config/domain.php';
+        return include \nncms_runtime_path('domain.php');
     }
 
     /**

@@ -335,9 +335,9 @@ trait ContentQueryTrait
         $r = self::queryUpdateImpl($id, $update);
         if (FALSE === $r) return FALSE;
         if (is_array($id)) {
-            foreach ($id as $_id) cache_delete(self::queryCachePrefix() . $_id);
+            foreach ($id as $_id) content_cache_delete(self::queryCachePrefix(), $_id);
         } else {
-            cache_delete(self::queryCachePrefix() . $id);
+            content_cache_delete(self::queryCachePrefix(), $id);
         }
         return $r;
     }
@@ -469,7 +469,7 @@ trait ContentQueryTrait
         $key = self::queryCachePrefix() . intval($id);
         // 站群修复：缓存的是格式化后的行（含按伪静态档位生成的 url/cate_url/tag_url），站群站点的
         // site_rewrite 与主站不同时不能共用主站的键，否则链接形态串站。主站档位键名不变；
-        // 其他档位另起键并缩短 TTL（各处 cache_delete 只删主键，短 TTL 兜底内容更新的可见延迟）。
+        // 其他档位另起键 {prefix}{id}_rw0.._rw3 并缩短 TTL；内容更新/删除经 content_cache_delete() 同删主键与 _rw0-3（第 2 轮 U-4），短 TTL 仅作兜底。
         $conf = (array)_SERVER('conf');
         $rw = intval($conf['url_rewrite_on'] ?? 0);
         $variant = isset($conf['url_rewrite_base']) && $rw !== intval($conf['url_rewrite_base']);

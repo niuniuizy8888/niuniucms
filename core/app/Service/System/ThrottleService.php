@@ -93,14 +93,18 @@ class ThrottleService
             return null;
         }
         $count = 1;
+        $first = $now;
         $raw = stream_get_contents($fp);
         $state = $raw !== '' ? @unserialize($raw, array('allowed_classes' => false)) : false;
         if (is_array($state) && isset($state['first'], $state['count']) && $now >= intval($state['first']) && ($now - intval($state['first'])) <= $window) {
             $count = intval($state['count']) + 1;
+            // 审查轮 U-1（R2 遗留）：窗口仍有效时保留原起点，固定窗口不随每次尝试滑动延长
+            // （旧实现每次都写 first=now ⇒ 持续尝试则窗口永不结束，限流形同虚设）。
+            $first = intval($state['first']);
         }
         ftruncate($fp, 0);
         rewind($fp);
-        fwrite($fp, serialize(array('count' => $count, 'first' => $now)));
+        fwrite($fp, serialize(array('count' => $count, 'first' => $first)));
         fflush($fp);
         @flock($fp, LOCK_UN);
         fclose($fp);

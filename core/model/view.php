@@ -62,7 +62,17 @@ function _file($srcfile)
     $tmpM = is_file($tmpfile) ? filemtime($tmpfile) : 0;
     // 0 字节产物（杀毒清空/磁盘配额/写一半）且源非空 ⇒ 视为失效重建，不让空产物长期驻留
     $tmpZero = $tmpM && 0 === (int)@filesize($tmpfile) && $srcM && (int)@filesize($srcfile) > 0;
-    if (!is_file($tmpfile) || $tmpZero || DEBUG > 1 || ($srcM && $tmpM && $srcM > $tmpM) || \App\Service\System\AddonService::hookSigStaleFor($tmpfile)) {
+    // 审查轮 U-1（R2 遗留）：mtime 粒度 1 秒，源在「上次编译的同一秒内」被再次编辑时 $srcM==$tmpM，
+    // $srcM>$tmpM 漏判 ⇒ 用「源 mtime|字节数」指纹兜底（产物旁 .meta）。指纹不符即重编译；
+    // 本判据只新增重编译理由、绝不阻止其它理由（降级重试路径不受影响）。
+    $srcZ = $srcM ? (int)@filesize($srcfile) : 0;
+    $metafile = $tmpfile . '.meta';
+    $fpStale = false;
+    if (is_file($tmpfile)) {
+        $metaOld = is_file($metafile) ? @file_get_contents($metafile) : false;
+        if ($metaOld !== false && $metaOld !== ($srcM . '|' . $srcZ)) $fpStale = true;
+    }
+    if (!is_file($tmpfile) || $tmpZero || $fpStale || DEBUG > 1 || ($srcM && $tmpM && $srcM > $tmpM) || \App\Service\System\AddonService::hookSigStaleFor($tmpfile)) {
         // 顺序修正：先剥离模板源的原生 php（tpl_allow_php=0 安全规则，只作用于模板作者内容），
         // 再内联插件 hook（受信代码，其 php 逻辑段不参与剥离——此前内联在前、剥离在后，wrapped 格式
         // hook 的 kv 读取/变量赋值整段被清空，只剩 HTML 壳无条件输出=配置开关失效）。
@@ -71,13 +81,27 @@ function _file($srcfile)
         if ($s !== '' && substr($s, 0, 3) === "\xEF\xBB\xBF") $s = substr($s, 3);
         $s = ltrim($s);
         $s = preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s', '', $s);
+        // 安全审查 H-1：前台主题模板（template/ 下）作者内容里的 $conf → 脱敏副本、$GLOBALS/超全局 → 空变量。
+        // 必须在内联插件 hook 之前做（hook 是受信代码，合法读取真实 $conf）。
+        $tplScope = view_tpl_in_scope($srcfile);
+        // 安全审查第 2 轮：主模板正文也过一遍与模板编辑器/下载同口径的内容闸（此前只在保存、下载、
+        // {inc:}/<template include> 子模板时检查；手工上传/FTP 改的主模板绕过）。只在重编译时跑一次，开销可忽略。
+        $tplGateWhy = $tplScope ? view_tpl_body_gate($s) : '';
+        if ('' !== $tplGateWhy) {
+            xn_log('template main body content gate rejected: ' . $srcfile . ' :: ' . $tplGateWhy, 'addon_compile_error');
+            \App\Service\System\AddonService::degradedMark($tmpfile, $srcfile, 'template content gate: ' . $tplGateWhy);
+            // 产物落为安全提示（源文件修改后 mtime 变新会自动重编译并清除后台告警）
+            $s = '<!-- template blocked --><div style="margin:12px;padding:10px 14px;border:1px solid #e0b4b4;background:#fff6f6;color:#9f3a38;font-size:14px">'
+                . '该页面模板未通过安全检查，已停止渲染。请站长到后台查看提示并修正模板文件。</div>';
+        }
+        if ($tplScope) $s = view_tpl_scope_rewrite($s);
         $s = \App\Service\System\AddonService::inlineHookMarkers($s);
         $reg_arr = '[a-zA-Z_]\w*(?:\[\w+\]|\[\'\w+\'\]|\[\"\w+\"\]|\[\$[a-zA-Z_]\w*\])*';
         //2025.09.07 修复inc
         $s = preg_replace_callback(
             '#\{inc\:([\w|\/\.]+)\}#',
-            function ($matches) use ($srcfile) {
-                return process_inc($matches, dirname($srcfile));
+            function ($matches) use ($srcfile, $tplScope) {
+                return process_inc($matches, dirname($srcfile), $tplScope);
             },
             $s
         );
@@ -141,6 +165,12 @@ function _file($srcfile)
         }
         if (!$fgTplRejected) {
         \App\Service\System\AddonService::hookSigSave($tmpfile);
+        // 主模板内容闸通过 ⇒ 清掉此前因该文件留下的后台告警（无记录时只读一次 json，无写）
+        if ($tplScope && '' === $tplGateWhy) \App\Service\System\AddonService::degradedClear($tmpfile);
+        }
+        if ($tplScope && !$fgTplRejected) {
+            // 渲染期在模板作用域内构造脱敏 $conf 副本（不动全局 $conf：区块/缓存/编译器渲染中仍需真实配置）
+            $s = '<?php $__tplconf = view_tpl_conf(isset($conf) ? $conf : null); $__tplnull = null; ?>' . $s;
         }
         $ext = file_ext($tmpfile);
         $is_html = in_array($ext, array('htm', 'html'));
@@ -164,6 +194,10 @@ function _file($srcfile)
             file_put_contents_try($tmpfile, $s);
         } else {
             file_put_contents_try($tmpfile, $s);
+        }
+        // 审查轮 U-1（R2 遗留）：写入「源 mtime|字节数」指纹，供下次请求判定同秒编辑。
+        if (is_file($tmpfile) && (int)@filesize($tmpfile) > 0) {
+            @file_put_contents($metafile, $srcM . '|' . $srcZ, LOCK_EX);
         }
     }
     // hook model_view__file_end.php
@@ -262,6 +296,22 @@ function rep_vars($s)
     return $s;
 }
 /**
+ * 审查轮 U-1：{if:}/{elseif:}/{loop:} 表达式里的 `$var.key.key2` 点号路径转数组下标（与 {$a.b} 同义）。
+ * 修复 {if:$conf.db} 之类「`.db` 被当成字符串拼接未定义常量」导致的 500 fatal——现编译为
+ * `$conf['db']`（再经作用域改写/脱敏 + 保存/渲染内容闸的凭据键闸统一处置）。
+ * 仅匹配 `$变量(.标识符)+`：不触及 `$a.'str'`（引号）、`$a.$b`（变量）等合法拼接。
+ */
+function rep_dot($s)
+{
+    return preg_replace_callback('#\$[a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)+#', function ($m) {
+        $parts = explode('.', $m[0]);
+        $base = array_shift($parts);
+        return $base . implode('', array_map(function ($v) {
+            return ctype_digit($v) ? '[' . $v . ']' : "['" . $v . "']";
+        }, $parts));
+    }, $s);
+}
+/**
  * 编译 `{if:EXPR}...{elseif:EXPR}...{else}...{/if}` 块为 PHP if 结构（支持嵌套，_file() 里 while 循环反复调用直至无残留）。
  * 条件与块体均先经 rep_double/rep_vars 规范化；{elseif:} 子块交 rep_elseif 回调展开。
  * 注意：EXPR 原样进入 `if (...)`——模板作者可控表达式，受 tpl_allow_php/tpl_allow_expr 同款纪律约束，勿投喂不可信模板。
@@ -274,6 +324,7 @@ function process_if($matches)
     // hook model_view_process_if_start.php
 
     $expr = rep_double($matches[1]);
+    $expr = rep_dot($expr);
     $expr = rep_vars($expr);
     $s = preg_replace_callback('#\{elseif\:([^\n\}]+)\}#', 'rep_elseif', rep_double($matches[2]));
     $s = str_replace('{else}', '<?php }else{ ?>', $s);
@@ -291,6 +342,7 @@ function rep_elseif($matches)
     // hook model_view_rep_elseif_start.php
 
     $expr = rep_double($matches[1]);
+    $expr = rep_dot($expr);
     $expr = rep_vars($expr);
     // hook model_view_rep_elseif_end.php
     return "<?php }elseif($expr) { ?>";
@@ -309,7 +361,7 @@ function process_loop($matches)
 
     $args = explode(' ', rep_double($matches[1]));
     $s = rep_double($matches[2]);
-    $arr = rep_vars($args[0]);
+    $arr = rep_vars(rep_dot($args[0]));
     $v = empty($args[1]) ? '$v' : $args[1];
     $k = empty($args[2]) ? '' : $args[2] . '=>';
     // hook model_view_process_loop_end.php
@@ -325,7 +377,7 @@ function process_loop($matches)
  * @param string $basedir 当前模板所在目录（_file() 用 dirname($srcfile) 传入；空则跳过同目录查找）
  * @return string 内联后的子模板内容（合法纯 HTML 段）或空串
  */
-function process_inc($matches, $basedir = '')
+function process_inc($matches, $basedir = '', $tplScope = false)
 {
     // hook model_view_process_inc_start.php
 
@@ -342,7 +394,7 @@ function process_inc($matches, $basedir = '')
         $tpl_file = $basedir . '/' . $filename;
         if (file_exists($tpl_file)) {
             // 修复：{inc:} 子模板内的 hook 标记也要内联（head/foot 子模板的 hook 点此前是死点）
-            return process_inc_body(file_get_contents($tpl_file));
+            return process_inc_body(file_get_contents($tpl_file), $tplScope);
         }
     }
     // 否则，走默认
@@ -353,7 +405,7 @@ function process_inc($matches, $basedir = '')
 
     // hook model_view_process_inc_end.php
     // 修复：默认主题路径分支同样内联子模板 hook 标记
-    return file_exists($tpl_file) ? process_inc_body(file_get_contents($tpl_file)) : '';
+    return file_exists($tpl_file) ? process_inc_body(file_get_contents($tpl_file), $tplScope) : '';
 }
 
 /**
@@ -373,7 +425,7 @@ function process_inc($matches, $basedir = '')
  * 注意：<template include> 走 AddonService::includeTemplateCallback，同一位置同样位于剥 PHP 之后，
  * 已在该回调内做等价收口。
  */
-function process_inc_body($s)
+function process_inc_body($s, $tplScope = false)
 {
     if (!is_string($s) || $s === '') return '';
     // ① 与 _file() 同口径剥离原生 PHP（{inc:} 引入的子模板不接受编剧作者 PHP）
@@ -382,10 +434,6 @@ function process_inc_body($s)
     try {
         if (class_exists('\App\Service\System\TemplateService')
             && class_exists('\App\Service\System\LexicalSafetyService')) {
-            // 规则数据缺失：fail-closed 丢弃内容，并输出可见提示（而非静默空白）
-            if (!\App\Service\System\TemplateService::guardAvailable()) {
-                return \App\Service\System\TemplateService::guardMissingHtml();
-            }
             $findings = \App\Service\System\TemplateService::legacyRegexFindings($s);
             if (empty($findings)) {
                 $findings = \App\Service\System\LexicalSafetyService::scanTemplate($s);
@@ -407,8 +455,75 @@ function process_inc_body($s)
         if (function_exists('xn_log')) xn_log('template {inc:} content gate error: ' . $e->getMessage(), 'addon_compile_error');
         return '';
     }
+    if ($tplScope) $s = view_tpl_scope_rewrite($s);
     // 修复：{inc:} 子模板内的 hook 标记也要内联（head/foot 子模板的 hook 点此前是死点）
     return \App\Service\System\AddonService::inlineHookMarkers($s);
+}
+
+/**
+ * 安全审查第 2 轮：主模板正文内容闸（与 process_inc_body 同口径：legacyRegexFindings + LexicalSafetyService::scanTemplate）。
+ * @param string $s 已剥离原生 PHP 的模板正文
+ * @return string 空串=通过；非空=拒绝原因（闸不可用/规则缺失/异常一律 fail-closed 返回原因）
+ */
+function view_tpl_body_gate($s)
+{
+    if (!is_string($s) || '' === $s) return '';
+    try {
+        if (!class_exists('\App\Service\System\TemplateService') || !class_exists('\App\Service\System\LexicalSafetyService')) {
+            return 'content gate unavailable';
+        }
+        // 主体模板只按词法扫描（与编译产物同口径）拦截；旧版正则规则对存量/商店主题误报较多
+        // （例如 MacCMS 风格 {:func()} 在本引擎里只是字面文本、不会被编译执行），只记日志不拦截，避免整页被停。
+        $findings = \App\Service\System\LexicalSafetyService::scanTemplate($s);
+        if (empty($findings)) {
+            $legacy = \App\Service\System\TemplateService::legacyRegexFindings($s);
+            if (!empty($legacy) && function_exists('xn_log')) {
+                $l0 = $legacy[0];
+                xn_log('template legacy-rule notice (not blocked): ' . (is_array($l0) ? json_encode($l0, JSON_UNESCAPED_UNICODE) : (string)$l0), 'addon_compile_error');
+            }
+            return '';
+        }
+        $first = $findings[0];
+        $why = is_array($first) ? trim((string)($first['kind'] ?? '') . ' ' . (string)($first['name'] ?? '')) : (string)$first;
+        return '' === $why ? 'content gate finding' : $why;
+    } catch (\Throwable $e) {
+        return 'content gate error: ' . $e->getMessage();
+    }
+}
+
+/**
+ * 安全审查 H-1：源文件是否属于前台主题模板作用域（template/ 下）。
+ * 后台模板（core/admin/html）与插件模板是受信代码，不做改写。
+ */
+function view_tpl_in_scope($srcfile)
+{
+    $root = \App\Service\System\TemplateService::templateRoot();
+    $real = realpath((string)$srcfile);
+    $rootReal = realpath($root);
+    if ($real === false || $rootReal === false) return strpos(str_replace('\\', '/', (string)$srcfile), str_replace('\\', '/', $root)) === 0;
+    $rootReal = rtrim(str_replace('\\', '/', $rootReal), '/') . '/';
+    return strpos(str_replace('\\', '/', $real), $rootReal) === 0;
+}
+
+/**
+ * 安全审查 H-1：主题模板作者内容的变量改写（编译期，作用于剥 PHP 之后、内联 hook 之前）。
+ * $conf → $__tplconf（脱敏副本，见 view_tpl_conf）；$GLOBALS / $_SERVER 等超全局 → $__tplnull。
+ */
+function view_tpl_scope_rewrite($s)
+{
+    if (!is_string($s) || $s === '' || strpos($s, '$') === false) return $s;
+    $s = preg_replace('#\$(?:GLOBALS|_(?:SERVER|SESSION|COOKIE|GET|POST|REQUEST|ENV|FILES))\b#', '$__tplnull', $s);
+    return preg_replace('#\$conf\b#', '$__tplconf', $s);
+}
+
+/**
+ * 安全审查 H-1：模板可见的 $conf 脱敏副本（展示类白名单键；嵌套凭据键剔除）。
+ * @param mixed $conf 渲染点作用域内的 $conf；null 时读全局
+ * @return array
+ */
+function view_tpl_conf($conf = null)
+{
+    return \App\Service\System\TemplateService::templateConfView($conf);
 }
 /*function process_inc($matches)
 { 

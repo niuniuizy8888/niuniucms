@@ -520,7 +520,7 @@ function http_location($url)
  *
  * ⚠ 与 Service 层 `App\Service\Account\UserAuthService::httpReferer()` 是**两套实现、强度不同**：
  * 那边会再剥引号/尖括号/空白并做「http(s):// + 词符」正则白名单，不过一律回退站点根；
- * 本函数只看 host，**不校验 scheme**（`javascript:` 这类无 host 的串会原样通过），
+ * 本函数看 host，并（安全审查 L-1 起）拒非 http(s) scheme 与 `//`、`/\` 开头的协议相对串，
  * 也不剥字符。前台会员登录链路请用 Service 版；本函数当前唯一调用点是后台 VodEditService。
  * 转义边界（红线 §二.4）：param() 取回的值**默认已 htmlspecialchars 一次**，
  * 本函数不再补转义、也不还原——所以它的返回串是「HTML 已安全、但直接当 Location/JS 用可能带 &amp; 实体」的形态，
@@ -537,6 +537,8 @@ function http_referer()
     // 安全过滤，只支持站内跳转，不允许跳到外部，否则可能会被 XSS
     $parse_url = parse_url($referer);
     if (isset($parse_url['host']) && $parse_url['host'] != $_SERVER['HTTP_HOST']) $referer = './';
+    // 安全审查 L-1：再拒非 http(s) scheme（javascript:/data: 等无 host 串旧实现会原样通过）与协议相对 // 、/\ 形态
+    if (FALSE === $parse_url || (isset($parse_url['scheme']) && !in_array(strtolower($parse_url['scheme']), array('http', 'https'), TRUE)) || preg_match('#^\s*[/\\\\]{2}#', $referer)) $referer = './';
     return $referer;
 }
 // $round: float round ceil floor
@@ -1117,43 +1119,47 @@ function route_list_page($type, $cid, $cate, $num, $page, $pagesize, $page_url, 
  */
 function page_cache_uri_key($uri)
 {
+    // 安全审查 U-3（2026-10-24）收紧：键只含路由真实消费的成分，其余一律丢弃——
+    //   ① 裸 token：只在路径无路由段（以 / 结尾或 *.php 入口）时保留**第一个**（?vod-1.html 形态的路由本体）；
+    //      其后的裸 token 经 parse_str 只会变成无人读取的具名空参数，不入键；
+    //   ② 数字命名段 0..63（param(N) 式路由；更大的下标无路由读取）；
+    //   ③ 命名白名单：page/p（intval）、cid（intval）、keyword（>64 字节摘要化）。
+    //      wd/q/k/jsoncallback 全仓无读取点，删除；json 已由调用方以 _j 档位入键，删除。
+    // ⚠ 未来任何影响渲染结果的具名 query 参数必须同步白名单，否则不同参数页面会共享同一缓存。
     $uri = (string)$uri;
     $q = strpos($uri, '?');
-    if (FALSE === $q) return $uri;
+    if (FALSE === $q) return strlen($uri) > 256 ? md5($uri) : $uri;
     $path = substr($uri, 0, $q);
     $query = substr($uri, $q + 1);
+    if (strlen($path) > 256) $path = md5($path);
     if ('' === $query) return $path;
+    $last = (string)substr($path, (int)strrpos('/' . $path, '/'));
+    $routeInQuery = ('' === $last || '.php' === substr($last, -4));
     $keep = array();
+    $bareTaken = FALSE;
     foreach (explode('&', $query) as $kv) {
         if ('' === $kv) continue;
         $eq = strpos($kv, '=');
-        if (FALSE === $eq) { $keep[] = $kv; continue; }
-        $k = substr($kv, 0, $eq);
-        if (preg_match('/^\d+$/', $k)) { $keep[] = $kv; continue; }
-        // 第六轮复审修复（R6-01）：本白名单必须登记**所有被路由读取的非数字键参数**。
-        // 此前 type 路由的 param('cid')（type 段首部为空时的分类兜底）被丢弃，导致
-        // ?0=types&1=_国产_&cid=1 与 cid=2 共用同一缓存键：首个请求者的分类内容被后续请求复用
-        // 1800s（第六轮复审 R6-01 对照实验实证；该轮原始记录已在 2026-10-10 文档整合轮删除，
-        // 现存口径见 oldskills/README.md §四 + oldskills/php_audit_report.md（与 web 根同级，均已归档），结论以本处代码为准）。
-        if (in_array(strtolower($k), array('page', 'p', 'wd', 'q', 'k', 'keyword', 'json', 'jsoncallback', 'cid'), TRUE)) {
-            $v = substr($kv, $eq + 1);
-            // 上线前安全审计修复（VULN-M02）：缓存键材料必须**有界**。
-            // 原实现把 keyword 等参数的全值原样入键（KeywordService 只截断 DB 侧副本 64 字符），
-            // 而页缓存条目是整页 HTML（实测首页 786KB / gz 82KB）⇒ 攻击者用不同长关键词
-            // 可无限扩张 Redis/APCu 键空间，打满 maxmemory 后 allkeys-lru 会驱逐正常热键
-            // 与会话相关键，缓存层反成故障放大器。
-            // 处置：截断到 96 字节 **并附 md5 全文前 16 位**——既保证键长有界，又保证不同
-            // 关键词不碰撞（只截断会让前 96 字节相同的两个词共用缓存页=内容串页）。
-            // page/p 归一为 int（`?page=01` 与 `?page=1` 不再各占一键）。
-            if (in_array(strtolower($k), array('page', 'p'), TRUE)) {
-                $v = (string)intval($v);
-            } elseif (strlen($v) > 96) {
-                $v = substr($v, 0, 96) . '~' . substr(md5($v), 0, 16);
+        $k = FALSE === $eq ? $kv : substr($kv, 0, $eq);
+        $v = FALSE === $eq ? NULL : substr($kv, $eq + 1);
+        if (preg_match('/^\d{1,2}$/', $k) && (int)$k < 64) {
+            $keep[] = $k . '=' . (NULL === $v ? '' : (strlen($v) > 64 ? substr(md5($v), 0, 16) : $v));
+            continue;
+        }
+        if (NULL === $v) {
+            if ($routeInQuery && !$bareTaken) {
+                $bareTaken = TRUE;
+                $keep[] = strlen($kv) > 128 ? md5($kv) : $kv;
             }
-            $keep[] = $k . '=' . $v;
+            continue;
+        }
+        $lk = strtolower($k);
+        if ('page' === $lk || 'p' === $lk || 'cid' === $lk) {
+            $keep[] = $lk . '=' . intval($v);
+        } elseif ('keyword' === $lk) {
+            $keep[] = 'keyword=' . (strlen($v) > 64 ? md5($v) : $v);
         }
     }
-    // 整个键再设总长上限（路径本身也可能很长）：超出即摘要化，保证键空间有界
     $key = $path . (array() === $keep ? '' : '?' . implode('&', $keep));
     return strlen($key) > 256 ? ($path . '?' . md5($key)) : $key;
 }
@@ -1167,8 +1173,8 @@ function page_cache_uri_key($uri)
  * 方案（v2）：>4KB 的载荷用 zlib_encode(ZLIB_ENCODING_DEFLATE) 压缩后转十六进制（纯 ASCII），
  * 前缀 "\x00ZH" 标识压缩态；未达阈值/压缩不划算/无 zlib 时原样返回。
  * v1（"\x00GZ" 前缀）曾用「Base64 包装 + raw deflate」，这种「解码后再解压」的组合正是主机杀毒
- * 启发式（Imunify360 / ai-bolit / ClamAV 启发式等）给混淆代码打分的典型特征，故改为十六进制 + zlib_decode，
- * 与 core/config/template_guard.json 的 hex 编码口径一致。体积约为原文的 1/5～1/8（hex 比 Base64 大 50%，可接受）。
+ * 启发式（Imunify360 / ai-bolit / ClamAV 启发式等）给混淆代码打分的典型特征，故改为十六进制 + zlib_decode。
+ * 体积约为原文的 1/5～1/8（hex 比 Base64 大 50%，可接受）。
  * 兼容：无前缀的存量明文条目原样透传；v1 "\x00GZ" 条目与任何解不开的 "\x00" 前缀条目
  * 由 page_cache_unpack 返回 NULL ⇒ page_cache_start 视为未命中、删除后重新渲染回填（不报错、不输出乱码）。
  */

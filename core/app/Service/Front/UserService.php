@@ -70,7 +70,8 @@ class UserService
         // 按账户限流（防轮换 IP 绕过全局限流爆破单账户；与后台登录同口径 10/300，审计修复）
         // 审计修复（F-06）：DB email 列为 utf8mb4_general_ci（大小写不敏感），
         // 而限流键此前保留大小写——大小写轮换即可给同一账号换桶。归一为小写。
-        login_rate_check('user_' . mb_strtolower($email, 'UTF-8'), 10, 300) or message(-1, lang('login_too_frequent'));
+        // L-2（R4）：账户桶改为「账号+IP 组合」键，消除纯账号锁定 DoS（换 IP 猛打某邮箱不再能全局锁死受害者账号）；无验证码体系故仅 账号+IP + 每IP 两桶。
+        login_rate_check('uip_' . mb_strtolower($email, 'UTF-8') . '|' . ip(), 10, 300) or message(-1, lang('login_too_frequent'));
 
         if (is_email($email, $err)) {
             $_user = \App\Service\Account\UserService::readByEmail($email);
@@ -149,7 +150,7 @@ class UserService
     public static function handleCreate($conf, $longip, $time)
     {
         // 注册限流：从配置读取，防批量注册
-        $throttleFile = APP_PATH . 'core/config/throttle.php';
+        $throttleFile = \nncms_runtime_path('throttle.php');
         $throttle = is_file($throttleFile) ? include $throttleFile : array();
         $regMax = is_array($throttle) ? intval($throttle['register_max'] ?? 10) : 10;
         $regWindow = is_array($throttle) ? intval($throttle['register_window'] ?? 3600) : 3600;

@@ -113,8 +113,10 @@ class AddonService
                 // 只有源也坏/非 PHP 时才降级为合法空产物
                 if (self::sourceIncludable($srcfile)) {
                     self::$degraded++;
+                    self::degradedMark($tmpfile, $srcfile, 'artifact parse error (hooks skipped): ' . $parseErr);
                     return $srcfile;
                 }
+                self::degradedMark($tmpfile, $srcfile, 'artifact parse error (empty fallback): ' . $parseErr);
                 $s = "<?php "; // 合法空产物降级
                 file_put_contents_try($tmpfile, $s);
                 return $tmpfile; // 签名不推进（hooksSigSet 跳过）→ 每请求重试
@@ -123,6 +125,7 @@ class AddonService
                 return self::degradeToSource($srcfile, $tmpfile, FALSE, 'artifact write/verify failed');
             }
             self::hooksSigSet($tmpfile, $hookSig);
+            self::degradedClear($tmpfile);
         } elseif ($srcMtime && $tmpMtime && $srcMtime < $tmpMtime) {
             // mtime 错乱防护：源时间戳早于缓存（文件复制/恢复导致时间戳倒退）时 mtime 判定失效，
             // 编译后与缓存内容比对，内容不同则重建，避免旧缓存永不过期（如模板常量改版）
@@ -157,7 +160,10 @@ class AddonService
     {
         if (!is_string($s)) return 'compile result is not a string (source unreadable?)';
         if (!self::codeBodyEmpty($s)) return NULL;
-        $srcSize = is_file($srcfile) ? (int)@filesize($srcfile) : 0;
+        // R3-6c：æºæä»¶æ ¹æ¬ä¸å­å¨ï¼å¯éæ¨¡æ¿ç¼ºçï¼å¦é»è®¤ä¸»é¢æªéå 404.htmlï¼ï¼äº§ç©ç©ºå±é¢æè¡ä¸ºï¼
+        // ä¸ç®ç¼è¯éçº§ï¼é¿ååå°ãç¼ºæä»¶ãè¯¯æ¥ãæä»¶å­å¨ä½ 0 å­èï¼è¢«æè½¯æ¸ç©ºï¼ä»ç§å¸¸åè­¦ã
+        if (!is_file($srcfile)) return NULL;
+        $srcSize = (int)@filesize($srcfile);
         if ($srcSize <= 0) return 'source file missing or 0 bytes: ' . $srcfile;
         // 源本身去注释后也为空（纯注释/占位文件）⇒ 空产物是合法结果
         if ('php' === file_ext($srcfile) && self::codeBodyEmpty((string)@php_strip_whitespace($srcfile))) return NULL;
@@ -186,12 +192,128 @@ class AddonService
     private static function degradeToSource($srcfile, $tmpfile, $tmpEmpty, $why)
     {
         xn_log('compile degraded ' . $tmpfile . ' :: ' . $why, 'addon_compile_error');
+        // 安全审查第 2 轮 U-7：任何降级都登记到持久标记表，后台每页顶部常驻告警，直到该产物重新编译成功
+        self::degradedMark($tmpfile, $srcfile, $why);
         clearstatcache(TRUE, $tmpfile);
         if (!$tmpEmpty && is_file($tmpfile) && (int)@filesize($tmpfile) > 0) return $tmpfile;
         if (is_file($tmpfile) && 0 === (int)@filesize($tmpfile)) @unlink($tmpfile);
         self::$degraded++;
         if (self::sourceIncludable($srcfile)) return $srcfile;
+        // PHP 源自身也无法解析：include 它只会得到空白 500。改为直接输出友好 503（与入口 shutdown
+        // 处理器的「核心文件缺失 / 编译缓存异常」页同风格，不含绝对路径），站长据提示修复后自动恢复。
+        // 仅「非空且语法错误」才终止；源缺失/0 字节维持旧语义（include 无害 no-op/warning）
+        if ('php' === file_ext($srcfile) && is_file($srcfile) && (int)@filesize($srcfile) > 0) self::degradedFatalPage($srcfile);
         return is_file($srcfile) ? $srcfile : $tmpfile;
+    }
+
+    /** 降级标记表（cache_path/.compile_degraded.json：{产物basename: {src,why,t}}；json 后缀不被 clearTmpDir 扁平删除） */
+    private static function degradedMapFile()
+    {
+        $conf = _SERVER('conf');
+        // R3-6dï¼éçº§åè­¦åºå¨ cache_path ä¸å¯åï¼æ­¤æ¶æ°æ°å¨ééçº§ï¼æ¶ä»è½æä¹åã
+        // æ cache_path â runtime/ â ç³»ç»ä¸´æ¶ç®å½ ä¾æ¬¡éç¬¬ä¸ä¸ªå¯åç®å½ï¼è¯»åé½èµ°æ¬å½æ°ï¼å èå§ç»ä¸è´ã
+        $cp = (string)($conf['cache_path'] ?? '');
+        $candidates = array();
+        if ($cp !== '') $candidates[] = $cp;
+        if (defined('APP_PATH')) $candidates[] = \APP_PATH . 'runtime/';
+        $tmp = (string)@sys_get_temp_dir();
+        if ($tmp !== '') $candidates[] = rtrim($tmp, "/\\") . '/';
+        foreach ($candidates as $d) {
+            if ($d === '' || $d === '/' || $d === '\\') continue;
+            if (is_dir($d) && is_writable($d)) return $d . '.compile_degraded.json';
+        }
+        // å¨é½ä¸å¯åï¼åéé¦éï¼cache_pathï¼è·¯å¾ï¼è³å°è®© degradedRead è½è¯»å°æ­¤åï¼å¯åæ¶ï¼åå¥çè®°å½ã
+        return ($cp !== '' ? $cp : (defined('APP_PATH') ? \APP_PATH : '')) . '.compile_degraded.json';
+    }
+
+    private static function degradedRead()
+    {
+        $f = self::degradedMapFile();
+        $m = is_file($f) ? json_decode((string)@file_get_contents($f), TRUE) : array();
+        return is_array($m) ? $m : array();
+    }
+
+    /** 登记一次降级（同一产物同一原因已登记则不重复写盘） */
+    public static function degradedMark($tmpfile, $srcfile, $why)
+    {
+        try {
+            $k = basename((string)$tmpfile);
+            $m = self::degradedRead();
+            $rel = str_replace('\\', '/', (string)$srcfile);
+            strpos($rel, \APP_PATH) === 0 and $rel = substr($rel, strlen(\APP_PATH));
+            $why = substr(str_replace(array("\r", "\n", "\t"), ' ', (string)$why), 0, 300);
+            if (isset($m[$k]) && ($m[$k]['why'] ?? '') === $why) return;
+            $m[$k] = array('src' => $rel, 'why' => $why, 't' => time());
+            if (count($m) > 50) $m = array_slice($m, -50, NULL, TRUE);
+            @file_put_contents_try(self::degradedMapFile(), json_encode($m, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        } catch (\Throwable $e) {
+        }
+    }
+
+    /** 产物重新编译成功：移除其降级登记 */
+    public static function degradedClear($tmpfile)
+    {
+        $f = self::degradedMapFile();
+        if (!is_file($f)) return;
+        $k = basename((string)$tmpfile);
+        $m = self::degradedRead();
+        if (!isset($m[$k])) return;
+        unset($m[$k]);
+        $m ? @file_put_contents_try($f, json_encode($m, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) : @unlink($f);
+    }
+
+    /**
+     * 后台告警用：当前仍处于降级状态的产物清单。产物文件已存在、非空且比登记时间新（说明之后编译成功过，
+     * 如源/插件已修复、缓存被清理后重建）的条目视为已解决并顺手清除。
+     * @return array<int,array{src:string,why:string,t:int}>
+     */
+    public static function degradedList()
+    {
+        $m = self::degradedRead();
+        if (!$m) return array();
+        $conf = _SERVER('conf');
+        $dir = (string)($conf['cache_path'] ?? '');
+        $out = array();
+        $changed = FALSE;
+        foreach ($m as $k => $row) {
+            $t = intval($row['t'] ?? 0);
+            $af = $dir . $k;
+            // 模板内容闸拦截的条目：产物本身就是拦截提示页（总比标记新），只由源修正后重编译通过时 degradedClear 显式清除
+            $gate = 0 === strpos((string)($row['why'] ?? ''), 'template content gate:');
+            if (!$gate && is_file($af) && (int)@filesize($af) > 0 && (int)@filemtime($af) > $t) {
+                unset($m[$k]);
+                $changed = TRUE;
+                continue;
+            }
+            $out[] = array('src' => (string)($row['src'] ?? $k), 'why' => (string)($row['why'] ?? ''), 't' => $t);
+        }
+        if ($changed) {
+            $m ? @file_put_contents_try(self::degradedMapFile(), json_encode($m, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) : @unlink(self::degradedMapFile());
+        }
+        return $out;
+    }
+
+    /** 源与产物都不可用时的友好 503 终止页（CLI 下只输出一行文字） */
+    private static function degradedFatalPage($srcfile)
+    {
+        $rel = str_replace('\\', '/', (string)$srcfile);
+        strpos($rel, \APP_PATH) === 0 and $rel = substr($rel, strlen(\APP_PATH));
+        if (PHP_SAPI === 'cli') {
+            fwrite(STDERR, 'NiuNiuCMS: compile failed and source not parsable: ' . $rel . PHP_EOL);
+            exit(1);
+        }
+        while (ob_get_level() > 0) @ob_end_clean();
+        if (!headers_sent()) {
+            header((isset($_SERVER['SERVER_PROTOCOL']) && is_string($_SERVER['SERVER_PROTOCOL']) && preg_match('#^HTTP/\d(\.\d)?$#', $_SERVER['SERVER_PROTOCOL']) ? $_SERVER['SERVER_PROTOCOL'] : 'HTTP/1.1') . ' 503 Service Unavailable', TRUE, 503);
+            header('Retry-After: 30');
+            header('Content-Type: text/html; charset=utf-8');
+        }
+        echo '<!doctype html><meta charset="utf-8"><title>程序文件异常</title>'
+            . '<div style="max-width:680px;margin:60px auto;padding:0 16px;font:15px/1.8 sans-serif;color:#333">'
+            . '<h2>牛牛CMS：程序文件异常</h2>'
+            . '<p>程序文件 <code>' . htmlspecialchars($rel, ENT_QUOTES, 'UTF-8') . '</code> 编译失败且源文件本身无法解析。</p>'
+            . '<p>常见原因：文件被主机安全软件清空/篡改、上传不完整，或插件 overwrite 文件有语法错误。请从原始安装包重新上传该文件（或停用相关插件）后刷新本页。</p></div>';
+        exit;
     }
 
     /** 写产物并回读校验长度；不一致（被截断/清空）则删除并返回 FALSE */
@@ -406,10 +528,6 @@ class AddonService
         // 被包含内容只应是模板片段（HTML + 模板指令），不含原生 PHP。
         $r = preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s', '', $r);
         try {
-            // 规则数据缺失：fail-closed 丢弃内容，并输出可见提示（而非静默空白）
-            if (!\App\Service\System\TemplateService::guardAvailable()) {
-                return \App\Service\System\TemplateService::guardMissingHtml();
-            }
             $incFindings = \App\Service\System\TemplateService::legacyRegexFindings($r);
             if (empty($incFindings)) {
                 $incFindings = \App\Service\System\LexicalSafetyService::scanTemplate($r);
@@ -1588,6 +1706,15 @@ class AddonService
         if ('' !== $expectSha && !hash_equals($expectSha, (string)$dl['sha256'])) {
             if (is_file($tmp)) @unlink($tmp);
             return self::fail('sha256 校验失败（防传输篡改/镜像不同步），已中止并清理临时包');
+        }
+        // M-1（R4）：验签前置闸（fail-closed）——插件包必须带商店 Ed25519 签名。
+        // 优先用 X-Store-Sig 头（绑定交付字节），回退商店元数据 sig 字段；校验覆盖已下载字节 sha256。
+        $sigB64 = (string)($dl['store_sig'] ?? '');
+        if ('' === $sigB64 && isset($entry['sig'])) $sigB64 = (string)$entry['sig'];
+        $sigChk = \App\Service\System\CloudOpsService::verifyStoreSignature((string)$dl['sha256'], $sigB64);
+        if (!$sigChk['ok']) {
+            if (is_file($tmp)) @unlink($tmp);
+            return self::fail('插件包验签失败：' . $sigChk['msg']);
         }
         $r = self::installFromZip($tmp, TRUE, $dir, TRUE);
         if (is_file($tmp)) @unlink($tmp); // 成功时已被 rename 落位；失败时清理临时件

@@ -146,7 +146,8 @@ class UserAuthService
 
     /**
      * 登录后回跳地址清洗：param('referer')（已 htmlspecialchars）优先，空则回落 HTTP_REFERER；
-     * 再剥引号/尖括号/空白等字符后按「http(s):// + 词符」正则白名单判定，
+     * 再剥引号/尖括号/空白等字符后只放行**同站**地址（安全审查 L-1：站内相对路径 `/xxx`，
+     * 或 http(s) 且主机==本站 HTTP_HOST 的绝对地址；`//evil`、`/\evil`、外站主机一律拒，见 refererIsSameSite），
      * 并显式排除登录/登出/注册/改密等站内环节点（防回跳成环）；任一不过 → 回退站点根 $conf['path']。
      * @return string 安全回跳 URL（永不返回用户原样输入）
      */
@@ -155,9 +156,9 @@ class UserAuthService
         $conf = _SERVER('conf');
         $referer = param('referer');
         empty($referer) and $referer = array_value($_SERVER, 'HTTP_REFERER', '');
-        $referer = str_replace(array('\"', '"', '<', '>', ' ', '*', "\t", "\r", "\n"), '', $referer);
+        $referer = str_replace(array('\"', '"', '<', '>', ' ', '*', "\t", "\r", "\n"), '', (string)$referer);
         if (
-            !preg_match('#^(http|https)://[\w\-=/\.]+/[\w\-=.%\#?]*$#is', $referer)
+            !self::refererIsSameSite($referer)
             || FALSE !== strpos($referer, url('user-login'))
             || FALSE !== strpos($referer, url('user-logout'))
             || FALSE !== strpos($referer, url('user-create'))
@@ -167,6 +168,22 @@ class UserAuthService
             $referer = $conf['path'];
         }
         return $referer;
+    }
+
+    /**
+     * 回跳地址同站判定（安全审查 L-1，2026-10-24；旧实现只要 http(s)://+词符即放行 ⇒ 开放重定向）。
+     * 放行：① 以单个 `/` 开头的站内相对路径（排除协议相对 `//host` 与 `/\host`）；
+     *       ② http(s) 绝对地址且 host[:port] 与本次请求 HTTP_HOST 完全一致（大小写不敏感）。
+     * 路径字符沿用旧白名单 [\w\-=/.%#?]。
+     */
+    public static function refererIsSameSite($referer): bool
+    {
+        $referer = (string)$referer;
+        if ('' === $referer) return FALSE;
+        if (preg_match('#^/(?![/\\\\])[\w\-=/.%\#?]*$#', $referer)) return TRUE;
+        if (!preg_match('#^https?://([\w\-.]+(?::\d{1,5})?)(?:/[\w\-=/.%\#?]*)?$#i', $referer, $m)) return FALSE;
+        $host = strtolower((string)array_value($_SERVER, 'HTTP_HOST', ''));
+        return '' !== $host && strtolower($m[1]) === $host;
     }
 
     /**

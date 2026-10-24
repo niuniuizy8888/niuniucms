@@ -86,7 +86,7 @@ class VodManageService
 
     /**
      * 后台视频搜索页数据组装：关键词为纯数字时按 vid 精确读单条（VideoService::read），
-     * 否则走 findByKeyword（前导通配 LIKE，上限 60 条，全表扫风险见 CLAUDE.md「开发约定·N+1 红线」/P-4）。
+     * 名称 LIKE + cid/sticky/range 条件下推 SQL，count + 分页取数（第 2 轮 U-5，旧版上限 60 条内存过滤）。
      * 空关键词返回 videolist=NULL、pagination 空串。
      * @param string $keyword 搜索词（调用方经 param() 取得，已转义）
      * @param int $uid 当前管理员 uid
@@ -98,32 +98,40 @@ class VodManageService
         $cid = intval($filters['cid'] ?? 0);
         $sticky = intval($filters['sticky'] ?? -1);
         $range = (string)($filters['range'] ?? '');
+        $page = max(1, intval($filters['page'] ?? 1));
         $pagesize = intval($filters['pagesize'] ?? 20) ?: 20;
         $videolist = NULL;
+        $pagination = '';
         if ($keyword !== '') {
-            $videolist = array();
-            // 纯数字：先按 vid 精确命中，再并上片名匹配（修复：片名本身是数字时如「1917」「2046」此前搜不到）
-            if (ctype_digit($keyword)) {
-                $video = \App\Service\Content\VideoService::read(intval($keyword));
-                $video and $videolist[$video['vid']] = $video;
+            // 安全审查第 2 轮 U-5：分类/推荐/时间筛选下推到 SQL 并真分页（此前取前 60 条再内存过滤，
+            // 超过 60 条命中时后面的永远看不到，筛选后也可能整页为空）。
+            $cond = array();
+            $cid and $cond['cid'] = $cid;
+            if (1 == $sticky) {
+                $cond['sticky'] = array('>' => 0);
+            } elseif (0 == $sticky) {
+                $cond['sticky'] = 0;
             }
-            $byName = \App\Service\Content\VideoService::findByKeyword($keyword);
-            if (is_array($byName)) {
-                foreach ($byName as $_vid => $_row) {
-                    isset($videolist[$_vid]) or $videolist[$_vid] = $_row;
-                }
-            }
-            // 与工具栏其余筛选项叠加（搜索结果上限 60 条，内存过滤即可）
             $start = self::rangeStart($range);
-            foreach ($videolist as $_vid => $_row) {
-                if (($cid && intval($_row['cid'] ?? 0) !== $cid)
-                    || (1 == $sticky && intval($_row['sticky'] ?? 0) <= 0)
-                    || (0 == $sticky && intval($_row['sticky'] ?? 0) > 0)
-                    || ($start && intval($_row['create_date'] ?? 0) < $start)) {
-                    unset($videolist[$_vid]);
+            $start and $cond['create_date'] = array('>=' => $start, '<' => time() + 1);
+            $cond['name'] = array('LIKE' => $keyword); // applyCond 内部 like_escape + %kw%
+            $n = intval(\App\Service\Content\VideoService::count($cond));
+            $videolist = $n ? (array)\App\Service\Content\VideoService::findPageByCond($cond, $page, $pagesize, array('vid' => -1), TRUE) : array();
+            // 纯数字：首页额外前置 vid 精确命中（片名不含该数字时也能按 ID 搜到；须同样满足筛选条件）
+            if (1 == $page && ctype_digit($keyword)) {
+                $video = \App\Service\Content\VideoService::read(intval($keyword));
+                if ($video && !isset($videolist[$video['vid']])
+                    && !($cid && intval($video['cid'] ?? 0) !== $cid)
+                    && !(1 == $sticky && intval($video['sticky'] ?? 0) <= 0)
+                    && !(0 == $sticky && intval($video['sticky'] ?? 0) > 0)
+                    && !($start && intval($video['create_date'] ?? 0) < $start)) {
+                    $videolist = array($video['vid'] => $video) + $videolist;
                 }
             }
             $videolist = $videolist ? self::attachPlayFrom($videolist) : NULL;
+            // 关键词占位：pagination() 会对整串 xn_urldecode 且不转义 href，关键词须在其后再以 rawurlencode 回填（防链接断裂/XSS）
+            $extra = array('keyword' => 'NNKWPH', 'page' => '{page}', 'cid' => $cid, 'pagesize' => $pagesize, 'sticky' => $sticky, 'range' => $range);
+            $n > $pagesize and $pagination = str_replace('NNKWPH', rawurlencode($keyword), pagination(url('vod-list', $extra, TRUE), $n, $page, $pagesize));
         }
         return array(
             'header' => array(
@@ -134,7 +142,7 @@ class VodManageService
             'videolist' => $videolist,
             'columnlist' => category_list($catelist),
             'filter' => array('sticky' => $sticky, 'pagesize' => $pagesize, 'range' => $range),
-            'pagination' => '',
+            'pagination' => $pagination,
             'safe_token' => bull_token_set($uid, 'admin_vod_batch'),
             'poster_token' => bull_token_set($uid, 'admin_vod_poster'), // 海报更新按钮（此前从未下发致功能恒失败）
         );

@@ -64,7 +64,7 @@
                                 </td>
                                 <td><a class="btn btn-danger btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'day','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">今日采集</a></td>
                                 <td>
-                                    <a class="btn btn-success btn-sm" target="_blank" href="<?php echo url_domain();?>/api.php?route=cron&token=<?php echo api_wire_token('api');?>&code=<?php echo xn_h($value['code']);?>&h=24&froms=<?php echo xn_h($value['code']);?>" data-bs-toggle="tooltip" title="可复制链接进行宝塔计划任务">定时采集</a>
+                                    <input type="text" class="form-control form-control-sm" readonly value='curl -s -H "X-NNCMS-Token: <?php echo api_wire_token('api');?>" "<?php echo url_domain();?>/api.php?route=cron&code=<?php echo xn_h($value['code']);?>&h=24&froms=<?php echo xn_h($value['code']);?>"' onclick="this.select()" data-bs-toggle="tooltip" title="宝塔计划任务(Shell脚本)：token 走 header，不进 access_log" style="min-width:380px">
                                     <a class="btn btn-danger btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'week','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">本周采集</a>
                                 </td>
                                 <td><a class="btn btn-info btn-sm" href="<?php echo url('api-art_api',array('code'=>$value['code'],'type'=>'all','api'=>$value['api'],'safe_token'=>bull_token_get($uid, 'admin_api_exec')));?>">全部采集</a></td>

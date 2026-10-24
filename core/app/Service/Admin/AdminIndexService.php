@@ -51,8 +51,9 @@ class AdminIndexService
             message(-1, '登录尝试过于频繁，请5分钟后再试');
         }
         // 审计修复（F-06）：与前台同口径，邮箱限流键归一为小写（DB 大小写不敏感）。
-        if ($email !== '' && !login_rate_check('user_' . mb_strtolower($email, 'UTF-8'), 10, 300)) {
-            message(-1, '该账户登录尝试过于频繁，请5分钟后再试');
+        // L-2（R4）：账户桶改为「账号+IP 组合」键，消除纯账号锁定 DoS（换 IP 猛打某邮箱不再能全局锁死受害者账号）；无验证码体系故仅 账号+IP + 每IP 两桶。
+        if ($email !== '' && !login_rate_check('uip_' . mb_strtolower($email, 'UTF-8') . '|' . ip(), 10, 300)) {
+            message(-1, '该账户在本 IP 登录尝试过于频繁，请5分钟后再试');
         }
 
         $_user = self::findUserForLogin($email);

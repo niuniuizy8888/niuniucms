@@ -32,7 +32,9 @@ class TaskManageService
                     'code' => $code,
                     'name' => $cfg['api_name'] ?? $code,
                     // token 派生化：cron URL 用 api_wire_token，auth_key 不再入 URL/access_log
-                    'url' => url_domain() . '/api.php?route=cron&token=' . api_wire_token('api') . '&code=' . rawurlencode($code) . '&h=24&froms=' . rawurlencode($code),
+                    // L-4（R4）：cron 命令改为 header 携带 token（curl -H X-NNCMS-Token），token 不再进 URL/access_log；
+                    //            宝塔计划任务选「Shell脚本」类型直接粘贴即可。?token= 入口仍兼容（已弃用）。
+                    'url' => 'curl -s -H "X-NNCMS-Token: ' . api_wire_token('api') . '" "' . url_domain() . '/api.php?route=cron&code=' . rawurlencode($code) . '&h=24&froms=' . rawurlencode($code) . '"',
                 );
             }
         }

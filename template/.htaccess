@@ -1,0 +1,25 @@
+# 牛牛CMS 安全审查第 2 轮：模板目录防护（Apache 2.2 / 2.4 通用；Nginx 不读本文件，见 .skills/deploy/nginx.conf.example）
+# 1) 模板目录（含商店安装的主题）下禁止直接执行脚本；
+# 2) 模板源 template/<主题>/html/ 只经服务端编译使用，禁止 URL 直访（css/js/images 等静态资源不受影响）。
+<FilesMatch "(?i)\.(php\d*|phtml|phar|pht|phps|cgi|pl|py|sh|asp|aspx|jsp|shtml)(\.|$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# 模板源目录禁止直访（覆盖所有主题，商店重装主题也不会冲掉本规则）
+# Apache 2.4：<If> + Require（需 AllowOverride AuthConfig）；Apache 2.2 回退 mod_alias RedirectMatch 404（需 AllowOverride FileInfo）。
+<IfModule mod_authz_core.c>
+    <If "%{REQUEST_URI} =~ m#/template/[^/]+/html/#i">
+        Require all denied
+    </If>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <IfModule mod_alias.c>
+        RedirectMatch 404 (?i)/template/[^/]+/html/
+    </IfModule>
+</IfModule>

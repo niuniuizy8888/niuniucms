@@ -90,11 +90,11 @@ class LikeService
         $aid = intval($aid);
         if (1 == intval($model)) {
             \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid), array('likes+' => 1));
-            cache_delete('art_' . $aid);
+            content_cache_delete('art_', $aid);
             return;
         }
         \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid), array('likes+' => 1));
-        cache_delete('vod_' . $aid);
+        content_cache_delete('vod_', $aid);
     }
 
     /**
@@ -113,11 +113,11 @@ class LikeService
         // 条件走 applyCond 操作符数组（QueryBuilder 预编译路径）。
         if (1 == intval($model)) {
             \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid, 'likes' => array('>' => 0)), array('likes-' => 1));
-            cache_delete('art_' . $aid);
+            content_cache_delete('art_', $aid);
             return;
         }
         \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid, 'likes' => array('>' => 0)), array('likes-' => 1));
-        cache_delete('vod_' . $aid);
+        content_cache_delete('vod_', $aid);
     }
 
     /**

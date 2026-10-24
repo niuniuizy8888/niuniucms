@@ -188,13 +188,23 @@ class ThrottleMiddleware implements MiddlewareInterface
      */
     private function hasValidWireToken(): bool
     {
-        $token = isset($_GET['token']) ? (string)$_GET['token']
-            : (isset($_POST['token']) ? (string)$_POST['token'] : '');
+        // L-4（R4）：与 api.php 逐字对齐 —— header X-NNCMS-Token 优先，其次 POST body，最后 ?token=（弃用）。
+        $hdrTok = isset($_SERVER['HTTP_X_NNCMS_TOKEN']) ? (string)$_SERVER['HTTP_X_NNCMS_TOKEN'] : '';
+        $token = '' !== $hdrTok ? $hdrTok
+            : (isset($_POST['token']) ? (string)$_POST['token']
+            : (isset($_GET['token']) ? (string)$_GET['token'] : ''));
         if ('' === $token) return false;
 
         if (function_exists('api_wire_token')) {
             $derived = (string)api_wire_token('api');
             if ('' !== $derived && hash_equals($derived, $token)) return true;
+        }
+
+        // M-2 part2：专用商店令牌（store_report_token）同样豁免——与 api.php 入口逐字对齐，
+        // 仍满足「被豁免集合 ⊆ api.php 放行集合」不变量（缺省态该键为空 ⇒ 退化为派生令牌）。
+        if (function_exists('store_wire_token')) {
+            $storeTok = (string)store_wire_token();
+            if ('' !== $storeTok && hash_equals($storeTok, $token)) return true;
         }
 
         $conf = function_exists('_SERVER') ? _SERVER('conf') : null;

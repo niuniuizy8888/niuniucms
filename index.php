@@ -17,6 +17,7 @@
 !defined('APP_NAME') AND define('APP_NAME', 'NiuNiuCms');
 define('APP_PATH', __DIR__ . '/');
 !defined('CORE_PATH') AND define('CORE_PATH', APP_PATH . 'core/');
+require_once APP_PATH . 'core/paths.php'; // U-2è¿è¡æ¶éç½®è§£æï¼data/ ä¼åï¼åé core/configï¼
 // PHP 版本下限（与安装向导 NNCMS_PHP_MIN 一致）：低版本给出明确提示，而不是解析错误/空白 500。
 // 本文件及其之前加载的文件只用 7.x 也能解析的语法，保证这道闸在低版本上能执行到。
 if (PHP_VERSION_ID < 80000) {
@@ -101,9 +102,22 @@ if ($reqPath && '/sitemap.xml' !== strtolower($reqPath) && strtolower(pathinfo($
 }
 
 // 加载配置
-$configFile = APP_PATH . 'core/config/config.php';
-// 未安装（缺少 core/install.lock 或 core/config/config.php）直接跳转安装向导，不再使用 install_missing.php 引导页
-if (!is_file(APP_PATH . 'core/install.lock') || !is_file($configFile)) {
+$configFile = nncms_runtime_path('config.php');
+// 安装锁（安全审查第 2 轮 U-2）：新位置 core/config/install.lock（core/ 可整体只读、仅 core/config/ 可写）；
+// 旧位置 core/install.lock 继续认作「已安装」，并在 core/config/ 可写时自动复制一份到新位置
+// （保留旧文件：已按旧路径配置的 nginx `if (-f core/install.lock)` 规则继续生效）。锁换位置绝不会把站点当成未安装。
+$lockFile = nncms_runtime_path('install.lock');
+$legacyLockFile = APP_PATH . 'core/install.lock';
+$installLocked = is_file($lockFile);
+if (!$installLocked && is_file($legacyLockFile)) {
+    $installLocked = TRUE;
+    if (is_dir(APP_PATH . 'core/config') && is_writable(APP_PATH . 'core/config')) {
+        @copy($legacyLockFile, $lockFile);
+    }
+}
+unset($lockFile, $legacyLockFile);
+// 未安装（两处 install.lock 都不在，或缺 core/config/config.php）直接跳转安装向导，不再使用 install_missing.php 引导页
+if (!$installLocked || !is_file($configFile)) {
     // 旧版 1.0.x 数据仍在（新版程序包已覆盖、升级尚未完成）：不要把访客引向安装向导
     if (is_file(APP_PATH . 'config/config.php') || is_file(APP_PATH . 'install.lock')) {
         http_response_code(503);
@@ -122,15 +136,24 @@ $conf = include $configFile;
 !defined('ADMIN_PATH') AND define('ADMIN_PATH', APP_PATH . 'core/admin/'); // 后台代码已迁移 core/admin/
 
 // 站群域名处理
-$domain = (@include APP_PATH . 'core/config/domain.php');
+$domain = (@include nncms_runtime_path('domain.php'));
 is_array($domain) or $domain = array('site' => array());
-$hosts = function_exists('get_domain') ? get_domain() : '';
+// 站群匹配：完整主机名（如 m.a.com）精确命中优先，未登记再回退主域名（a.com，覆盖其全部子域名）。
+// 旧 domain.php 的键均为主域名，行为不变（安全审查第 2 轮 U-8）。
+$hosts = '';
+if (function_exists('get_host_name')) {
+    $_nn_fullhost = get_host_name();
+    if ('' !== $_nn_fullhost && isset($domain['site'][$_nn_fullhost])) $hosts = $_nn_fullhost;
+    unset($_nn_fullhost);
+}
+'' === $hosts and $hosts = function_exists('get_domain') ? get_domain() : '';
 $siteconf = array();
 // 主站（config.php）伪静态档位留底：站群站点改写 url_rewrite_on 后，单行内容缓存键据此区分档位（ContentQueryTrait::read）
 $conf['url_rewrite_base'] = intval($conf['url_rewrite_on'] ?? 0);
 if ($hosts && isset($domain['site'][$hosts]) && is_array($domain['site'][$hosts])) {
     $siteconf = $domain['site'][$hosts];
-    if (isset($siteconf['site_rewrite'])) {
+    // 伪静态留空（''）= 跟随主站；仅 0-3 的整数档位才覆盖
+    if (isset($siteconf['site_rewrite']) && '' !== (string)$siteconf['site_rewrite'] && ctype_digit((string)$siteconf['site_rewrite']) && intval($siteconf['site_rewrite']) <= 3) {
         $conf['url_rewrite_on'] = intval($siteconf['site_rewrite']);
         $conf['path'] = ($conf['url_rewrite_on'] >= 2) ? '/' : './';
         $conf['cookie_path'] = ($conf['url_rewrite_on'] >= 2) ? '/' : '';

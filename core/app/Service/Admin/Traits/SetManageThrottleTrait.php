@@ -18,7 +18,7 @@ trait SetManageThrottleTrait
      */
     public static function throttlePage(int $uid): array
     {
-        $throttleFile = APP_PATH . 'core/config/throttle.php';
+        $throttleFile = \nncms_runtime_path('throttle.php');
         $throttle = is_file($throttleFile) ? include $throttleFile : array();
         if (!is_array($throttle)) $throttle = array();
 
@@ -66,7 +66,7 @@ trait SetManageThrottleTrait
         self::verifyToken($uid, 'admin_throttle');
 
         // 读取当前配置
-        $throttleFile = APP_PATH . 'core/config/throttle.php';
+        $throttleFile = \nncms_runtime_path_w('throttle.php');
         $throttle = is_file($throttleFile) ? include $throttleFile : array();
         if (!is_array($throttle)) $throttle = array();
 

@@ -54,18 +54,36 @@ $conf = isset($conf) && is_array($conf) ? $conf : (_SERVER('conf') ?: array());
 $authKey = isset($conf['auth_key']) ? (string)$conf['auth_key'] : '';
 // N-02（上线前审计）：商店替换推送 worker（rsync_task pushOne）把 token 放 POST body，
 // 此前仅读 $_GET 导致 store_push 恒 403（fail-closed 死路）——GET/POST 双通道兼容读取，恒时比较逻辑不变。
-$token = isset($_GET['token']) ? (string)$_GET['token']
-    : (isset($_POST['token']) ? (string)$_POST['token'] : '');
+// L-4（R4）：token 读取优先级 —— ① 请求头 X-NNCMS-Token（推荐，不进 access_log/URL）② POST body
+//            ③ ?token=（**已弃用**，仅为老 cron/老 worker 兼容；会进 access_log，升级后请改 header 形态）。
+$hdrTok = isset($_SERVER['HTTP_X_NNCMS_TOKEN']) ? (string)$_SERVER['HTTP_X_NNCMS_TOKEN'] : '';
+$token  = '' !== $hdrTok ? $hdrTok
+    : (isset($_POST['token']) ? (string)$_POST['token']
+    : (isset($_GET['token']) ? (string)$_GET['token'] : ''));
+$tokFromGet = ('' === $hdrTok) && !(isset($_POST['token']) && '' !== (string)$_POST['token']) && isset($_GET['token']) && '' !== (string)$_GET['token'];
 $apiTok = api_wire_token('api');
+// M-2 part2：专用商店令牌（store_report_token，与 auth_key 解耦）亦放行——商店 worker 的
+// rsync 回调 / push-replacements 回带的正是安装上报登记的这枚令牌；缺省态该键为空 ⇒
+// store_wire_token() 退化为 api_wire_token，与改造前逐字一致（恒时比较，fail-closed）。
+$storeTok = function_exists('store_wire_token') ? (string)store_wire_token() : '';
 // 上线前终检修复（N-03，Medium）：原判定 `!isset(...) || === 1` ⇒ **未配置=开启 legacy**，
 // 而出厂 config.default.php 里根本没有该键（安装器原样 copy）⇒ 新装站默认接受**原始 auth_key** 当 token，
 // 与「fail-closed / auth_key 不出现在任何 URL」的口径相反。现改为**显式开启才放行**。
 $legacyOk = isset($conf['api_legacy_token']) && intval($conf['api_legacy_token']) === 1;
 $pass = ('' !== $apiTok && hash_equals($apiTok, $token))
+    || ('' !== $storeTok && hash_equals($storeTok, $token))
     || ($legacyOk && '' !== $authKey && hash_equals($authKey, $token));
 if (!$pass) {
     http_response_code(403);
     exit('invalid token');
+}
+
+// L-4（R4）：鉴权通过且用了已弃用的 ?token= 查询串 ⇒ 记一条脱敏弃用告警（token 永不原样落日志；每小时至多一条，避免刷屏）。
+if ($tokFromGet && function_exists('xn_log')) {
+    $__m = strlen($token) > 8 ? substr($token, 0, 4) . str_repeat('*', max(0, strlen($token) - 8)) . substr($token, -4) : '****';
+    if (!class_exists('\App\Service\System\ThrottleService') || \App\Service\System\ThrottleService::check('api_token_dep', 'g', 1, 3600)) {
+        xn_log('api.php 使用了已弃用的 ?token= 查询串鉴权（token 已脱敏：' . $__m . '）；请改用 header X-NNCMS-Token', 'api_token_deprecated');
+    }
 }
 
 $route = isset($_GET['route']) ? (string)$_GET['route'] : 'api';

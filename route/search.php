@@ -51,8 +51,12 @@ exit;
 $keyword = \App\Service\Front\SearchService::resolveKeyword();
 if ($keyword) {
     \App\Service\Front\SearchService::recordKeyword($keyword);
-    if (!$json && DEBUG == 0) {
-        $searchCacheKey = 'page_search_' . md5(page_cache_uri_key(_SERVER('REQUEST_URI')) . '_g' . $gid);
+    // 安全审查 U-3：搜索页缓存键只由「解析后的关键词 + 页码 + 用户组 + 伪静态档位」构成（与 build() 实际输入一致），
+    // 不再取原始 URI——随机追加参数/编码变体不再各占一键；长关键词（>30 字）与深分页（>10）不缓存，键空间有界。
+    $searchPage = \App\Service\Front\SearchService::resolvePage();
+    $kwLen = function_exists('mb_strlen') ? mb_strlen((string)$keyword, 'UTF-8') : strlen((string)$keyword);
+    if (!$json && DEBUG == 0 && $kwLen <= 30 && $searchPage <= 10) {
+        $searchCacheKey = 'page_search_' . md5('kw:' . $keyword . '_p' . $searchPage . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0));
         if (page_cache_start($searchCacheKey)) exit;
         $search_cache_started = true;
     }

@@ -58,7 +58,7 @@ class CloudOpsService
         if (!$force && empty($conf['install_report'])) {
             return array('ok' => FALSE, 'msg' => '安装时未启用安装上报，当前未自动补登记');
         }
-        $token = function_exists('api_wire_token') ? (string)api_wire_token('api') : '';
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (function_exists('api_wire_token') ? (string)api_wire_token('api') : '');
         if ('' === $token) return array('ok' => FALSE, 'msg' => '本站缺少采集令牌（auth_key 未配置），无法补登记 token');
         $host = self::reportHost();
         if ('' === $host) return array('ok' => FALSE, 'msg' => '取不到本站域名，无法补登记 token');
@@ -260,7 +260,14 @@ class CloudOpsService
     {
         $store = self::storeBase();
         if ('' === $store) return array('ok' => FALSE, 'msg' => '未配置商店地址（config: cloud_api），无法下发替换');
-        $token = function_exists('api_wire_token') ? (string)api_wire_token('api') : '';
+        // M-2 part2：向商店下发/推送替换默认关闭（store_push_on=0）——一次登记即触发全站推送，风险高；
+        // 商店端另有 push_api_enabled 闸 + store-key 签名清单双保险。两处任一未开即拒（fail-closed）。
+        $conf = _SERVER('conf');
+        $spOn = (is_array($conf) && isset($conf['store_push_on'])) ? intval($conf['store_push_on']) : 0;
+        if (1 !== $spOn) {
+            return array('ok' => FALSE, 'msg' => '本站已禁用向商店下发替换（store_push_on=0）；如需启用请在 config 打开，并确保商店端 push_api_enabled=1 且使用 store-key 签名清单');
+        }
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (function_exists('api_wire_token') ? (string)api_wire_token('api') : '');
         if ('' === $token) return array('ok' => FALSE, 'msg' => '本站缺少采集令牌（auth_key 未配置），无法下发替换');
         $payload['token'] = $token;
         $url = $store . 'index.php?api=replace';
@@ -410,6 +417,44 @@ class CloudOpsService
     }
 
     /**
+     * M-1（R4）：校验商店包的 Ed25519 detached 签名（信任锚=核心常量 NNCMS_STORE_SIGN_PUBKEY；
+     * 签名覆盖 zip 的十六进制 sha256）。**fail-closed**：公钥缺失 / libsodium 不可用 /
+     * 签名缺失 / 格式或长度非法 / 校验不通过，一律 ok=FALSE（调用方据此中止并删包，绝不解压）。
+     * @param string $sha256Hex 已下载包的十六进制 sha256（http_download_to_file 的 'sha256' 字段）
+     * @param string $sigB64     商店随包下发的 base64 签名（X-Store-Sig 头 或 商店元数据 sig 字段）
+     * @return array{ok:bool,msg:string}
+     */
+    public static function verifyStoreSignature($sha256Hex, $sigB64)
+    {
+        $sha256Hex = (string)$sha256Hex;
+        $sigB64 = trim((string)$sigB64);
+        if (!defined('NNCMS_STORE_SIGN_PUBKEY') || '' === (string)NNCMS_STORE_SIGN_PUBKEY) {
+            return array('ok' => FALSE, 'msg' => '缺少商店签名公钥（NNCMS_STORE_SIGN_PUBKEY 未定义），已拒绝安装');
+        }
+        if (!function_exists('sodium_crypto_sign_verify_detached')) {
+            return array('ok' => FALSE, 'msg' => '服务器未启用 libsodium（sodium）扩展，无法校验商店包签名，已拒绝安装（请启用 php-sodium 后重试）');
+        }
+        if ('' === $sigB64) {
+            return array('ok' => FALSE, 'msg' => '商店未随包下发签名（可能为旧版商店或包未签名），已拒绝安装');
+        }
+        if (!preg_match('~^[A-Za-z0-9+/]+={0,2}$~', $sigB64)) {
+            return array('ok' => FALSE, 'msg' => '商店包签名格式非法，已拒绝安装');
+        }
+        $pk = base64_decode((string)NNCMS_STORE_SIGN_PUBKEY, TRUE);
+        $sig = base64_decode($sigB64, TRUE);
+        if (FALSE === $pk || FALSE === $sig
+            || strlen($pk) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES
+            || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES) {
+            return array('ok' => FALSE, 'msg' => '商店签名或公钥长度非法，已拒绝安装');
+        }
+        $ok = FALSE;
+        try { $ok = sodium_crypto_sign_verify_detached($sig, $sha256Hex, $pk); }
+        catch (\Throwable $e) { $ok = FALSE; }
+        return $ok ? array('ok' => TRUE, 'msg' => '')
+                   : array('ok' => FALSE, 'msg' => '商店包签名校验未通过（包可能被篡改，或密钥不匹配），已拒绝安装');
+    }
+
+    /**
      * 下载并应用云端升级包（整站覆盖，高危写路径）。链路与防线：
      * ① $url 非 http(s) 形态先试 core_decrypt 还原（兼容商店旧密文下发），仍不合法拒绝；
      * ② 主机白名单纵深 = 仅 cloud_api 主机及其子域（302 逐跳复查不变）；
@@ -472,6 +517,18 @@ class CloudOpsService
         if (!$dl['ok'] || $dl['bytes'] < 4) {
             self::upgradeLogError('update_down error: download failed (' . $dl['error'] . ', ' . $dl['bytes'] . 'B)');
             return false;
+        }
+        // M-1（R4）：若商店随包下发了签名（X-Store-Sig）则**强制校验**（fail-closed）。
+        // CMS 源码当前统一从 GitHub 获取、不带商店签名 ⇒ 无签名时此处放行，兼容现状；
+        // 商店若启用签名升级包，则篡改/伪造立即被拒。
+        $cmsSig = (string)($dl['store_sig'] ?? '');
+        if ('' !== $cmsSig) {
+            $sigChk = self::verifyStoreSignature((string)$dl['sha256'], $cmsSig);
+            if (!$sigChk['ok']) {
+                @unlink($save_path);
+                self::upgradeLogError('update_down signature rejected: ' . $sigChk['msg']);
+                return false;
+            }
         }
         $destpath = APP_PATH;
         $zip = new \ZipArchive();
@@ -611,7 +668,7 @@ class CloudOpsService
         // 版本号属启动期配置：入口与云版本展示在 KV 注入前即读取，保留物理写 config/config.php
         $replace = array();
         $replace['version'] = $cloud_version;
-        file_replace_var(APP_PATH . 'core/config/config.php', $replace);
+        file_replace_var(\nncms_runtime_path_w('config.php'), $replace);
         $config['name'] = 'NiuNIUCms';
         $config['version'] = $cloud_version;
         $config['official_version'] = $cloud_version;
@@ -828,8 +885,9 @@ class CloudOpsService
     {
         // 兼容壳：解析/校验/转义统一在 ConfigBootstrapService::batchAddDomainSites（此前本处 site_name 未转义、
         // 域名不校验、填 0 的伪静态被随机化）。后台入口已直接调用新实现，本方法仅为旧插件保留。
-        $domain = include APP_PATH . 'core/config/domain.php';
-        $res = \App\Service\Admin\ConfigBootstrapService::batchAddDomainSites(is_array($domain) ? $domain : array(), (string)$input_text);
+        // 旧插件 API 语义是「留空即随机」，此处显式传 random 以保持兼容（后台默认已改为跟随主站）。
+        $domain = include \nncms_runtime_path('domain.php');
+        $res = \App\Service\Admin\ConfigBootstrapService::batchAddDomainSites(is_array($domain) ? $domain : array(), (string)$input_text, array('random_path' => TRUE, 'random_rewrite' => TRUE));
         return $res['msg'];
     }
 }

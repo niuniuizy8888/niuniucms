@@ -43,7 +43,8 @@
                                 <td>
                                     <select form="<?php echo $row_form; ?>" class="form-control form-control-sm" name="site_rewrite">
                                         <?php foreach ($rewrite as $rk=>$t) { ?>
-                                        <option value="<?php echo xn_h($rk);?>" <?php if(intval($rk)===intval($item['site_rewrite'] ?? 0)) echo 'selected';?>><?php echo xn_h($t);?></option>
+                                        <?php $_cur_rw = isset($item['site_rewrite']) ? (string)$item['site_rewrite'] : ''; ?>
+                                        <option value="<?php echo xn_h($rk);?>" <?php if((string)$rk === $_cur_rw) echo 'selected';?>><?php echo xn_h($t);?></option>
                                         <?php } ?>
                                     </select>
                                 </td>
@@ -85,10 +86,18 @@
                     <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
                         <div class="mb-3">
                             <label class="form-label fw-bold">请输入站点数据（每行一条，用 <code>|</code> 分隔）</label>
-                            <p class="text-muted small">格式：<strong>site_domain|site_name|path|site_rewrite</strong>（后三项可留空：模板留空随机选已安装模板，伪静态留空随机 0-3）。站群按主域名匹配，www.a.com、m.a.com 与 a.com 视为同一站点。</p>
+                            <p class="text-muted small">格式：<strong>site_domain|site_name|path|site_rewrite</strong>（后三项可留空，留空 = 跟随主站）。填 a.com 作用于 a.com 及其所有未单独登记的子域名；填 m.a.com、www.a.com 只作用于该主机，可分别配置。</p>
                             <textarea class="form-control" name="batch_sites" rows="12" placeholder="示例：
 a.com|牛牛CMS影院||
 b.com|神策影院|default|1"><?php echo xn_h(isset($batch_sites) ? $batch_sites : '');?></textarea>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" name="random_path" value="1" id="nnRandPath">
+                            <label class="form-check-label" for="nnRandPath">模板留空时随机选已安装模板</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="checkbox" name="random_rewrite" value="1" id="nnRandRw">
+                            <label class="form-check-label" for="nnRandRw">伪静态留空时随机 0-3</label>
                         </div>
                     </form>
                 </div>
@@ -114,7 +123,7 @@ b.com|神策影院|default|1"><?php echo xn_h(isset($batch_sites) ? $batch_sites
                         <div class="mb-3">
                             <label class="form-label">域名</label>
                             <input type="text" class="form-control" name="site_domain" placeholder="a.com" required>
-                            <div class="form-text">站群按主域名匹配：填 www.a.com 会保存为 a.com（a.com 的所有子域名都使用这条配置）</div>
+                            <div class="form-text">填 a.com 作用于 a.com 及其所有未单独登记的子域名；填 m.a.com / www.a.com 只作用于该主机（优先于 a.com）</div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">网站名称</label>

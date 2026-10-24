@@ -1,0 +1,9 @@
+# 牛牛CMS 安全审查 M-4：本目录禁止 Web 直接访问（Apache 2.2 / 2.4 通用；Nginx 不读本文件，见部署示例）
+# 需要 AllowOverride 至少包含 AuthConfig（2.4）或 Limit（2.2）；安装向导会探测本规则是否生效。
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

@@ -105,6 +105,13 @@ return array(
   // 上线前终检（N-03）：API 机器通道是否接受 **legacy 原始 auth_key** 作为 ?token=（0=否，默认）。
   // 派生令牌 api_wire_token() 才是唯一正路；本键留作兼容存量站点的显式开关，**不要在出厂态开**。
   'api_legacy_token' => 0,
+  // M-2 part2：站点↔商店关系的专用随机令牌（与 auth_key 解耦）。出厂留空 ⇒ store_wire_token()
+  // 退化为 api_wire_token('api')（存量站点行为不变）；安装器为新装站生成 32 位随机值并上报商店，
+  // 商店按 installs.token 认这枚值；auth_key 轮换时缺失则补生成、已有则保留（商店身份跨轮换稳定）。
+  'store_report_token' => '',
+  // M-2 part2：是否允许本站「设置→地址替换→执行替换」向商店下发/推送（0=否，出厂关闭）。
+  // 该能力一次登记即触发商店全站推送，风险高；商店端另有 push_api_enabled 闸 + store-key 签名清单。
+  'store_push_on' => 0,
   'auth_salt' => '', // **已停用**：原为 get_code() 的云端 code 获取 URL（历史命名，非加密盐），get_code() 已随官方旧云端一并删除；保留本键仅为兼容既有配置文件的键位，代码不再读取
   'pagesize' => 20,
   'postlist_pagesize' => 100,
@@ -142,7 +149,7 @@ return array(
   'search_on' => 1, // 1=开启搜索 0=关闭
   'search_use_fulltext' => 0, // P-4（2026-10-10）：搜索走 MySQL ngram 全文索引（1=启用）。启用前必须先建索引：ALTER TABLE nncms_vod ADD FULLTEXT INDEX ft_name (name) WITH PARSER ngram;（MySQL 5.7.6+/8.x；MariaDB 无 ngram 请勿开启）。0=维持 LIKE '%kw%'（兼容 PG/SQLite）
   'ssl_verify' => 1, // curl HTTPS 证书校验：1=启用(安全默认，防 MITM 篡改升级包/模板下载)，0=禁用(仅自签名源兼容需求时开启)
-  'outbound_block_private' => 0, // 出站内网/保留段拦截（SSRF 闸）：0=不拦（**默认**，用户裁定——局域网/回环目标一律放行，保障商店推送、内网采集/ES/API 互通），1=恢复拦截（回环/链路本地含云元数据 169.254.169.254/组播/保留段拒绝，cloud_api 主机仍豁免）。scheme 闸、DNS 解析失败 fail-closed 与 CURLOPT_RESOLVE IP 固定始终生效
+  'outbound_block_private' => 1, // 出站内网/保留段拦截（SSRF 闸）：1=拦截（**默认**，安全审查 M-3 2026-10-24：回环/内网/链路本地含云元数据 169.254.169.254/组播/保留段拒绝；cloud_api 商店主机仍豁免，见 outbound_trusted_hosts），0=不拦（局域网采集源/内网 ES 等需要内网直连时由管理员显式改回）。scheme 闸、DNS 解析失败 fail-closed 与 CURLOPT_RESOLVE IP 固定始终生效
   'sitemap_play' => 1,
   'sitemap_tag' => 1,
   'sitemap_num' => 1000,

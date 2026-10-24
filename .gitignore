@@ -27,9 +27,21 @@ runtime/throttle/*
 # Local environment files
 .user.ini
 .htaccess
+# 安全审查 M-4：随包分发的目录级防护 .htaccess（根目录 .htaccess 仍属站点本地伪静态配置，不入库）
+!/core/.htaccess
+!/runtime/.htaccess
+!/tools/.htaccess
+!/.skills/.htaccess
+!/plugins/.htaccess
+!/plugins/live/template/.htaccess
+!/upload/.htaccess
+!/template/.htaccess
+!/template/default/html/.htaccess
+!/template/user/html/.htaccess
 404.html
 /index.html
 core/install.lock
+core/config/install.lock
 core/config/config.php
 core/config/database.php
 
@@ -54,3 +66,10 @@ node_modules/
 # 商店/第三方主题：仅演示站本地使用，不入公共仓库
 /template/[0-9]*/
 /template/9C18A*/
+
+# U-2 运行时数据目录(data/)：运行时配置迁移到此，和 core/config 下旧文件一样不入库
+data/config.php
+data/database.php
+data/domain.php
+data/throttle.php
+data/install.lock

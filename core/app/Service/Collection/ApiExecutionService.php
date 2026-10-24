@@ -163,7 +163,7 @@ class ApiExecutionService
     {
         $conf = _SERVER('conf');
         // token 派生化：出网 URL 一律用 api_wire_token（auth_key 不再出现在 URL/日志/云端存储）
-        $token = api_wire_token('api');
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
         $fromCode = $code;
         $encodeurl = isset($conf['api'][$code]['api']) ? $conf['api'][$code]['api'] : '';
         // 修复：失败路径给**明确文案**（原返回 FALSE/array() ⇒ 后台静默跳回，像按钮没反应）
@@ -202,7 +202,7 @@ class ApiExecutionService
     {
         $conf = _SERVER('conf');
         // token 派生化：出网 URL 一律用 api_wire_token（auth_key 不再出现在 URL/日志/云端存储）
-        $token = api_wire_token('api');
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
         $fromCode = $code;
         $taskCode = md5($token . $fromCode . 'all');
         return self::remoteSyncBase(self::rsyncUrl('api-stop', 'stop', "token=$token&code=$taskCode"));
@@ -217,7 +217,7 @@ class ApiExecutionService
     {
         $conf = _SERVER('conf');
         // token 派生化：出网 URL 一律用 api_wire_token（auth_key 不再出现在 URL/日志/云端存储）
-        $token = api_wire_token('api');
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
         $fromCode = $code;
         $taskCode = md5($token . $fromCode . 'all');
         return self::remoteSyncBase(self::rsyncUrl('api-restart', 'restart', "token=$token&code=$taskCode&from_code=$fromCode"));
@@ -230,7 +230,7 @@ class ApiExecutionService
     public static function rsyncInfo(string $code)
     {
         // token 派生化：出网 URL 一律用 api_wire_token（auth_key 不再出现在 URL/日志/云端存储）
-        $token = api_wire_token('api');
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
         $res = self::remoteSyncBase(self::rsyncUrl('tasks', 'status', "token=$token"));
         if (!is_array($res)) return array();
         $out = array();
@@ -249,7 +249,7 @@ class ApiExecutionService
     public static function rsyncInfoCode(string $code)
     {
         // token 派生化：出网 URL 一律用 api_wire_token（auth_key 不再出现在 URL/日志/云端存储）
-        $token = api_wire_token('api');
+        $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
         $taskCode = md5($token . $code . 'all');
         $res = self::remoteSyncBase(self::rsyncUrl('tasks', 'status', "token=$token&code=$taskCode"));
         if (!is_array($res)) return array();

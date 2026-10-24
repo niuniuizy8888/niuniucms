@@ -14,6 +14,7 @@ if (version_compare(PHP_VERSION, NNCMS_PHP_MIN, '<')) {
 // APP_PATH/INSTALL_PATH 由根目录 install.php 预定义；直接访问本文件时兜底（nginx 已 deny core/）
 !defined('APP_PATH') AND define('APP_PATH', realpath(__DIR__ . '/../../') . '/');
 !defined('INSTALL_PATH') AND define('INSTALL_PATH', __DIR__ . '/');
+require_once APP_PATH . 'core/paths.php'; // U-2
 // 审计修复（F-04）：install.php 是公开入口。此前无条件 define('DEBUG', 2)，
 // 使 core/core.php 打开 display_errors + error_reporting(E_ALL)；已安装站点访问 /install.php
 // 时整条引导链在开调试态下执行（失败即向访客泄漏绝对路径/内部信息）。已安装（install.lock 或
@@ -21,7 +22,10 @@ if (version_compare(PHP_VERSION, NNCMS_PHP_MIN, '<')) {
 // 旧版 1.0.x 站点标记（根目录 config/config.php、install.lock、install/index.php）：存在即视为「已安装、待升级」，
 // 安装向导一律拒绝（防止先覆盖新版程序包、尚未运行 upgrade.php 的窗口期被他人重装接管）。
 define('NNCMS_LEGACY_MARK', is_file(APP_PATH . 'config/config.php') ? 'config/config.php' : (is_file(APP_PATH . 'install.lock') ? 'install.lock' : (is_file(APP_PATH . 'install/index.php') ? 'install/index.php' : '')));
-define('DEBUG', (is_file(APP_PATH . 'core/install.lock') || is_file(APP_PATH . 'core/config/config.php') || '' !== NNCMS_LEGACY_MARK) ? 0 : 2);
+// 安装锁：新位置 core/config/install.lock（core/ 可只读），旧位置 core/install.lock 仍视为已安装（第 2 轮 U-2）
+define('NNCMS_INSTALL_LOCK', nncms_runtime_path('install.lock'));
+define('NNCMS_INSTALL_LOCK_LEGACY', APP_PATH . 'core/install.lock');
+define('DEBUG', (is_file(NNCMS_INSTALL_LOCK) || is_file(NNCMS_INSTALL_LOCK_LEGACY) || is_file(APP_PATH . 'core/config/config.php') || '' !== NNCMS_LEGACY_MARK) ? 0 : 2);
 define('MESSAGE_HTM_PATH', INSTALL_PATH . 'html/message.html');
 $conf = (include APP_PATH . 'core/config/config.default.php');
 // 安装向导阶段 config.php 尚未生成，出厂 auth_key 为空 ⇒ core.php 会走 xn_auth_key_fallback()：
@@ -38,7 +42,7 @@ include APP_PATH . 'core/model/addons.php';
 include APP_PATH . 'core/model/user.php';
 $lang=include APP_PATH . 'core/lang/zh_cn.php';
 $_SERVER['lang'] = $lang;
-is_file(APP_PATH . 'core/install.lock') AND message(0, jump($lang['already_installed'], '../'));
+(is_file(NNCMS_INSTALL_LOCK) || is_file(NNCMS_INSTALL_LOCK_LEGACY)) AND message(0, jump($lang['already_installed'], '../'));
 is_file(APP_PATH . 'core/config/config.php') AND message(0, jump($lang['installed_tips'], '../'));
 if ('' !== NNCMS_LEGACY_MARK) {
     http_response_code(403);
@@ -99,8 +103,8 @@ if (empty($action)) {
         if (!preg_match('#^[a-zA-Z0-9_]{2,32}$#', $adminuser)) {
             message('adminuser', '管理员用户名不合法：仅允许字母、数字、下划线，长度 2-32');
         }
-        if (strlen($adminpass) < 6) {
-            message('adminpass', '管理员密码至少 6 位');
+        if (strlen($adminpass) < 12) { // 安全审查 L-5：6 → 12
+            message('adminpass', '管理员密码至少 12 位');
         }
         // POST 直达时同样拦截缺少 pdo_mysql 的环境（GET 页已拦截，防绕过）
         !extension_loaded('pdo_mysql') AND message(-1, lang('evn_not_support_php_mysql'));
@@ -174,7 +178,7 @@ if (empty($action)) {
                 message(-1, "$errstr (errno: $errno)");
             }
         } 
-        if (!@copy(APP_PATH . 'core/config/config.default.php', APP_PATH . 'core/config/config.php') || !is_file(APP_PATH . 'core/config/config.php')) {
+        if (!@copy(APP_PATH . 'core/config/config.default.php', ($cfgFile = nncms_runtime_path_w('config.php'))) || !is_file($cfgFile)) {
             message(-1, '无法写入配置文件 core/config/config.php：请确认 core/config/ 目录对运行 PHP 的用户（如 www）可写后重试。');
         }
         $replace = array();
@@ -195,6 +199,10 @@ if (empty($action)) {
         $replace['cookie_pre'] = $tablepre;
         $rand = xn_rand(64);
         $replace['auth_key'] = $rand;
+        // M-2 part2：为新装站生成专用随机商店令牌（与 auth_key 解耦），落盘并用于安装上报，
+        // 商店按 installs.token 认这枚值（^[A-Za-z0-9]{16,64}$，老站点回退派生 token 仍可用）。
+        $storeReportToken = bin2hex(random_bytes(16));
+        $replace['store_report_token'] = $storeReportToken;
         $replace['installed'] = 1;
         $replace['cms_lang'] = 'zh_cn';
         // 后台入口名：**保持出厂默认 `admin.php`**，不做自动随机改名。
@@ -207,17 +215,19 @@ if (empty($action)) {
         // 显式写一次 admin_entry，避免与会随机改名的历史包产生混淆。
         $replace['admin_entry'] = 'admin.php';
         $conf['admin_entry'] = 'admin.php'; // done.html 展示实际入口名
-        if (!file_replace_var(APP_PATH . 'core/config/config.php', $replace)) {
-            @unlink(APP_PATH . 'core/config/config.php');
+        // 安全审查 M-3：新安装显式写入出站内网拦截=1（config.default 已同口径；显式写一次防模板被改）
+        $replace['outbound_block_private'] = 1;
+        if (!file_replace_var($cfgFile, $replace)) {
+            @unlink($cfgFile);
             message(-1, '写入配置文件 core/config/config.php 失败：请确认 core/config/ 目录及该文件对运行 PHP 的用户（如 www）可写后重试。');
         }
         // 回读校验 auth_key 确实落盘（64 位）：写入"成功"但内容未替换（模板格式被改/opcache 旧值）时站点会
         // 长期依赖回退密钥，安装阶段就拦下
-        clearstatcache(TRUE, APP_PATH . 'core/config/config.php');
-        function_exists('opcache_invalidate') && @opcache_invalidate(APP_PATH . 'core/config/config.php', TRUE);
-        $writtenConf = call_user_func(function ($f) { return @include $f; }, APP_PATH . 'core/config/config.php'); // 隔离作用域，避免 config 顶部变量污染向导
+        clearstatcache(TRUE, $cfgFile);
+        function_exists('opcache_invalidate') && @opcache_invalidate($cfgFile, TRUE);
+        $writtenConf = call_user_func(function ($f) { return @include $f; }, $cfgFile); // 隔离作用域，避免 config 顶部变量污染向导
         if (!is_array($writtenConf) || !isset($writtenConf['auth_key']) || $writtenConf['auth_key'] !== $rand || 64 !== strlen((string)$writtenConf['auth_key'])) {
-            @unlink(APP_PATH . 'core/config/config.php');
+            @unlink($cfgFile);
             message(-1, '写入配置文件 core/config/config.php 后校验失败（auth_key 未写入）：请确认该文件可写且未被安全软件拦截后重新安装。');
         }
         unset($writtenConf);
@@ -236,8 +246,9 @@ if (empty($action)) {
             // 覆盖失败将保留 install.sql 内置默认 admin 凭据（公开已知散列），必须阻断上线
             message(-1, '管理员账号写入失败（请检查数据库权限）。默认凭据未被覆盖，安装已中止：请删除 core/config/config.php 后重新安装');
         }
-        // 安装信息上报（用户需求）：表单默认勾选 report=1（database.html checked），
-        // 取消勾选则 POST 不携带该字段（param 默认 0）；勾选即上报 token 至云端登记——
+        // 安装信息上报：安全审查 M-2 起表单**默认不勾选**（database.html，用户主动勾选才提交 report=1）；
+        // 未勾选则 POST 不携带该字段（param 默认 0）；勾选即上报机器通道 token 至云端登记——
+        // 该 token 可调用本站 api.php（cron/rsync 采集、replace/store_push 批量改写 vod 播放/图片域名）；
         // 云端异步采集依赖该登记，不上报则无法使用云端异步采集（云端 token 校验天然拦截）；
         // 上报失败静默不阻塞安装；以用户显式勾选为准，不再受 install_report_on 配置/IP 过滤限制
         $report = param('report', 0);
@@ -250,7 +261,7 @@ if (empty($action)) {
             // token=api_wire_token('api') 派生值（md5(auth_key|nncms-api-token|api)）：云端 rsync 回调/
             // 替换推送回带该 token，CMS api.php 走主放行路径校验（auth_key 本体不再上报）
             $post = array(
-                'token' => md5($rand . '|nncms-api-token|api'),
+                'token' => $storeReportToken, // M-2 part2：上报专用随机令牌（非 auth_key 派生）
                 'host' => _SERVER('HTTP_HOST'),
                 'domain' => _SERVER('REQUEST_SCHEME').'://'._SERVER('HTTP_HOST'),
                 'serverip' =>_SERVER('SERVER_ADDR'),
@@ -270,8 +281,8 @@ if (empty($action)) {
                 xn_log('install report skipped: cloud_api is empty', 'install_report');
             }
         }
-        if (FALSE === @file_put_contents(APP_PATH . 'core/install.lock',  'install_time:'.date('Y-m-d H:i:s'))) {
-            message(-1, '无法写入 core/install.lock：请确认 core/ 目录对运行 PHP 的用户（如 www）可写。数据库与配置已写入，修正权限后手动创建该文件（内容任意）即可完成安装。');
+        if (FALSE === @file_put_contents(NNCMS_INSTALL_LOCK,  'install_time:'.date('Y-m-d H:i:s'))) {
+            message(-1, '无法写入 core/config/install.lock：请确认 core/config/ 目录对运行 PHP 的用户（如 www）可写。数据库与配置已写入，修正权限后手动创建该文件（内容任意）即可完成安装。');
         }
         // 生成8位随机后台目录名
         /*$admin_path = strtolower(xn_rand(8));
@@ -282,14 +293,14 @@ if (empty($action)) {
         if ($old_dir_name && is_dir($old_admin_path) && !is_dir($new_admin_path)) {
             if (!@rename($old_admin_path, $new_admin_path)) {
                 // 重命名失败（权限/占用）：回滚 install.lock 让安装可重试，并明确报错
-                @unlink(APP_PATH . 'core/install.lock');
+                @unlink(NNCMS_INSTALL_LOCK);
                 message(-1, '后台目录重命名失败（请检查目录权限）。注意：安装配置已写入，重试前需先删除 config/config.php');
             }
         }
         // 将新的 admin 路径写入配置
         $replace = array();
         $replace['admin_path'] = $admin_path;*/
-        if (!file_replace_var(APP_PATH . 'core/config/config.php', $replace)) {
+        if (!file_replace_var($cfgFile, $replace)) {
             message(-1, '写入配置文件 core/config/config.php 失败：请确认该文件对运行 PHP 的用户（如 www）可写。');
         }
         // 独立安装完成页（成功走专用完成页，风格与安装向导一致；失败仍走 message.html）
@@ -306,7 +317,7 @@ if (empty($action)) {
  *    must=TRUE（pdo/pdo_mysql/mbstring/ctype/tokenizer/iconv/json/openssl/filter）缺失时 chenk.html
  *    置 $succeed=0 阻断下一步；其余（curl/gd/zip/fileinfo/glob/zlib）只提示不阻断。
  *  · $write：可写目录检测（来自 install_writable_dirs()：runtime/log、runtime/cache、upload、plugins、
- *    template、core/config、core 七项）。目录不存在时
+ *    template、core/config 六项；core/ 本身不再要求可写，第 2 轮 U-2）。目录不存在时
  *    先 @mkdir(0755, recursive) 再判 xn_is_writable()；检测用 APP_PATH 绝对路径（原相对 CWD 写法在
  *    HTTP 下工作目录不可控会全部误报不可写，已修）。
  *
@@ -385,7 +396,8 @@ function install_ext_list()
 }
 
 /**
- * 安装与运行必须可写的目录（标签 => 绝对路径）。core/config/ 要写 config.php，core/ 要写 install.lock。
+ * 安装与运行必须可写的目录（标签 => 绝对路径）。core/config/ 要写 config.php、database.php、domain.php 与 install.lock；
+ * core/ 其余部分应保持只读（第 2 轮 U-2：安装锁已从 core/install.lock 迁到 core/config/install.lock）。
  * @return array
  */
 function install_writable_dirs()
@@ -397,7 +409,6 @@ function install_writable_dirs()
         '../plugins/'       => APP_PATH . 'plugins/',
         '../template/'      => APP_PATH . 'template/',
         '../core/config/'   => APP_PATH . 'core/config/',
-        '../core/'          => APP_PATH . 'core/',
     );
 }
 
@@ -419,7 +430,6 @@ function install_missing_core_files()
         'core/app/Service/Collection/ApiExecutionService.php',
         'core/app/Service/Front/RouteMetaService.php',
         'core/app/Service/Front/TypeService.php',
-        'core/config/template_guard.json',
         // 入口引导链与模型层：index.inc.php 合并加载 core/model/*.php，任一被清空/隔离即全站 fatal
         // （用户实测：core/model/view.php 含安全注释样例被杀毒清空 ⇒ Call to undefined function _file()）
         'index.inc.php',
@@ -452,11 +462,6 @@ function install_missing_core_files()
                 break;
             }
         }
-    }
-    if (!in_array('core/config/template_guard.json', $missing, TRUE)
-        && class_exists('\\App\\Service\\System\\TemplateService')
-        && !\App\Service\System\TemplateService::guardAvailable()) {
-        $missing[] = 'core/config/template_guard.json（内容损坏）';
     }
     return $missing;
 }

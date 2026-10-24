@@ -79,7 +79,7 @@ function login_rate_check(string $key, int $max_attempts = 5, int $window = 300)
  */
 function xn_html_safe($doc, $arg = array())
 {
-    $conf = include APP_PATH . 'core/config/config.php';
+    $conf = include nncms_runtime_path('config.php');
     empty($arg['table_max_width']) and $arg['table_max_width'] = 746; // 这个宽度为 回帖宽度
     $pattern = array(
         //'img_url'=>'#^(https?://[^\'"\\\\<>:\s]+(:\d+)?)?([^\'"\\\\<>:\s]+?)*$#is',
@@ -752,5 +752,23 @@ function api_wire_token($purpose = 'api')
         return '';
     }
     return md5($authKey . '|nncms-api-token|' . $purpose);
+}
+
+/**
+ * 站点↔商店关系的**专用随机令牌**（M-2 part2）：优先用 config 里独立随机的 store_report_token
+ * （与 auth_key 完全解耦——商店侧只存这枚值、worker 回带这枚值、入口鉴权也放行这枚值），
+ * 缺失/非法时回退到 api_wire_token('api')（存量站点无该键，行为与改造前逐字一致）。
+ * 格式闸与商店 installs.token 口径对齐：^[A-Za-z0-9]{16,64}$。
+ * fail-closed：两者都取不到时返回空串（出网调用方据此报错、入口鉴权不放行）。
+ * @return string 专用令牌或派生 token；都不可用时空串
+ */
+function store_wire_token()
+{
+    $conf = _SERVER('conf');
+    $t = is_array($conf) && isset($conf['store_report_token']) ? (string)$conf['store_report_token'] : '';
+    if ('' !== $t && preg_match('#^[A-Za-z0-9]{16,64}$#', $t)) {
+        return $t;
+    }
+    return function_exists('api_wire_token') ? (string)api_wire_token('api') : '';
 }
 

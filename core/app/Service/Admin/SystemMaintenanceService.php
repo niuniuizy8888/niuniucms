@@ -86,7 +86,7 @@ class SystemMaintenanceService
         // 审计记"实际落盘版本"：updateDown 以**包内自陈版本**为准写回 config.php
         // （传入值可能来自 600s 缓存/本站版本），从配置里回读一次，审计才与站点真实状态一致。
         $applied = $cloud_version;
-        $cfgFile = APP_PATH . 'core/config/config.php';
+        $cfgFile = \nncms_runtime_path('config.php');
         if (is_file($cfgFile)) {
             $cfgSrc = (string)@file_get_contents($cfgFile);
             if (preg_match("#^[ \t]*'version'[ \t]*=>[ \t]*'([0-9]+(?:\.[0-9]+){1,3})'#m", $cfgSrc, $mV)) {
@@ -160,9 +160,9 @@ class SystemMaintenanceService
      * @param string $input 多行域名清单原始文本
      * @return array{success:true, msg:string} msg 为 siteBatchAdd 的结果摘要（success 恒为 true，失败信息看 msg）
      */
-    public static function batchAddDomainSites(array $domain, string $input): array
+    public static function batchAddDomainSites(array $domain, string $input, array $opts = array()): array
     {
-        $res = ConfigBootstrapService::batchAddDomainSites($domain, $input);
+        $res = ConfigBootstrapService::batchAddDomainSites($domain, $input, $opts);
         admin_audit_log('domain_batch_add', array('added' => intval($res['added'] ?? 0)));
         return $res;
     }

@@ -84,6 +84,8 @@ function _cache_key($k, $c = NULL) {
     $cache = isset($_SERVER['cache']) ? $_SERVER['cache'] : null;
     $c = $c ? $c : $cache;
     if (!$c) return [null, null];
+    // 安全审查 U-3：单驱动模式下若驱动是 MySQL，整页缓存键（page_ 前缀，page_content_ 版本令牌除外）不落库
+    if ($c instanceof cache_mysql && strncmp((string)$k, 'page_', 5) === 0 && strncmp((string)$k, 'page_content_', 13) !== 0) return [null, null];
     $k = $c->cachepre . $k;
     strlen($k) > 32 AND $k = md5($k);
     return [$c, $k];
@@ -125,6 +127,24 @@ function cache_delete($k, $c = NULL) {
     list($c, $k) = _cache_key($k, $c);
     if (!$c) return null;
     return $c->delete($k);
+}
+
+/**
+ * 删除内容单行缓存（安全审查第 2 轮 U-4）：ContentQueryTrait::read() 的键为 前缀+intval(id)，
+ * 站群站点伪静态档位与主站不同时另起 `_rw0`..`_rw3` 变体键；内容更新/删除时主键与 4 个变体键一并删除，
+ * 避免站群站点在短 TTL 内继续展示已更新/已删除的内容。
+ * @param string $prefix 'vod_' / 'art_'
+ * @param int|string|array $id 单个或数组
+ * @return void
+ */
+function content_cache_delete($prefix, $id) {
+    foreach ((array)$id as $_id) {
+        $k = $prefix . intval($_id);
+        cache_delete($k);
+        for ($rw = 0; $rw <= 3; $rw++) {
+            cache_delete($k . '_rw' . $rw);
+        }
+    }
 }
 
 /**

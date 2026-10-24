@@ -62,6 +62,17 @@ switch ($action) {
             message($result['code'], $result['message']);
         }
         break;
+    case 'authkey':
+        // 安全审查第 2 轮：后台一键更换 auth_key——仅超级管理员组（gid=1），CSRF 场景令牌 + 二次确认
+        1 !== intval($gid) and message(1, '仅超级管理员可以更换 auth_key');
+        if ('GET' == $method) {
+            extract(\App\Service\Admin\SetManageService::authKeyPage($uid), EXTR_SKIP);
+            include _include(ADMIN_PATH . 'html/set_authkey.html');
+        } elseif ('POST' == $method) {
+            $result = \App\Service\Admin\SetManageService::rotateAuthKey($uid);
+            message($result['code'], $result['message']);
+        }
+        break;
     case 'cache':
         if ('GET' == $method) {
             extract(\App\Service\Admin\SetManageService::cachePage($uid), EXTR_SKIP);

@@ -72,6 +72,35 @@ function get_domain($host = null, $level = 2)
 }
 
 /**
+ * 取完整主机名（不折叠到主域名）：去 scheme/路径/端口、小写、去尾点，IDN 转 punycode。
+ * 站群「精确主机优先」匹配用（安全审查第 2 轮 U-8：www.a.com 与 m.a.com 可分别配置）。
+ * @param string|null $host 主机串；NULL 取当前请求 Host
+ * @return string 主机名；空或非法返回 ''
+ */
+function get_host_name($host = null)
+{
+    if ($host === null) {
+        $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '';
+    }
+    $host = trim((string)$host);
+    if ($host === '') return '';
+    $host = preg_replace('~^[a-z][a-z0-9+.-]*://~i', '', $host);
+    $host = preg_replace('~[/?\#].*$~', '', $host);
+    if (preg_match('/^\[(.+)\](?::\d+)?$/', $host, $m)) {
+        $host = $m[1];
+    } else {
+        $host = preg_replace('/:\d+$/', '', $host);
+    }
+    $host = strtolower(rtrim($host, '.'));
+    if ($host === '' || filter_var($host, FILTER_VALIDATE_IP)) return $host;
+    if (preg_match('/[^\x20-\x7e]/', $host) && function_exists('idn_to_ascii')) {
+        $conv = @idn_to_ascii($host, IDNA_DEFAULT, INTL_IDNA_VARIANT_UTS46);
+        if (is_string($conv) && $conv !== '') $host = $conv;
+    }
+    return $host;
+}
+
+/**
  * 求 host 的公共后缀（PSL 匹配：精确 > 通配 > 例外，取最长匹配）。
  * 规则表为小写 punycode；'*.' 为通配规则、'!' 为例外规则。
  *

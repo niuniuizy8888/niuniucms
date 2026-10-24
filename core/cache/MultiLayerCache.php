@@ -243,6 +243,36 @@ class MultiLayerCache
     public static $lastHitMs = 0.0;
 
     /**
+     * 安全审查 U-3（2026-10-24）：整页 HTML 缓存（page_ 前缀，含 page_lock_ 渲染锁）不落 MySQL 层。
+     * 实测单条整页数百 KB（压缩后仍数十 KB），按 URI 变体逐键写 nncms_cache 表 = 低成本把库写满/拖慢主库。
+     * 只走 static/apcu/yac/redis/memcached；无 Redis/Memcached 主机因此没有跨请求整页缓存（可接受，
+     * 区块/查询级缓存仍照常落 MySQL）。内容版本令牌 page_content_ver / page_content_bump_ts 必须跨进程可见，
+     * 仍走 MySQL（page_content_ 前缀豁免）。
+     */
+    private static function skipLayerForKey(string $layerName, string $key): bool
+    {
+        return $layerName === 'mysql' && strncmp($key, 'page_', 5) === 0 && strncmp($key, 'page_content_', 13) !== 0;
+    }
+
+    /** 批量路径：剔除不应进入该层的键 */
+    private static function keysForLayer(string $layerName, array $keys): array
+    {
+        if ($layerName !== 'mysql') return $keys;
+        $out = array();
+        foreach ($keys as $k) if (!self::skipLayerForKey($layerName, (string)$k)) $out[] = $k;
+        return $out;
+    }
+
+    /** 批量路径（键值对版） */
+    private static function itemsForLayer(string $layerName, array $items): array
+    {
+        if ($layerName !== 'mysql') return $items;
+        $out = array();
+        foreach ($items as $k => $v) if (!self::skipLayerForKey($layerName, (string)$k)) $out[$k] = $v;
+        return $out;
+    }
+
+    /**
      * 多层查询：从高到低逐层查询，命中后回填
      */
     /** @return mixed */
@@ -255,6 +285,7 @@ class MultiLayerCache
         // 1. 逐层查询
         foreach ($this->layers as $i => $layer) {
             $name = $layer->getName();
+            if (self::skipLayerForKey($name, $key)) continue;
             // 熔断器：跳过已知不可用的驱动（Redis/Memcached 等网络层）
             if ($this->isBreakerOpen($name)) {
                 $this->log('breaker_skip', $key, $name, 0);
@@ -335,7 +366,8 @@ class MultiLayerCache
             if (empty($remaining)) break;
             $name = $layer->getName();
             if ($this->isBreakerOpen($name)) continue;
-            $batch = array_keys($remaining);
+            $batch = self::keysForLayer($name, array_keys($remaining));
+            if (empty($batch)) continue;
             $lStart = microtime(true);
             try {
                 $vals = $layer->getMultiple($batch);
@@ -378,6 +410,8 @@ class MultiLayerCache
         for ($i = 0; $i < $limit; $i++) {
             if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
             foreach ($groups as $ttl => $chunk) {
+                $chunk = self::itemsForLayer($this->layers[$i]->getName(), $chunk);
+                if (empty($chunk)) continue;
                 try {
                     $this->layers[$i]->setMultiple($chunk, (int)$ttl);
                     $this->log('backfill', 'multi(' . count($chunk) . ')', $this->layers[$i]->getName());
@@ -400,8 +434,11 @@ class MultiLayerCache
         foreach ($items as $k => $v) $this->ttlCache[$k] = $ttl;
         $ok = true;
         $hotSet = false;
+        $allItems = $items;
         foreach ($this->layers as $layer) {
             $name = $layer->getName();
+            $items = self::itemsForLayer($name, $allItems);
+            if (empty($items)) continue;
             if ($name === 'mysql' && $hotSet) {
                 try { $layer->deleteMultiple(array_keys($items)); } catch (\Throwable $e) {}
                 continue;
@@ -443,8 +480,11 @@ class MultiLayerCache
         if (empty($keys)) return true;
         foreach ($keys as $k) unset($this->ttlCache[$k]);
         $ok = true;
+        $allKeys = $keys;
         foreach ($this->layers as $layer) {
             $name = $layer->getName();
+            $keys = self::keysForLayer($name, $allKeys);
+            if (empty($keys)) continue;
             if ($this->isBreakerOpen($name)) {
                 if (in_array($name, ['redis', 'memcached'], true)) $this->addPendingDeletes($name, $keys);
                 continue;
@@ -480,6 +520,7 @@ class MultiLayerCache
         foreach ($this->layers as $layer) {
             $name = $layer->getName();
             if (in_array($name, array('static', 'apcu', 'yac'), true)) continue;
+            if (self::skipLayerForKey($name, $key)) continue;
             if ($this->isBreakerOpen($name)) continue;
             try {
                 $v = $layer->get($key);
@@ -509,6 +550,7 @@ class MultiLayerCache
 
         // 空值标记窗口内直接返回 null，不重复回源（get() 已将标记归一为 null，这里回查原始层）
         foreach ($this->layers as $layer) {
+            if (self::skipLayerForKey($layer->getName(), $key)) continue;
             if ($this->isBreakerOpen($layer->getName())) continue; // 熔断层不再探测（避免每次回源都去连故障 Redis）
             try {
                 if ($layer->get($key) === self::NULL_MARKER) return null;
@@ -546,6 +588,7 @@ class MultiLayerCache
         $hotSet = false;
         foreach ($this->layers as $layer) {
             $name = $layer->getName();
+            if (self::skipLayerForKey($name, $key)) continue;
             if ($name === 'mysql' && $hotSet) {
                 // 热层写入成功后，清除 MySQL 旧值而非跳过，防止脏数据复活
                 try { $layer->delete($key); } catch (\Throwable $e) {}
@@ -600,6 +643,7 @@ class MultiLayerCache
         unset($this->ttlCache[$key]);
         foreach ($this->layers as $layer) {
             $name = $layer->getName();
+            if (self::skipLayerForKey($name, $key)) continue;
             if ($this->isBreakerOpen($name)) {
                 // 熔断窗口内跳过网络层删除：记入待补删，防恢复后旧值复活
                 if (in_array($name, ['redis', 'memcached'], true)) $this->addPendingDeletes($name, array($key));
@@ -686,6 +730,7 @@ class MultiLayerCache
                 try {
                     // 双查：获取锁后再查一次（跳过空值标记）
                     foreach ($this->layers as $layer) {
+                        if (self::skipLayerForKey($layer->getName(), $key)) continue;
                         if ($this->isBreakerOpen($layer->getName())) continue;
                         try {
                             $val = $layer->get($key);
@@ -847,6 +892,7 @@ class MultiLayerCache
         for ($i = 0; $i < $limit; $i++) {
             // 熔断窗口内不回填故障层（回填值来自下层，窗口内的 set/delete 已登记 pending 补删）
             if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
+            if (self::skipLayerForKey($this->layers[$i]->getName(), $key)) continue;
             try {
                 $this->layers[$i]->set($key, $value, $ttl);
                 $this->log('backfill', $key, $this->layers[$i]->getName());

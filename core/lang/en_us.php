@@ -580,7 +580,7 @@ return array(
                 <br>
                 The NiuNiuCMS main program is provided free of charge, without any form of free support. Users must not use this system for any illegal purpose; all legal risks arising from such use are borne solely by the user, and are unrelated to this program and its developers.<br>By downloading, installing or using NiuNiuCMS, you acknowledge that you have read, understood and agreed to be bound by these terms, and will comply with all applicable laws and regulations. If you do not agree to these terms, please do not use this program.
                 ',
-    'already_installed' => 'Please delete install.lock in the core directory to continue the installation',
+    'already_installed' => 'Please delete install.lock in the core/config directory (older versions may also have one in the core directory; delete both) to continue the installation',
     'installed_tips' => 'The system is already installed. To reinstall, delete config/config.php and run the installer again',
     'evn_not_support_php_mysql' => 'The current PHP environment does not support mysql or pdo_mysql. Installation cannot continue.',
     'dbhost_is_empty' => 'Database host cannot be empty',
@@ -625,7 +625,7 @@ return array(
     'admin_pw' => 'Admin password',
     'admin_pw_repeat' => 'Repeat password',
     'installing_about_moment' => 'Installing, this may take about a minute',
-    'install_report_tip' => 'Report installation info (used to register with the cloud async collection service; cloud async collection is unavailable without reporting)',
+    'install_report_tip' => 'Report installation info to the store cloud (optional, unchecked by default). If checked, this sends your site domain, server IP, CMS/PHP versions and a machine-channel token derived from auth_key (not auth_key itself). The token lets the cloud call this site\'s api.php: trigger collection jobs and bulk-replace video play URL / image domains. Without it, cloud async collection and store replacement pushes are unavailable; rotating auth_key later revokes the token.',
     'license_title' => 'NiuNiuCMS',
     'agree_license' => 'I have read and agree to the license agreement',
     'agree_license_to_continue' => 'Continue installation',

@@ -188,7 +188,7 @@ class RecycleService
             \App\Repository\RepositoryFactory::artAid()->replace(array('aid' => $aid, 'cid' => intval($row['cid'] ?? 0)));
             // 重建标签绑定 + 计数（rebindTags：只对仍存在、且绑定行已不存在的标签补插并 count+1）
             self::rebindTags($aid, (string)($row['tag'] ?? ''));
-            cache_delete('art_' . $aid);
+            content_cache_delete('art_', $aid);
             cache_delete('runtime'); // 计数缓存失效（键错配修复）
         }
         return $ok;
@@ -259,7 +259,7 @@ class RecycleService
             \App\Repository\RepositoryFactory::vodVid()->replace(array('vid' => $vid, 'cid' => intval($row['cid'] ?? 0)));
             // 重建标签绑定 + 计数（rebindTags：只对仍存在、且绑定行已不存在的标签补插并 count+1）
             self::rebindTags($vid, (string)($row['tag'] ?? ''));
-            cache_delete('vod_' . $vid);
+            content_cache_delete('vod_', $vid);
             cache_delete('sticky_video_list');
             cache_delete('runtime'); // 计数缓存失效（键错配修复）
         }

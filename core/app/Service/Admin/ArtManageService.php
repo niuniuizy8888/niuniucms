@@ -83,7 +83,7 @@ class ArtManageService
      * 后台文章搜索页装配：纯数字 keyword 按 aid 直读单条（read()），否则
      * ArtService::findByKeyword——底层是前导通配 LIKE '%kw%'（必然全表扫，CLAUDE.md「开发约定·N+1 红线」已裁定；
      * vod 才有 ngram FULLTEXT opt-in 通道，art 无）。keyword 为空 ⇒ 不查询，artlist=NULL。
-     * 返回结构与 listPage 同款但 pagination 恒为 ''（搜索结果不分页）。
+     * 返回结构与 listPage 同款；第 2 轮 U-5 起条件下推 SQL 并真分页（命中 > pagesize 时 pagination 非空）。
      * @param string $keyword 已清洗的关键词
      * @param int $uid 当前管理员 uid（签发 admin_art_batch 场景 safe_token）
      * @return array 视图数据数组
@@ -94,29 +94,33 @@ class ArtManageService
         $catelists = arrlist_cond_orderby($catelist, array('model' => 1), array(), 1, 200);
         $cid = intval($filters['cid'] ?? 0);
         $range = (string)($filters['range'] ?? '');
+        $page = max(1, intval($filters['page'] ?? 1));
         $pagesize = intval($filters['pagesize'] ?? 20) ?: 20;
         $artlist = NULL;
+        $pagination = '';
         if ($keyword !== '') {
-            $artlist = array();
-            // 纯数字：aid 精确命中 + 标题匹配合并（标题为纯数字时此前搜不到）
-            if (ctype_digit($keyword)) {
-                $art = \App\Service\Content\ArtService::read(intval($keyword));
-                $art and $artlist[$art['aid']] = $art;
-            }
-            $byName = \App\Service\Content\ArtService::findByKeyword($keyword);
-            if (is_array($byName)) {
-                foreach ($byName as $_aid => $_row) {
-                    isset($artlist[$_aid]) or $artlist[$_aid] = $_row;
-                }
-            }
+            // 安全审查第 2 轮 U-5：分类/时间筛选下推 SQL + 真分页（旧版取前 60 条内存过滤）
             $now = time();
             $start = 'today' == $range ? strtotime(date('Y-m-d 00:00:00', $now)) : ('7d' == $range ? strtotime('-7 day', $now) : ('30d' == $range ? strtotime('-30 day', $now) : 0));
-            foreach ($artlist as $_aid => $_row) {
-                if (($cid && intval($_row['cid'] ?? 0) !== $cid) || ($start && intval($_row['create_date'] ?? 0) < $start)) {
-                    unset($artlist[$_aid]);
+            $cond = array();
+            $cid and $cond['cid'] = $cid;
+            $start and $cond['create_date'] = array('>=' => $start, '<' => $now + 1);
+            $cond['name'] = array('LIKE' => $keyword);
+            $n = intval(\App\Service\Content\ArtService::count($cond));
+            $artlist = $n ? (array)\App\Service\Content\ArtService::findPageByCond($cond, $page, $pagesize) : array();
+            // 纯数字：首页额外前置 aid 精确命中（须同样满足筛选条件）
+            if (1 == $page && ctype_digit($keyword)) {
+                $art = \App\Service\Content\ArtService::read(intval($keyword));
+                if ($art && !isset($artlist[$art['aid']])
+                    && !($cid && intval($art['cid'] ?? 0) !== $cid)
+                    && !($start && intval($art['create_date'] ?? 0) < $start)) {
+                    $artlist = array($art['aid'] => $art) + $artlist;
                 }
             }
             $artlist or $artlist = NULL;
+            // 关键词占位：pagination() 会对整串 xn_urldecode 且不转义 href，关键词须在其后再以 rawurlencode 回填（防链接断裂/XSS）
+            $extra = array('keyword' => 'NNKWPH', 'page' => '{page}', 'cid' => $cid, 'pagesize' => $pagesize, 'range' => $range);
+            $n > $pagesize and $pagination = str_replace('NNKWPH', rawurlencode($keyword), pagination(url('art-list', $extra, TRUE), $n, $page, $pagesize));
         }
         return array(
             'header' => array(
@@ -127,7 +131,7 @@ class ArtManageService
             'artlist' => $artlist,
             'columnlist' => category_list($catelists),
             'filter' => array('pagesize' => $pagesize, 'range' => $range),
-            'pagination' => '',
+            'pagination' => $pagination,
             'safe_token' => bull_token_set($uid, 'admin_art_batch'),
         );
     }

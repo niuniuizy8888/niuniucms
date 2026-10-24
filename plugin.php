@@ -59,7 +59,8 @@ function plugin_cli_boot($ROOT)
     define('IN_CMD', 1);
     define('APP_PATH', $ROOT);
     define('CORE_PATH', $ROOT . 'core/');
-    $conf = include $ROOT . 'core/config/config.php';
+    require_once $ROOT . 'core/paths.php'; // U-2
+    $conf = include nncms_runtime_path('config.php');
     if (!is_array($conf)) exit("config 读取失败\n");
     foreach (array('log_path', 'cache_path', 'upload_path') as $p) {
         if (substr($conf[$p] ?? '', 0, 2) == './') $conf[$p] = APP_PATH . $conf[$p];
@@ -70,13 +71,20 @@ function plugin_cli_boot($ROOT)
     App::set('conf', $conf);
     include $ROOT . 'core/core.php'; // func 全模块 + db 层（PdoDriver/QueryBuilder）一站式装配
     spl_autoload_register(function (string $class): void {
+        // 第 2 轮 U-6：与 core/core.php 同口径的类名严格校验（段式标识符，拒绝 ../NUL 等）
+        $class = ltrim($class, '\\');
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*(?:\\\\[A-Za-z_][A-Za-z0-9_]*)*$/D', $class)) return;
         $prefixes = array('App\\' => APP_PATH . 'core/app/', 'Psr\\' => APP_PATH . 'core/psr/');
         foreach ($prefixes as $prefix => $baseDir) {
             $len = strlen($prefix);
             if (strncmp($prefix, $class, $len) !== 0) continue;
-            $file = $baseDir . str_replace('\\', '/', substr($class, $len)) . '.php';
+            $rel = substr($class, $len);
+            if ($rel === '') return;
+            $file = $baseDir . str_replace('\\', '/', $rel) . '.php';
             if (file_exists($file)) { include $file; return; }
+            return;
         }
+        if (str_contains($class, '\\')) return; // 下面的 model/lib 兜底只接受无命名空间的裸类名
         foreach (array(APP_PATH . 'core/model/', APP_PATH . 'core/lib/') as $dir) {
             $f = $dir . $class . '.php';
             if (file_exists($f)) { include $f; return; }
@@ -188,7 +196,7 @@ function plugin_cli_thumbs($ROOT, $arg1)
             if ($host !== '' && isset($skipHosts[$host])) { $skip++; continue; }
             $rel = \App\Service\System\ThumbnailService::generate($pic);
             if ($rel) {
-                $ok++; echo '.'; cache_delete('vod_' . $vid);
+                $ok++; echo '.'; content_cache_delete('vod_', $vid);
                 if ($host !== '') $hostFails[$host] = 0;
             } else {
                 $fail++; echo 'x';

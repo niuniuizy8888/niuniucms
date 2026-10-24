@@ -25,7 +25,13 @@ switch ($action) {
     case 'search':
         if ('GET' == $method) {
             $keyword = admin_param_text('keyword', '', 100, TRUE);
-            $data = \App\Service\Admin\ArtManageService::searchPage($keyword, $uid);
+            // 第 2 轮 U-5：搜索页同样接收分页/筛选参数（分页链接统一指向 art-list?keyword=…）
+            $data = \App\Service\Admin\ArtManageService::searchPage($keyword, $uid, array(
+                'cid' => admin_param_int('cid', 0, 0),
+                'page' => admin_param_int('page', 1, 1),
+                'pagesize' => admin_param_int('pagesize', 20, 10, 100),
+                'range' => admin_param_text('range', '', 16),
+            ));
             extract($data, EXTR_SKIP);
             include _include(ADMIN_PATH . 'html/art_list.html');
         }

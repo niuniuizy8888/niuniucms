@@ -155,7 +155,7 @@ class ArtService
         // 走 TagFlowService::decrementTagCounts()：同 delta 合并一条 UPDATE 且会失效 web_tag_{tagid} 缓存
         // （原 bigUpdate 不清该缓存，前台标签页会读到旧计数）。查不到行时退回 $tagarr 的期望值。
         !empty($tagarr) && \App\Service\Content\TagFlowService::decrementTagCounts($relRowsByTag, $tagarr);
-        foreach ($aids as $_aid) cache_delete('art_' . $_aid);
+        foreach ($aids as $_aid) content_cache_delete('art_', $_aid);
         // ⚠ 口径统一：原实现只在「单 id」分支清 runtime 计数缓存，批量删（含后台批量回收）不清 ⇒
         //   分类/站点内容计数最长滞后一个缓存 TTL。删除必然影响计数，与 id 个数无关，故移出分支恒清。
         cache_delete('runtime'); // 计数缓存失效（键错配修复）
@@ -190,7 +190,7 @@ class ArtService
             // 快照失败 ⇒ 中止删除（审查修复轮 C1：不可恢复的内容不删，fail-closed）
             if (false === self::snapshotArt($artlist)) return FALSE;
             foreach ($aids as $_aid) {
-                cache_delete('art_' . $_aid);
+                content_cache_delete('art_', $_aid);
             }
             \App\Repository\RepositoryFactory::art()->delete(array('aid' => $aids));
             \App\Repository\RepositoryFactory::artAid()->delete(array('aid' => $aids));

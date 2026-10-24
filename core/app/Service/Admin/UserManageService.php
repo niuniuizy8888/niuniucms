@@ -433,6 +433,8 @@ class UserManageService
             'gid' => $_gid,
         );
         if ($password !== '') {
+            // 安全审查 L-5：管理员组（gid=1）账号密码至少 12 位（与安装向导一致；非管理员沿用 is_password 口径）
+            1 === $_gid && strlen((string)$password) < 12 and message('password', '管理员密码至少 12 位');
             $arr['password'] = password_hash_custom($password);
             $arr['salt'] = '';
         }

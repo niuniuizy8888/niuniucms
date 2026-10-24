@@ -125,10 +125,12 @@ server {
     # 【2026-10-07】根入口 install.php：装完自动锁死。
     # 旧清单只封 install 目录，而本站布局是「根 install.php + core/install/」，
     # 根入口在安装完成前可被任何人访问并抢先建库/抢注管理员。
-    # install.lock 由安装器在安装成功时写入（core/install/index.php），存在即 404。
+    # install.lock 由安装器在安装成功时写入 core/config/install.lock（core/install/index.php），存在即 404。
+    # 旧版本写在 core/install.lock（升级后保留、程序也仍认），两条都保留。
     # 注意：exact location 优先于下方正则 PHP location，但不会「落回」它，
     #      因此必须在此重复一份 fastcgi 配置（内容与下方 PHP location 保持一致）。
     location = /install.php {
+        if (-f <站点根>/core/config/install.lock) { return 404; }
         if (-f <站点根>/core/install.lock) { return 404; }
         try_files      $uri =404;
         fastcgi_pass   127.0.0.1:9000;

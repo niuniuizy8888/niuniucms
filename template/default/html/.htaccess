@@ -1,0 +1,8 @@
+# 牛牛CMS 安全审查第 2 轮：模板源目录禁止 Web 直接访问（与 template/.htaccess 的规则互为兜底）
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

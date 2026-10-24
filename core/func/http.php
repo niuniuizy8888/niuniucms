@@ -181,8 +181,8 @@ function https_post($url, $post = '', $cookie = '', $timeout = 30, $method = 'PO
  * 说明：CloudOpsService/SetManageService/DomainReplaceService/api.php 只在注释里提及本闸、
  *   并无直接调用（它们复用上面的取数函数）——旧清单里的 http_post/save_image/http_multi_get/
  *   https_get 本仓无定义，已剔除，别按旧名去找出口。
- * 注意（用户裁定）：内网/保留段**拦截默认关闭**，由 conf['outbound_block_private'] 控制
- * （0/缺省=不拦，1=恢复拦截）；低层谓词 outbound_ipv4_safe/outbound_ipv6_safe 语义不变，仍可用于
+ * 注意：内网/保留段拦截由 conf['outbound_block_private'] 控制（安全审查 M-3 起出厂默认 1=拦截；
+ * 0=不拦，需管理员显式配置；存量 config.php 里显式写了 0 的站点保持原值）；低层谓词 outbound_ipv4_safe/outbound_ipv6_safe 语义不变，仍可用于
  * 需要单点判定"这是不是内网地址"的场景。
  */
 
@@ -299,14 +299,12 @@ function outbound_host_ips($host)
 }
 
 /**
- * 出站内网/保留段拦截开关（按用户裁定：**默认不拦**）
+ * 出站内网/保留段拦截开关（安全审查 M-3：出厂默认拦截）
  *
  * 取值来源（任一命中即生效）：conf['outbound_block_private']（config.php / config.default.php）。
- *   · 未设或 0（默认）⇒ 内网/回环/链路本地/保留段**一律放行**——本系统常见部署就是局域网
- *     （商店 api.example.com→192.0.2.x、内网 ES、内网采集源、内网 API），一律拦会打断正常业务，
- *     尤其商店替换推送与采集回调这类"重要的 curl"。
- *   · 设为 1 ⇒ 恢复 安全审查口径的内网拦截（见 outbound_ipv4_safe/outbound_ipv6_safe
- *     与 outbound_trusted_hosts 豁免）。
+ *   · 1（config.default 出厂默认 / 新安装写入）⇒ 内网/回环/链路本地/保留段拒绝（见 outbound_ipv4_safe/
+ *     outbound_ipv6_safe）；商店主机（cloud_api）经 outbound_trusted_hosts 豁免，商店推送/更新不受影响。
+ *   · 0 ⇒ 一律放行（内网 ES、内网采集源等需要时由管理员显式配置）。
  * **不随开关变化的硬约束**：scheme 只允许 http/https、必须含 host、DNS 解析失败 fail-closed、
  * 重定向逐跳复查、CURLOPT_RESOLVE 固定已校验 IP；所有出站仍必须经 outbound_url_safe() 统一入口
  * （红线不变：不得新增绕过本入口的出站点）。
@@ -326,8 +324,7 @@ function outbound_block_private()
  * 信任模型与 rsyncBase 域名白名单（M-A3）同款——商店允许部署在内网/局域网（如 http://192.0.2.3:2651/），
  * 该名单内主机豁免内网保留段拦截；scheme 闸、DNS 解析 fail-closed、CURLOPT_RESOLVE IP 固定、
  * 重定向逐跳复查全部保持（商店 302 到非可信内网地址仍被拒），采集源等其它用户可配 URL 不在豁免范围。
- * 说明：`outbound_block_private` 默认关闭时本豁免无实际作用（本来就不拦），仅当运维把开关改回 1
- * （恢复拦截）时，本名单才决定"哪个内网主机仍然可达"。
+ * 说明：`outbound_block_private`=1（出厂默认）时本名单决定"哪个内网主机仍然可达"；为 0 时本来就不拦，豁免无实际作用。
  * @return string[] 小写主机名列表（不含端口/方括号）
  */
 function outbound_trusted_hosts()
@@ -347,14 +344,13 @@ function outbound_trusted_hosts()
     // 理由：cloud_api 是本系统自有的固定部署目标（内网商店为既定架构），而 es.host 是
     // 后台可写的自由字段；若把它列为可信主机，等于让该字段自己声明「我可访问内网」，
     // 反而抹平出站闸的意义。ES 出站现一律过 outbound_url_safe（见 ElasticService::esCurlInit）。
-    // 用户裁定：内网拦截默认关闭（outbound_block_private=0）⇒ 内网 ES 无需登记即可用；
-    // 若把开关改回 1（恢复拦截），内网/回环 ES 会被 fail-closed 拦下，届时需在此显式登记主机名。
+    // 出厂默认拦截（outbound_block_private=1，安全审查 M-3）⇒ 内网/回环 ES 会被 fail-closed 拦下：需要内网 ES 的站点把开关改为 0，或在此显式登记主机名。
     return $hosts;
 }
 
 /**
  * 出站 URL 安全校验（SSRF 防护统一入口）
- * 内网/保留段拦截由 outbound_block_private() 决定是否生效（**默认不拦**，用户裁定）；
+ * 内网/保留段拦截由 outbound_block_private() 决定是否生效（出厂默认拦截，安全审查 M-3）；
  * 无论开关如何，scheme/host 形状闸与 DNS 解析 fail-closed 都恒生效，并回填 $resolved 供 IP 固定。
  * @param string $url 目标 URL
  * @param bool $resolve_dns 是否解析 DNS 校验 IP（默认 true）
@@ -625,8 +621,10 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
     $code      = 0;
     $current   = $url;
     $success   = FALSE;
+    $storeSig  = '';
 
     for ($hop = 0; $hop <= $maxRedirects; $hop++) {
+        $storeSig = '';
         $pinned = NULL;
         if (!outbound_url_safe($current, TRUE, $pinned)) break;
 
@@ -653,6 +651,14 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
                 if ($w === FALSE || $w < $len) { $writeFail = TRUE; return -1; }
                 $bytes += $len;
                 return $len;
+            },
+            // M-1（R4）：捕获商店随包下发的 Ed25519 签名头（覆盖包体 hex sha256），交由调用方 fail-closed 验签
+            CURLOPT_HEADERFUNCTION => function ($ch2, $line) use (&$storeSig) {
+                $p = strpos($line, ':');
+                if (FALSE !== $p && 0 === strcasecmp(substr($line, 0, $p), 'X-Store-Sig')) {
+                    $storeSig = trim(substr($line, $p + 1));
+                }
+                return strlen($line);
             },
         );
         if (!empty($pinned)) $opts[CURLOPT_RESOLVE] = $pinned;
@@ -728,5 +734,6 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
         'sha256' => hash_final($hashCtx),
         'error' => 'ok',
         'http_code' => (int)$code,
+        'store_sig' => $storeSig,
     );
 }

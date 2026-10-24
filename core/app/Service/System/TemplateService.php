@@ -397,32 +397,13 @@ class TemplateService
             LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook too large rejected: ' . $dir);
             return FALSE;
         }
-        $lower = strtolower($code);
-        // 黑名单：函数调用形态 + 变量变量/超全局/反引号（词边界防属性名误伤）
-        // 发布前检查修复（B-2）：黑名单按编辑器 safeEditableForbiddenFuncs 口径对齐——补回调原语
-        // （ob_start/array_walk 族/iterator_apply/register_*/set_*_handler/preg_replace_callback 族/
-        // forward_static_call 族/Closure::fromCallable）与解码原语，堵「回调传入高危函数名」绕过（清单见 template_guard.json）。
-        $g = self::guardData();
-        if (null === $g) {
-            LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook rejected (template guard data unavailable): ' . $dir);
-            return FALSE;
-        }
-        $forbidden = '#\\b(' . $g['hook_alt'] . ')\\s*\\(#i';
-        if (preg_match($forbidden, $lower)) {
-            LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook forbidden construct rejected: ' . $dir);
-            return FALSE;
-        }
-        // 发布前检查修复（B-2）：补变量函数调用形态 $\w+\s*\(（编辑器 legacyRegexFindings:440 同口径），
-        // 防 $f='sys'.'tem'; $f('id'); 全程不命中黑名单。
-        if (preg_match('#(\$\$|\$_(GET|POST|REQUEST|FILES|SERVER|ENV|COOKIE)\b|`|\binclude\s*\$|\beval\s*\$|\$\w+\s*\()#i', $code)) {
-            LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook dynamic construct rejected: ' . $dir);
-            return FALSE;
-        }
-        // 本轮审计修复：词法层兜底（token 级）——覆盖正则易漏的形态：注释分隔的调用
-        // （变量与括号间夹注释）、括号/数组元素直接调用、PHP8 全限定函数名
-        // （\名字(参数)）等。与模板编辑/主题内容闸同一 scanCode 口径（fail-closed：命中即跳过执行并留痕）。
-        if (!empty(\App\Service\System\LexicalSafetyService::scanCode($code))) {
-            LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR, 'theme exec hook lexical violation rejected: ' . $dir);
+        // 审查轮 U-1 步骤 2：token 级「默认拒绝」白名单（只放行 kv_*/db_* 字面量实参调用），
+        // 替换原十六进制黑名单（template_guard.json 随步骤 3 删除）。命中任意非白名单构造即拒绝并留痕。
+        $hookFindings = \App\Service\System\LexicalSafetyService::scanThemeHook($code);
+        if (!empty($hookFindings)) {
+            $first = $hookFindings[0];
+            LoggerService::channel('theme_hook_error', LoggerService::LEVEL_ERROR,
+                'theme exec hook rejected (' . $first['kind'] . ' ' . $first['name'] . '): ' . $dir);
             return FALSE;
         }
         return TRUE;
@@ -459,6 +440,13 @@ class TemplateService
             self::templateLogError('ZipArchive error: unusable download url');
             return false;
         }
+        // M-1（R4）：优先 https（仅当主机即商店主机）——与插件链 storeDownloadUrl 同口径；
+        // 完整性由签名兜底，故 http 亦允许（LAN/自建商店），此处只做可用时的传输升级。
+        $storeHostT = strtolower((string)parse_url(\App\Service\System\CloudOpsService::storeBase(), PHP_URL_HOST));
+        $dlHostT = strtolower((string)parse_url($downurl, PHP_URL_HOST));
+        if ('' !== $storeHostT && $dlHostT === $storeHostT && 0 === strpos(strtolower($downurl), 'http://')) {
+            $downurl = 'https://' . substr($downurl, 7);
+        }
         // 代码审查 #1 修复：改为**流式下载**（原先 https_request 整包入内存后才 strlen 判 200MB，
         // 上限在内存维度无效——判超限时 200MB 已驻留 PHP 内存；且 fwrite(fopen()) 无错误检查，
         // 写盘失败会静默留空文件，把「不是 zip」伪装成下载成功）。
@@ -467,6 +455,14 @@ class TemplateService
         $dl = http_download_to_file($downurl, $savePath, 200 * 1048576, 60, 5, '');
         if (!$dl['ok']) {
             self::templateLogError('ZipArchive error: download failed (' . $dl['error'] . ', ' . $dl['bytes'] . 'B) ' . $downurl);
+            return false;
+        }
+        // M-1（R4）：验签前置闸（fail-closed）——主题包必须带商店 Ed25519 签名，校验覆盖已下载字节的 sha256；
+        // 任一环节不通过即删临时包、不解压。签名经 X-Store-Sig 头随包下发（绑定实际交付字节）。
+        $sigChk = \App\Service\System\CloudOpsService::verifyStoreSignature((string)($dl['sha256'] ?? ''), (string)($dl['store_sig'] ?? ''));
+        if (!$sigChk['ok']) {
+            @unlink($savePath);
+            self::templateLogError('ZipArchive error: theme signature rejected: ' . $sigChk['msg'] . ' ' . $downurl);
             return false;
         }
         $destpath = self::templateRoot();
@@ -600,88 +596,74 @@ class TemplateService
     }
 
     /**
-     * 模板安全规则数据文件（相对 core/ 目录）。
-     * 高危关键字 / 高危函数 / 主题钩子禁用构造这三份黑名单原先以字面量写在本文件里，
-     * 密集的高危函数名会让主机杀毒软件（Imunify360、ClamAV 启发式等）把本文件误判为恶意文件并隔离，
-     * 结果全站 500。现改存 core/config/template_guard.json（逐项 hex 编码），本文件只做加载与校验。
-     * 数据文件缺失/损坏/摘要不符 ⇒ guardAvailable()=false，所有使用方 fail-closed（拒绝，不放行）。
+     * 审查轮 U-1 步骤 3：原模板安全黑名单（高危关键字/函数/主题钩子禁用构造，曾以 hex 存于
+     * core/config/template_guard.json 并做摘要校验）已删除。攻击面改由 LexicalSafetyService 的
+     * 「默认拒绝」token 白名单收口（scanExpression/scanTemplate/scanThemeHook），本文件不再内联
+     * 任何危险函数名清单，从源头消除主机杀毒误隔离与随之而来的 fail-closed/摘要机制需求。
      */
-    public const GUARD_DATA_REL = 'config/template_guard.json';
-    /** 规则内容摘要：sha256(keywords\n…\n\nfuncs\n…\n\nhook_alt)，与数据文件不一致即视为损坏（修改清单的步骤见 README「模板安全规则数据」：数据文件与本常量须同时更新） */
-    private const GUARD_DATA_SHA256 = 'd07abb2f8eb631559e6749381165f6a8aa43f252d49dc6a7bd8b7eb7ce22fc49';
-    /** @var array|false|null 解码后的规则（null=未加载，false=不可用） */
-    private static $guardData = null;
 
-    /** 数据文件绝对路径（不依赖 APP_PATH：本文件位于 core/app/Service/System/） */
-    public static function guardDataFile(): string
+    /**
+     * 安全审查 H-1（2026-10-24）：前台主题模板可见的 $conf 顶层键（展示类白名单）。
+     * 模板里的 $conf 在编译期被改写为脱敏副本（见 core/model/view.php view_tpl_conf()），
+     * 只保留下列键；auth_key / db / cache / cloud_api / 路径 / 令牌类一律不可见。
+     * 49 套商店模板 + default 实测只用到 url_rewrite_on / path / user_create_on / danmu.*。
+     * @return string[]
+     */
+    public static function templateConfPublicKeys(): array
     {
-        return dirname(__DIR__, 3) . '/' . self::GUARD_DATA_REL;
+        return array(
+            'sitename', 'site_name', 'path', 'view_url', 'upload_url', 'logo', 'logo_m', 'logo_pc',
+            'timezone', 'cms_lang', 'runlevel', 'runlevel_reason', 'pagesize', 'postlist_pagesize',
+            'listsize', 'linksize', 'tagsize', 'tag_num', 'user_create_on', 'user_resetpw_on',
+            'user_create_email_on', 'attach_on', 'cloud_url', 'search_on', 'sitemap_play',
+            'sitemap_tag', 'sitemap_num', 'force_https', 'category_sub_num', 'url_rewrite_on',
+            'url_rewrite_base', 'version', 'lang', 'area', 'year', 'tg', 'agg', 'danmu', 'route',
+            'seo', 'vodplayer', 'theme', 'api_on',
+        );
+    }
+
+    /** 键名是否像凭据/令牌（嵌套数组脱敏与保存闸共用） */
+    public static function templateConfKeyLooksSecret(string $key): bool
+    {
+        $k = strtolower($key);
+        static $exact = array(
+            'db', 'cache', 'auth_key', 'auth_salt', 'api_legacy_token', 'cloud_api', 'cloud_host',
+            'admin_entry', 'cookie_pre', 'cookie_domain', 'cookie_path', 'cache_path', 'log_path',
+            'upload_path', 'tmp_path', 'tpl_allow_php', 'tpl_allow_expr', 'outbound_block_private',
+            'outbound_allow_hosts', 'ssl_verify', 'cdn_trusted_ips', 'api', 'api_api', 'bind',
+            'install_report', 'install_report_on', 'mall_api_token', 'email',
+        );
+        if (in_array($k, $exact, true)) return true;
+        if ($k === 'seo_key' || $k === 'seo_keywords') return false;
+        return (bool)preg_match('#pass|pwd|secret|token|salt|auth|credential|private|(^|_)key$|^key_|apikey|appkey|dsn#', $k);
+    }
+
+    /** 递归剔除凭据类键（嵌套数组，如 danmu / vodplayer） */
+    private static function templateConfScrub($v, int $depth = 0)
+    {
+        if (!is_array($v)) return $v;
+        if ($depth > 6) return array();
+        $out = array();
+        foreach ($v as $k => $item) {
+            if (is_string($k) && self::templateConfKeyLooksSecret($k)) continue;
+            $out[$k] = self::templateConfScrub($item, $depth + 1);
+        }
+        return $out;
     }
 
     /**
-     * 加载并校验规则数据（进程内缓存）。
-     * @return array|null array('keywords'=>string[], 'funcs'=>string[], 'hook_alt'=>string)；不可用返回 null
+     * 模板视图用 $conf：白名单顶层键 + 嵌套凭据键剔除。core / 区块 / 路由仍用真实 $conf。
+     * @param mixed $conf 渲染点作用域内的 $conf（缺省读全局）
+     * @return array
      */
-    private static function guardData(): ?array
+    public static function templateConfView($conf): array
     {
-        if (null === self::$guardData) {
-            self::$guardData = false;
-            $file = self::guardDataFile();
-            $raw = is_file($file) ? @file_get_contents($file) : false;
-            $j = is_string($raw) ? json_decode($raw, true) : null;
-            $dec = static function ($hex) {
-                if (!is_string($hex) || '' === $hex || !preg_match('/^(?:[0-9a-f]{2})+$/', $hex)) return null;
-                return (string)pack('H*', $hex);
-            };
-            $ok = is_array($j) && ($j['format'] ?? '') === 'nncms-template-guard' && (int)($j['version'] ?? 0) === 1
-                && is_array($j['keywords'] ?? null) && is_array($j['funcs'] ?? null) && is_string($j['hook_alt'] ?? null);
-            if ($ok) {
-                $kw = array_map($dec, $j['keywords']);
-                $fn = array_map($dec, $j['funcs']);
-                $hook = $dec($j['hook_alt']);
-                $ok = !in_array(null, $kw, true) && !in_array(null, $fn, true) && null !== $hook && $kw && $fn
-                    && hash('sha256', implode("\n", $kw) . "\n\n" . implode("\n", $fn) . "\n\n" . $hook) === self::GUARD_DATA_SHA256;
-                if ($ok) self::$guardData = array('keywords' => $kw, 'funcs' => $fn, 'hook_alt' => $hook);
-            }
-            if (!self::$guardData) {
-                self::templateLogError('template guard data unavailable (missing/corrupt): ' . self::GUARD_DATA_REL);
-            }
+        if (!is_array($conf)) $conf = isset($GLOBALS['conf']) && is_array($GLOBALS['conf']) ? $GLOBALS['conf'] : array();
+        $out = array();
+        foreach (self::templateConfPublicKeys() as $k) {
+            if (array_key_exists($k, $conf)) $out[$k] = self::templateConfScrub($conf[$k]);
         }
-        return self::$guardData ?: null;
-    }
-
-    /** 规则数据是否可用（不可用时一切模板/钩子安全闸按拒绝处理） */
-    public static function guardAvailable(): bool
-    {
-        return null !== self::guardData();
-    }
-
-    /** 规则缺失时给站长看的统一文案 */
-    public static function guardMissingMessage(): string
-    {
-        return '模板安全规则文件缺失或已损坏（core/' . self::GUARD_DATA_REL . '），已按安全策略拒绝该模板内容。'
-            . '请从安装包重新上传该文件（如被主机安全软件隔离，请恢复并加入白名单）。';
-    }
-
-    /** 渲染期（{inc:} / <template include>）规则缺失时输出的可见提示片段 */
-    public static function guardMissingHtml(): string
-    {
-        return '<div style="margin:8px;padding:8px 12px;border:1px solid #e0b4b4;background:#fff6f6;color:#9f3a38;font-size:13px">'
-            . htmlspecialchars(self::guardMissingMessage(), ENT_QUOTES, 'UTF-8') . '</div>';
-    }
-
-    /** @var array 语句型关键字（词边界匹配；词法层共用）。数据见 template_guard.json；不可用返回空数组（调用方须先判 guardAvailable） */
-    public static function safeEditableForbiddenKeywords(): array
-    {
-        $g = self::guardData();
-        return $g ? $g['keywords'] : array();
-    }
-
-    /** @var array 高危函数清单（调用形态匹配；词法层共用）。数据见 template_guard.json；不可用返回空数组（调用方须先判 guardAvailable） */
-    public static function safeEditableForbiddenFuncs(): array
-    {
-        $g = self::guardData();
-        return $g ? $g['funcs'] : array();
+        return $out;
     }
 
     /**
@@ -720,8 +702,11 @@ class TemplateService
             // 环境/框架上下文读取（只读，无执行面）
             'defined', 'function_exists', 'class_exists', 'method_exists', 'property_exists',
             'extension_loaded', 'group_access', 'group_name', 'lang', 'url', 'param',
-            '_GET', '_POST', '_REQUEST', '_COOKIE', '_SESSION', '_SERVER', 'G',
-            'array_value', 'arrlist_key_values', 'findcate', 'setting_get', 'user_read',
+            'array_value', 'arrlist_key_values', 'findcate',
+            // 安全审查 H-1（2026-10-24）：移出 user_read / setting_get（任意用户行 / 任意 KV 读取，
+            // 可读出密码哈希、令牌类设置）与 _GET/_POST/_REQUEST/_COOKIE/_SESSION/_SERVER/G 读取器
+            // （_SERVER('conf') 直接返回含 auth_key/db 的完整配置，绕过模板侧 $conf 脱敏）。
+            // 49 套商店模板 + default 实测零使用；模板需要的数据一律由路由预置变量提供。
             // 上线前审计修复（I-01 配套）：`{@EXPR}` 纳入表达式扫描后，默认主题
             // public/foot.html:45 的 `{@xn_debug_info()}`（DEBUG 1–2 调试信息块）会命中白名单。
             // 该调用无参数、只读、无执行面，且仅在 DEBUG<3 时渲染 ⇒ 登记为合法。
@@ -748,9 +733,6 @@ class TemplateService
         // 载荷会被正则层以「禁止对象实例化」拦下，掩盖词法层**独立**识别出的 reflection 语义。
         // 词法层是更精确的判定（token 级、能报出具体危险构造），故让它先报，正则层退为兜底；
         // 两层都是 fail-closed，拦截结论不变（仅影响「首条文案」由哪一层给出）。
-        if (!self::guardAvailable()) {
-            exit(message(0, self::guardMissingMessage()));
-        }
         $lexFindings = LexicalSafetyService::scanTemplate($code);
         if (!empty($lexFindings)) {
             $first = $lexFindings[0];
@@ -769,19 +751,11 @@ class TemplateService
     public static function legacyRegexFindings(string $code): array
     {
         $findings = array();
-        if (!self::guardAvailable()) {
-            $findings[] = self::guardMissingMessage();
-            return $findings;
-        }
-        $forbiddenKeywords = self::safeEditableForbiddenKeywords();
-        // include/require 是语句型（可无括号），按「指令+操作数」形态匹配而非裸词边界——
-        // 现有模板大量合法的 <template include="…"> 属性与注释文本不得误伤（实测 27/48 误拒修复）
+        // 审查轮 U-1 步骤 3：高危函数/关键字黑名单已删除——指令表达式攻击面改由 LexicalSafetyService
+        // 的「默认拒绝」token 白名单（scanExpression/scanTemplate）收口。本函数退为结构性兜底：
+        // 违规符号、include/require 语句形态、指令表达式内 new/use/clone/匿名函数/反引号/变量函数/
+        // ${/$_ 形态。不再内联任何危险函数名清单（从源头避免主机杀毒误隔离）。
         $stmtPattern = '#\b(?:include|require)(?:_once)?\b\s*[\($"\'\\\\$]#i';
-        // 函数名类关键字改为「调用形态」匹配（name\s*\(），消除 HTML/CSS/JS 属性词误伤：
-        // 实测 corpus 中 system-ui 字体栈 / style=…filter:…/require、SCSS 的 include 指令等 27/48 现有模板均被
-        // 旧词边界匹配误拒（保存即被禁 = 功能破坏）。控制结构词（语句型关键字清单 + include/require）
-        // 仍按词边界，防「include $x;」等无括号形态。
-        $forbiddenFuncs = self::safeEditableForbiddenFuncs();
         $forbiddenSymbols = array('<?', '{:', '{~', '{-', '{+');
 
         $codeLower = strtolower($code);
@@ -791,19 +765,8 @@ class TemplateService
                 return $findings;
             }
         }
-
-        $pattern = '/\b(' . implode('|', array_map('preg_quote', array_unique($forbiddenKeywords))) . ')\b/i';
-        if (preg_match($pattern, $codeLower, $matches)) {
-            $findings[] = '模板中包含高危函数/关键字 ' . $matches[1] . ' 禁止编辑';
-            return $findings;
-        }
         if (preg_match($stmtPattern, $codeLower)) {
             $findings[] = '模板中包含 PHP 包含指令形态，禁止编辑';
-            return $findings;
-        }
-        $funcPattern = '/\b(' . implode('|', array_map('preg_quote', array_unique($forbiddenFuncs))) . ')\s*\(/i';
-        if (preg_match($funcPattern, $codeLower, $fmatches)) {
-            $findings[] = '模板中包含高危函数 ' . $fmatches[1] . ' 禁止编辑';
             return $findings;
         }
 
@@ -835,7 +798,7 @@ class TemplateService
         }
         foreach ($exprHits as $expr) {
             if (str_contains($expr, '`') || str_contains($expr, '$_') || str_contains($expr, '${')
-                || preg_match('#\$\w+\s*\(#', $expr) || preg_match($pattern, $expr) || preg_match($funcPattern, $expr) || preg_match($stmtPattern, $expr)
+                || preg_match('#\$\w+\s*\(#', $expr) || preg_match($stmtPattern, $expr)
             ) {
                 $findings[] = '模板指令表达式中包含高危写法，禁止编辑';
                 return $findings;

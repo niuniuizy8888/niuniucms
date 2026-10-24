@@ -16,8 +16,10 @@
 // AES 密钥：优先读取 config.php。安装向导阶段尚未生成 config.php 属正常状态，
 // 此时不要打 CRITICAL，避免在部分 FPM/面板环境里把 stderr 混入响应导致安装页异常空白。
 $secret_value = '';
-$config_file = defined('APP_PATH') ? APP_PATH . 'core/config/config.php' : '';
-$install_lock_file = defined('APP_PATH') ? APP_PATH . 'core/install.lock' : '';
+$config_file = (defined('APP_PATH') && function_exists('nncms_runtime_path')) ? nncms_runtime_path('config.php') : (defined('APP_PATH') ? APP_PATH . 'core/config/config.php' : '');
+// 安装锁新位置 core/config/install.lock，旧位置 core/install.lock 兼容（第 2 轮 U-2）
+$install_lock_file = (defined('APP_PATH') && function_exists('nncms_runtime_path')) ? nncms_runtime_path('install.lock') : (defined('APP_PATH') ? APP_PATH . 'core/config/install.lock' : '');
+$install_lock_legacy = defined('APP_PATH') ? APP_PATH . 'core/install.lock' : '';
 if ($config_file && is_file($config_file)) {
     $secret_conf = include $config_file;
     if (is_array($secret_conf)) {
@@ -26,7 +28,7 @@ if ($config_file && is_file($config_file)) {
 }
 defined('SECRET') or define('SECRET', $secret_value);
 if (empty(SECRET)) {
-    $is_installing = $config_file && !is_file($config_file) && $install_lock_file && !is_file($install_lock_file);
+    $is_installing = $config_file && !is_file($config_file) && $install_lock_file && !is_file($install_lock_file) && !is_file($install_lock_legacy);
     if (!$is_installing) {
         error_log('[CRITICAL] SECRET not configured — missing auth_key in config/config.php');
     }

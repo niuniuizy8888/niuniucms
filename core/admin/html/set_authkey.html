@@ -1,0 +1,54 @@
+<?php include _include(ADMIN_PATH.'html/head.html');?>
+<div class="main-content app-content">
+    <div class="side-app">
+
+                <?php include _include(ADMIN_PATH.'html/partials/set_tabs.html');?>
+<div class="card">
+            <div class="card-header">
+                <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+                <h3 class="card-title">更换 auth_key</h3>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning" style="max-width:760px;">
+                    auth_key 用于 Cookie/会话签名、免登录令牌、后台登录令牌和 api.php 机器通道令牌。更换后：
+                    <ul class="mb-0">
+                        <li>所有前台用户和管理员（包括你自己）会立即下线，需要重新登录；</li>
+                        <li>api.php 的令牌会变成新值，宝塔计划任务里的采集/cron 地址需要换成新令牌；</li>
+                        <li>已在商店登记的采集令牌会在启用安装上报时自动补登记，否则云端采集首次失败时自动补登记。</li>
+                    </ul>
+                    如果升级前的旧版本模板可能读取过全局配置，建议更换一次。
+                </div>
+                <p>当前 api 令牌：<code><?php echo xn_h($api_token_mask);?></code><?php if (!empty($legacy_on)) { ?>（已开启 api_legacy_token 兼容）<?php } ?></p>
+                <form action="<?php echo url('set-authkey', '', TRUE);?>" method="post" id="authkeyForm" style="max-width:420px;">
+                    <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
+                    <div class="mb-3">
+                        <label class="form-label">请输入「更换」两个字确认</label>
+                        <input type="text" class="form-control" name="confirm_word" autocomplete="off" required>
+                    </div>
+                    <button type="submit" class="btn btn-danger" id="authkeySubmit">更换 auth_key</button>
+                </form>
+                <div id="authkeyResult" class="alert alert-success mt-3 d-none" style="max-width:760px;word-break:break-all;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php include _include(ADMIN_PATH.'html/foot.html');?>
+<script>
+$('#authkeyForm').on('submit', function() {
+    var jform = $(this);
+    if (!window.confirm('确定更换 auth_key？所有用户和管理员会立即下线。')) return false;
+    var jsubmit = $('#authkeySubmit');
+    jsubmit.prop('disabled', true);
+    $.xpost(jform.attr('action'), jform.serialize(), function(code, message) {
+        if (code == 0) {
+            // 结果只显示这一次（含新 api 令牌），不自动跳转；会话已清空，刷新后会回到登录页
+            $('#authkeyResult').html(message + '<br><a href="' + location.href + '">重新登录</a>').removeClass('d-none');
+            jform.remove();
+        } else {
+            $.alert(message);
+            jsubmit.prop('disabled', false);
+        }
+    });
+    return false;
+});
+</script>

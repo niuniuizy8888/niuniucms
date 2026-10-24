@@ -1,0 +1,26 @@
+# 牛牛CMS 安全审查 M-4：插件目录禁止直接执行脚本（Apache 2.2 / 2.4 通用）
+# 插件 PHP（hook/*.php、setting.php、install.php、bootstrap.php、route/*.php）只经 plugin.php / 后台入口 include 执行，
+# 不需要也不允许 URL 直访；静态资源（如 plugins/live/player/ 播放器页与 assets）不受影响。
+# 插件的服务端模板源 plugins/<插件>/template/ 由本文件末尾规则统一禁止直访（live 插件另自带一份）；plugins/<插件>/player/ 等公开静态页不受影响。
+<FilesMatch "(?i)\.(php\d*|phtml|phar|pht|phps|cgi|pl|py|sh|asp|aspx|jsp|shtml)(\.|$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# 插件服务端模板源统一禁止直访（第三方插件不用各自放 .htaccess）
+# Apache 2.4：<If> + Require（需 AllowOverride AuthConfig）；Apache 2.2 回退 mod_alias RedirectMatch 404（需 AllowOverride FileInfo）。
+<IfModule mod_authz_core.c>
+    <If "%{REQUEST_URI} =~ m#/plugins/[^/]+/template/#i">
+        Require all denied
+    </If>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <IfModule mod_alias.c>
+        RedirectMatch 404 (?i)/plugins/[^/]+/template/
+    </IfModule>
+</IfModule>

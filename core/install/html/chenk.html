@@ -75,6 +75,25 @@
                   </tbody>
                 </table>
               </div>
+<?php $nnIsApache = (FALSE !== stripos((string)_SERVER('SERVER_SOFTWARE'), 'apache') || FALSE !== stripos((string)_SERVER('SERVER_SOFTWARE'), 'litespeed')); ?>
+              <!-- 安全审查 M-4：浏览器侧探测受保护目录是否可直连（不在服务端发起回环请求，避免新增出站点） -->
+              <div id="nn-htaccess-warn" class="alert alert-danger mt-3 text-start" style="display:none">
+                <?php if ($nnIsApache) { ?>
+                <strong>检测到 Apache，但 .htaccess 防护规则未生效：</strong>core/ 目录可以被浏览器直接访问（配置、源码、安装 SQL 可能泄露）。
+                请在站点配置中为网站根目录开启 <code>AllowOverride All</code>（至少需要 AuthConfig、Limit），并确认 core/、runtime/、tools/、plugins/、upload/ 下的 .htaccess 文件已完整上传，然后点「重新检测」。
+                <?php } else { ?>
+                <strong>受保护目录可被直接访问：</strong>core/ 目录可以被浏览器直接访问（配置、源码、安装 SQL 可能泄露）。
+                当前 Web 服务器不读取 .htaccess，请在站点配置里禁止访问 core/、runtime/、tools/、.skills/ 目录，并禁止 upload/ 与 plugins/ 下的 PHP 执行（参考随包 nginx 部署示例），然后点「重新检测」。
+                <?php } ?>
+              </div>
+              <script>
+              (function () {
+                if (!window.fetch) return;
+                fetch('core/install/install.sql', {method: 'HEAD', cache: 'no-store', credentials: 'omit', redirect: 'manual'}).then(function (r) {
+                  if (r && r.status >= 200 && r.status < 300) document.getElementById('nn-htaccess-warn').style.display = 'block';
+                }).catch(function () {});
+              })();
+              </script>
               <div class="text-center mt-4">
                 <button type="button" class="btn btn-install-outline me-2" onclick="window.location.reload()"><?php echo lang('check_again');?></button>
                 <button type="button" class="btn btn-install" onclick="window.location=<?php echo xn_h(json_encode($install_entry, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE));?> + '?action=database&agree=1'" <?php echo !$succeed ? 'disabled' : '';?>><?php echo lang('next_step');?></button>
