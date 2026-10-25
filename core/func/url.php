@@ -41,8 +41,12 @@ function xn_urldecode($s)
 
 /**
  * 上线前审计 WEB-01：Host 白名单。
- * 允许：conf['allowed_hosts']（逗号分隔或数组）、conf['site_host']、domain.php 全部 site 键、
- * conf['cookie_domain']（去前导点）。列表皆空时放行（兼容未配置的单站），但仍做字符净化。
+ * 收集：conf['allowed_hosts']（逗号分隔或数组）、conf['site_host']、domain.php 全部 site 键、
+ * conf['cookie_domain']（去前导点）。
+ * 严格模式（硬拒不在名单的 Host）仅在 conf['site_host'] 或 conf['allowed_hosts'] 非空时开启——
+ * 二者是站长显式配置；仅有 domain.php 站群键 / cookie_domain 时不进入严格模式，避免「加站群后
+ * 主站 Host 不在 domain.site 里而被锁死」。严格模式下 domain 键与 cookie_domain 仍并入白名单。
+ * 未开严格模式：字符净化后放行（依赖 nginx server_name）。
  * @param string|null $host 主机（可带端口）；NULL 取当前请求
  * @param array|null $domain 站群配置；NULL 取 $GLOBALS['domain']
  * @param array|null $conf 站点配置；NULL 取 _SERVER('conf') / $GLOBALS['conf']
@@ -96,7 +100,18 @@ function http_host_allowed($host = null, $domain = null, $conf = null)
             if ($p !== '') $allow[$p] = true;
         }
     }
-    // 未配置任何白名单：不在 PHP 层硬拒（依赖 nginx server_name），避免锁死未填 site_host 的单站
+    // 严格模式：仅 site_host / allowed_hosts 显式配置时硬拒。domain.php 站群键单独存在不得锁死主站。
+    $strict = false;
+    if (!empty($conf['site_host']) && trim((string)$conf['site_host']) !== '') {
+        $strict = true;
+    } elseif (!empty($conf['allowed_hosts'])) {
+        if (is_array($conf['allowed_hosts'])) {
+            $strict = !empty($conf['allowed_hosts']);
+        } else {
+            $strict = trim((string)$conf['allowed_hosts']) !== '';
+        }
+    }
+    if (!$strict) return true;
     if (!$allow) return true;
     if (isset($allow[$name])) return true;
     // cookie_domain 形态：请求为子域时也放行（与 Cookie 作用域一致）

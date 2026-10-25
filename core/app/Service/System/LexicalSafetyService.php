@@ -77,8 +77,16 @@ class LexicalSafetyService
             return array(array('kind' => 'var_root_denied', 'name' => '$' . $root, 'expr' => $expr));
         }
         // R3-1 根治：变量根名白名单（主题模板实测语料）；未登记根一律拒绝
+        // 核心缺方法时 fail-closed，并标 kind=core_incomplete，避免误报成模板正文违规
         static $allow = null;
         if ($allow === null) {
+            if (!method_exists(TemplateService::class, 'templateVarRootAllowlist')) {
+                return array(array(
+                    'kind' => 'core_incomplete',
+                    'name' => '核心不完整：TemplateService 缺少 templateVarRootAllowlist/templateConfView，请完整升级核心后清空 runtime/cache',
+                    'expr' => $expr,
+                ));
+            }
             $allow = array_fill_keys(TemplateService::templateVarRootAllowlist(), 1);
         }
         if (!isset($allow[$root])) {

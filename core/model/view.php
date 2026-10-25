@@ -468,9 +468,16 @@ function process_inc_body($s, $tplScope = false)
 function view_tpl_body_gate($s)
 {
     if (!is_string($s) || '' === $s) return '';
+    // 核心文件版本错位时给出明确提示，避免误报成「模板正文 content gate / player.html 写坏」
+    $coreIncomplete = '核心不完整：TemplateService 缺少 templateVarRootAllowlist/templateConfView，请完整升级核心后清空 runtime/cache';
     try {
         if (!class_exists('\App\Service\System\TemplateService') || !class_exists('\App\Service\System\LexicalSafetyService')) {
-            return 'content gate unavailable';
+            return $coreIncomplete;
+        }
+        if (!method_exists('\App\Service\System\TemplateService', 'templateVarRootAllowlist')
+            || !method_exists('\App\Service\System\TemplateService', 'templateConfView')
+            || !method_exists('\App\Service\System\LexicalSafetyService', 'scanTemplate')) {
+            return $coreIncomplete;
         }
         // 主体模板只按词法扫描（与编译产物同口径）拦截；旧版正则规则对存量/商店主题误报较多
         // （例如 MacCMS 风格 {:func()} 在本引擎里只是字面文本、不会被编译执行），只记日志不拦截，避免整页被停。
@@ -487,7 +494,12 @@ function view_tpl_body_gate($s)
         $why = is_array($first) ? trim((string)($first['kind'] ?? '') . ' ' . (string)($first['name'] ?? '')) : (string)$first;
         return '' === $why ? 'content gate finding' : $why;
     } catch (\Throwable $e) {
-        return 'content gate error: ' . $e->getMessage();
+        $msg = $e->getMessage();
+        // Call to undefined method App\Service\System\TemplateService::...
+        if (false !== stripos($msg, 'undefined method') && false !== strpos($msg, 'TemplateService::')) {
+            return $coreIncomplete;
+        }
+        return 'content gate error: ' . $msg;
     }
 }
 
@@ -526,6 +538,16 @@ function view_tpl_scope_rewrite($s)
  */
 function view_tpl_conf($conf = null)
 {
+    // 部分升级缺 templateConfView 时避免播放页直接 fatal 白屏；返回空脱敏 conf 并记一次日志
+    if (!class_exists('\App\Service\System\TemplateService')
+        || !method_exists('\App\Service\System\TemplateService', 'templateConfView')) {
+        static $tplConfCoreLogged = false;
+        if (!$tplConfCoreLogged && function_exists('xn_log')) {
+            $tplConfCoreLogged = true;
+            xn_log('核心不完整：TemplateService 缺少 templateVarRootAllowlist/templateConfView，请完整升级核心后清空 runtime/cache', 'addon_compile_error');
+        }
+        return array();
+    }
     return \App\Service\System\TemplateService::templateConfView($conf);
 }
 /*function process_inc($matches)

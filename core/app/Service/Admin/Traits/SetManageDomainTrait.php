@@ -59,6 +59,8 @@ trait SetManageDomainTrait
         );
         $result = ConfigBootstrapService::saveDomainSite(self::domainConfig(), $payload);
         $result['success'] || message(1, $result['msg']);
+        // WEB-01：保存站群域名后，空 site_host 时自动写入当前 Host（不覆盖已有值）
+        self::ensureSiteHostForHostGate();
         return array('code' => 0, 'message' => jump($result['msg'], url('set-domain', array(), TRUE), 3));
     }
 
@@ -84,6 +86,10 @@ trait SetManageDomainTrait
         );
         $result = SystemMaintenanceService::batchAddDomainSites(self::domainConfig(), $text, $opts);
         $result['success'] || message(1, $result['msg']);
+        // WEB-01：加站群会写入 domain.php；若未配 site_host，自动写入当前 Host，避免主站被 Host 闸误杀
+        if (!empty($result['added'])) {
+            self::ensureSiteHostForHostGate();
+        }
         return array('code' => 0, 'message' => jump($result['msg'], url('set-domain', array(), TRUE), 3));
     }
 
@@ -101,4 +107,46 @@ trait SetManageDomainTrait
         $result['success'] || message(1, $result['msg']);
         return array('code' => 0, 'message' => jump($result['msg'], url('set-domain', array(), TRUE), 3));
     }
+
+    /**
+     * WEB-01：首次启用站群且主站未填 site_host 时，把当前后台请求 Host 写入 config.php，
+     * 使 Host 硬闸与主站+站群白名单一并生效；已有非空 site_host 不覆盖。
+     */
+    private static function ensureSiteHostForHostGate(): void
+    {
+        $conf = function_exists('_SERVER') ? _SERVER('conf') : null;
+        if (!is_array($conf)) {
+            $conf = (isset($GLOBALS['conf']) && is_array($GLOBALS['conf'])) ? $GLOBALS['conf'] : array();
+        }
+        if (!empty($conf['site_host']) && trim((string)$conf['site_host']) !== '') {
+            return;
+        }
+        $host = '';
+        if (function_exists('get_host_name')) {
+            $host = (string)get_host_name();
+        } else {
+            $raw = (string)($_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? '');
+            $host = strtolower(rtrim(preg_replace('/:\d+$/', '', trim($raw)), '.'));
+        }
+        $host = preg_replace('#[^A-Za-z0-9._-]#', '', (string)$host);
+        if ($host === '' || $host === 'localhost' || filter_var($host, FILTER_VALIDATE_IP)) {
+            return;
+        }
+        if (!function_exists('file_replace_var') || !function_exists('nncms_runtime_path_w')) {
+            return;
+        }
+        file_replace_var(\nncms_runtime_path_w('config.php'), array('site_host' => $host));
+        if (function_exists('_SERVER') && is_array(_SERVER('conf'))) {
+            $c = _SERVER('conf');
+            $c['site_host'] = $host;
+            _SERVER('conf', $c);
+        }
+        if (isset($GLOBALS['conf']) && is_array($GLOBALS['conf'])) {
+            $GLOBALS['conf']['site_host'] = $host;
+        }
+        if (function_exists('admin_audit_log')) {
+            admin_audit_log('site_host_auto_set', array('site_host' => $host, 'reason' => 'domain_enable_host_gate'));
+        }
+    }
+
 }
