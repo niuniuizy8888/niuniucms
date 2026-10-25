@@ -68,7 +68,7 @@ class AdManageService
 
         $name = filter_all_html(admin_param_text('name', '', 100));
         $url = self::safeUrl(admin_param_text('url', '', 255));
-        $img_url = self::safeUrl(admin_param_text('img_url', '', 255));
+        $img_url = self::safeImgUrl(admin_param_text('img_url', '', 255));
         $area = filter_all_html(admin_param_text('area', '', 32));
         $days = admin_param_int('days', 30, 0, 3650);
         $arr = array(
@@ -100,7 +100,7 @@ class AdManageService
         $update = array();
         $name = admin_param_text('name', '', 100);
         $url = self::safeUrl(admin_param_text('url', '', 255));
-        $img_url = self::safeUrl(admin_param_text('img_url', '', 255)); // 列宽 255，与表结构对齐
+        $img_url = self::safeImgUrl(admin_param_text('img_url', '', 255)); // 列宽 255；允许本地 upload/ 相对路径
         $area = admin_param_text('area', '', 32);
         $days = param('days', '');
         $name !== '' and $update['name'] = filter_all_html($name);
@@ -185,6 +185,31 @@ class AdManageService
             return '';
         }
         return $url;
+    }
+
+    /**
+     * 广告图片地址：http/https 外，额外放行 StorageService 产出的本地 upload/ 相对路径
+     * （upload_url 常为 upload/，无 scheme；跳转链接仍走 safeUrl，禁止 javascript:）。
+     * @param string $url
+     * @return string
+     */
+    private static function safeImgUrl(string $url): string
+    {
+        if ($url === '') {
+            return '';
+        }
+        if (preg_match('#^https?://#i', $url)) {
+            return $url;
+        }
+        $path = str_replace('\\', '/', $url);
+        if (strpos($path, '..') !== false) {
+            return '';
+        }
+        $path = ltrim($path, '/');
+        if (preg_match('#^upload/[A-Za-z0-9._/-]+$#', $path)) {
+            return $path;
+        }
+        return '';
     }
 
     /**

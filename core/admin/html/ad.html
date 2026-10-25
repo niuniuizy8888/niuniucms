@@ -9,7 +9,7 @@
                             <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
                             <h2 class="card-title"><?php echo lang('ad_manage');?></h2>
                             <span class="ms-auto flex-wrap gap-2 "> 
-                                <a data-bs-toggle="modal" data-bs-target="#ad_manage" class="btn btn-outline-primary">添加广告</a>
+                                <a href="javascript:;" class="btn btn-outline-primary ad-add">添加广告</a>
                             </span>
                         </div>
                         <div class="e-table px-5 pb-5">
@@ -50,6 +50,13 @@
                                                 <?php echo $val['end_time'] ? date('Y-n-j H:i:s', $val['end_time']) : '永不过期'; ?>
                                             </td>
                                             <td class="align-middle text-center">
+                                                <a href="javascript:;" class="btn btn-outline-primary edit" role="button"
+                                                   data-id="<?php echo intval($val['id']); ?>"
+                                                   data-name="<?php echo htmlspecialchars($val['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                   data-url="<?php echo htmlspecialchars($val['url'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                   data-img-url="<?php echo htmlspecialchars($val['img_url'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                   data-area="<?php echo htmlspecialchars($val['area'], ENT_QUOTES, 'UTF-8'); ?>"
+                                                   data-end-time="<?php echo intval($val['end_time']); ?>">编辑</a>
                                                 <a data-href="<?php echo url('ad', array('id'=>$val['id']), TRUE);?>" class="btn delete btn-danger" role="button"><?php echo lang('delete');?></a>
                                             </td>
                                         </tr>
@@ -78,6 +85,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
+                <input type="hidden" name="id" value="0">
                 <div class="form-group">
                     <label class="form-label">名称</label>
                     <?php echo $input['name'];?>
@@ -112,7 +120,7 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">结束天数（默认30天，0为不过期）</label>
+                    <label class="form-label">结束天数（默认30天，0为不过期；编辑时按剩余天数回填，保存会从当前时间重算）</label>
                     <?php echo $input['days'];?>
                 </div>
             </div>
@@ -128,14 +136,79 @@
 <script>
 var body = $('body');
 var modal = $('#ad_manage');
+var safeToken = <?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>;
+
+function adResetForm() {
+    modal.find('input[name="id"]').val('0');
+    modal.find('input[name="name"]').val('');
+    modal.find('input[name="url"]').val('');
+    modal.find('input[name="img_url"]').val('');
+    modal.find('input[name="days"]').val('30');
+    modal.find('input[name="area"]').prop('checked', false);
+    modal.find('input[name="area"][value="all"]').prop('checked', true);
+    modal.find('#ad_manage_label').text('添加广告');
+    modal.data('mode', 'create');
+}
+
+function adShowModal() {
+    if (window.bootstrap && bootstrap.Modal) {
+        bootstrap.Modal.getOrCreateInstance(modal[0]).show();
+    } else {
+        modal.modal('show');
+    }
+}
+
+body.on('click', 'a.ad-add', function() {
+    adResetForm();
+    adShowModal();
+    return false;
+});
+
+body.on('click', 'a.edit', function() {
+    var $a = $(this);
+    var id = $a.attr('data-id') || '0';
+    var name = $a.attr('data-name') || '';
+    var url = $a.attr('data-url') || '';
+    var imgUrl = $a.attr('data-img-url') || '';
+    var area = $a.attr('data-area') || 'all';
+    var endTime = parseInt($a.attr('data-end-time'), 10) || 0;
+    var days = 0;
+    if (endTime > 0) {
+        days = Math.max(0, Math.ceil((endTime - (Date.now() / 1000)) / 86400));
+    }
+    modal.find('input[name="id"]').val(id);
+    modal.find('input[name="name"]').val(name);
+    modal.find('input[name="url"]').val(url);
+    modal.find('input[name="img_url"]').val(imgUrl);
+    modal.find('input[name="days"]').val(String(days));
+    modal.find('input[name="area"]').prop('checked', false);
+    if (modal.find('input[name="area"][value="' + area + '"]').length) {
+        modal.find('input[name="area"][value="' + area + '"]').prop('checked', true);
+    } else {
+        modal.find('input[name="area"][value="all"]').prop('checked', true);
+    }
+    modal.find('#ad_manage_label').text('编辑广告');
+    modal.data('mode', 'edit');
+    adShowModal();
+    return false;
+});
 
 body.on('click', 'button.create', function() {
-    var name = modal.find('input[name=\"name\"]').val();
-    var url = modal.find('input[name=\"url\"]').val();
-    var img_url = modal.find('input[name=\"img_url\"]').val();
-    var area = modal.find('input[name=\"area\"]:checked').val();
-    var days = modal.find('input[name=\"days\"]').val();
-    $.xpost(xn.url('ad', '', true), {name:name,url:url,img_url:img_url,area:area,days:days,type:1,safe_token:<?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>}, function(code, message) {
+    var name = modal.find('input[name="name"]').val();
+    var url = modal.find('input[name="url"]').val();
+    var img_url = modal.find('input[name="img_url"]').val();
+    var area = modal.find('input[name="area"]:checked').val();
+    var days = modal.find('input[name="days"]').val();
+    var id = modal.find('input[name="id"]').val();
+    var mode = modal.data('mode') || 'create';
+    var payload = {name:name, url:url, img_url:img_url, area:area, days:days, safe_token:safeToken};
+    if (mode === 'edit' && parseInt(id, 10) > 0) {
+        payload.type = 2;
+        payload.id = id;
+    } else {
+        payload.type = 1;
+    }
+    $.xpost(xn.url('ad', '', true), payload, function(code, message) {
         if(code == 0) {
             window.location.reload();
         } else {
@@ -154,10 +227,10 @@ body.on('change', '#ad_upload', function() {
     var reader = new FileReader();
     reader.onload = function(e) {
         var data = e.target.result;
-        $.xpost(xn.url('ad', '', true), {type:3,data:data,filename:f.name,safe_token:<?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>}, function(code, message) {
+        $.xpost(xn.url('ad', '', true), {type:3,data:data,filename:f.name,safe_token:safeToken}, function(code, message) {
             if(code == 0) {
                 if(message && message.url) {
-                    modal.find('input[name=\"img_url\"]').val(message.url);
+                    modal.find('input[name="img_url"]').val(message.url);
                 }
             } else {
                 $.alert(message);
@@ -169,7 +242,7 @@ body.on('change', '#ad_upload', function() {
 body.on('click', 'a.delete', function() {
     if (window.confirm('确定删除吗？')) {
         var href = $(this).data('href');
-        $.xpost(href, {type:0,safe_token:<?php echo json_encode($safe_token ?? '', JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE);?>}, function(code, message) {
+        $.xpost(href, {type:0,safe_token:safeToken}, function(code, message) {
             if(code == 0) {
                 window.location.reload();
             } else {
@@ -181,13 +254,6 @@ body.on('click', 'a.delete', function() {
 });
 
 modal.on('hidden.bs.modal', function () {
-    modal.find('input[name=\"name\"]').val('');
-    modal.find('input[name=\"url\"]').val('');
-    modal.find('input[name=\"img_url\"]').val('');
-    modal.find('input[name=\"days\"]').val('30');
-    modal.find('input[name=\"area\"]').prop('checked', false);
-    modal.find('input[name=\"area\"][value=\"all\"]').prop('checked', true);
+    adResetForm();
 });
 </script>
-
-
