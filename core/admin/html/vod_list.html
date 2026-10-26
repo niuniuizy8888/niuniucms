@@ -41,7 +41,7 @@
                     </div>
                     <div class="toolbar-group">
                         <label>关键词</label>
-                        <input type="text" id="keyword" class="form-control" placeholder="搜索视频名称…" name="keyword" value="<?php if(!empty($keyword)) { ?><?php echo htmlspecialchars($keyword);?><?php } ?>" style="min-width:160px;">
+                        <input type="text" class="form-control" placeholder="搜索视频名称…" name="keyword" value="<?php if(!empty($keyword)) { ?><?php echo htmlspecialchars($keyword);?><?php } ?>" style="min-width:160px;">
                     </div>
                     <div class="toolbar-group" style="align-self:flex-end;">
                         <div class="d-flex gap-2">
@@ -140,7 +140,7 @@
                                             <button class="btn-close" data-bs-dismiss="modal" aria-label="Close">×</button>
                                         </div>
                                         <div class="modal-body">
-                                            <form action="<?php echo url('vod-sticky', '', true);?>" method="post" id="mode_sticky_form">
+                                            <form action="<?php echo url('vod-sticky', '', true);?>" method="post">
                                                 <input type="hidden" name="vid" value="<?php echo $_video['vid'];?>">
                                                 <input type="hidden" name="cid" value="<?php echo $_video['cid'];?>">
                                                 <input type="hidden" name="safe_token" value="<?php echo $safe_token;?>">

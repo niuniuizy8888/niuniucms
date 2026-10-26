@@ -324,6 +324,7 @@ switch ($action) {
             $code = param('code');
             $name = param('name');
             $result = \App\Service\Collection\ApiArtService::set($code, $api, $name);
+            empty($result['success']) and message(1, $result['msg']);
             message(0, jump($result['msg'], url('api-art_list', array(), TRUE), 3));
         }
         break;

@@ -748,10 +748,10 @@ class TemplateService
         $lexFindings = LexicalSafetyService::scanTemplate($code);
         if (!empty($lexFindings)) {
             $first = $lexFindings[0];
-            exit(message(0, '模板词法校验未通过：' . $first['kind'] . ' ' . $first['name']));
+            exit(message(-1, '模板词法校验未通过：' . $first['kind'] . ' ' . $first['name']));
         }
         $legacy = self::legacyRegexFindings($code);
-        if (!empty($legacy)) exit(message(0, $legacy[0]));
+        if (!empty($legacy)) exit(message(-1, $legacy[0]));
         return TRUE;
     }
 

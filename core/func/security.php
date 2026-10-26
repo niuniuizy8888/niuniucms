@@ -67,6 +67,26 @@ function login_rate_check(string $key, int $max_attempts = 5, int $window = 300)
 }
 
 /**
+ * 同 IP 登录限流参数：读 throttle.php 的 login_max/login_window（后台「限速设置」保存）。
+ * 未保存过时返回调用方给的默认值（前台 5/300、后台 10/300 历史口径不变）。
+ * @param int $def_max 未配置时的次数
+ * @param int $def_window 未配置时的窗口（秒）
+ * @return array{0:int,1:int} [max, window]
+ */
+function login_rate_limits(int $def_max, int $def_window): array
+{
+    static $t = NULL;
+    if (NULL === $t) {
+        $f = function_exists('nncms_runtime_path') ? nncms_runtime_path('throttle.php') : '';
+        $t = ($f && is_file($f)) ? include $f : array();
+        is_array($t) or $t = array();
+    }
+    $max = isset($t['login_max']) ? max(1, intval($t['login_max'])) : $def_max;
+    $window = isset($t['login_window']) ? max(10, intval($t['login_window'])) : $def_window;
+    return array($max, $window);
+}
+
+/**
  * 富文本白名单过滤（红线 §二.4 入库层，所有可存 HTML 的字段必须过此闸）：
  * 标签/属性/CSS 三重白名单（HTML_White 内联库，署名见 .skills/开发规范.md 末节「第三方代码与署名」）——协议判定走 PCRE，
  * href 仅 http(s)/ed2k 系，src 仅 http(s) 或 data:image/{jpg,gif,jpeg,png};base64（svg 不在内）。

@@ -227,10 +227,15 @@ class TmplManageService
         $codes = html_entity_decode($code);
         $r = \App\Service\System\TemplateService::assertSafeEditableCode($codes);
         if ($r === false) {
-            exit(message(0, '模板中包含php代码禁止在后台编辑'));
+            exit(message(-1, '模板中包含php代码禁止在后台编辑'));
         }
 
         $target = $base . ($path ? $path . '/' : '') . $filename;
+        // 只允许改已存在的文件：编辑器无新建入口，放开新建 = 子管理员可在主题根/css/js 下落
+        // 可直接访问的 html/svg/js（同源脚本读 safe_token 提权）。nginx 仅禁 template/*/html/。
+        if (!is_file($target) || is_link($target)) {
+            message(-1, '只能编辑主题内已存在的文件');
+        }
         $targetDirReal = realpath(dirname($target));
         // Windows 下 realpath 返回反斜杠、$base 拼接正斜杠，统一分隔符后做前缀检查
         $normDir = str_replace('\\', '/', rtrim($targetDirReal, '/\\')) . '/';
@@ -238,9 +243,14 @@ class TmplManageService
         if (empty($targetDirReal) || strpos($normDir, $normBase) !== 0) {
             message(-1, lang('data_malformation'));
         }
-        file_put_contents_try($target, $codes);
+        if (FALSE === file_put_contents_try($target, $codes)) {
+            xn_log('template_edit write failed: ' . ($path ? $path . '/' : '') . $filename, 'error');
+            message(-1, '模板写入失败，请检查主题目录写权限');
+        }
         admin_audit_log('template_edit', array('file' => $filename, 'path' => $path));
-        return array('code' => 0, 'message' => '模板修改成功');
+        // {inc:} 子模板在编译期展开，主模板产物的 mtime 判定感知不到子模板变更 => 保存后清编译产物
+        \App\Service\System\AddonService::clearTmpDir(_SERVER('conf')['cache_path'] ?? NULL);
+        return array('code' => 0, 'message' => '模板修改成功，编译缓存已刷新');
     }
 
     /**

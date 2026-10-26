@@ -39,8 +39,8 @@ class LinkManageService
     /**
      * 新增友链（POST 写路径，type=1）：admin_link 场景 token 闸（fail-closed）→
      * name 走 admin_param_text(24) + filter_all_html 入库净化（防后台存储型 XSS）；
-     * url 走 normalizeUrl——非 http(s):// 前缀被归一为 ''，**仍会以空 URL 落库**
-     * （只拒协议、不拒空值，见任务汇报）→ link_create（底层 REPLACE INTO，载荷不含主键 id，
+     * 名称净化后为空即拒；url 走 normalizeUrl（http(s) 前缀 + xn_url_strip 去引号/尖括号），
+     * 填了但不合法即拒（不再静默存空）→ link_create（底层 REPLACE INTO，载荷不含主键 id，
      * 故撞不到已有行、等价 INSERT）。
      * @param int $uid 操作者 uid
      * @param int $time 请求时间戳（create_date）
@@ -50,8 +50,11 @@ class LinkManageService
     {
         self::verifyToken($uid);
 
-        $name = filter_all_html(admin_param_text('name', '', 24));
-        $url = self::normalizeUrl(admin_param_text('url', '', 120));
+        $name = trim(filter_all_html(admin_param_text('name', '', 24)));
+        '' === $name and message('name', '友链名称不能为空（HTML 标签会被过滤）');
+        $rawUrl = admin_param_text('url', '', 120);
+        $url = self::normalizeUrl($rawUrl);
+        '' !== $rawUrl && '' === $url and message('url', '友链地址必须以 http:// 或 https:// 开头');
         FALSE === link_create(array('name' => $name, 'url' => $url, 'create_date' => $time)) and message(-1, lang('create_failed'));
 
         admin_audit_log('link_create', array('name' => $name));
@@ -107,7 +110,8 @@ class LinkManageService
 
     /**
      * 友链 URL 协议白名单：非空且不以 http:// 或 https:// 开头（大小写不敏感）⇒ 返回 ''。
-     * 只做前缀判定（不校验域名/路径合法性），拒绝信号是**空串**，调用方未拦截空串继续写库。
+     * 前缀判定（不校验域名/路径合法性）+ xn_url_strip 去引号/尖括号/控制字符（防第三方主题裸输出进属性逃逸）；
+     * 拒绝信号是**空串**，由 create() 报错。
      * @param string $url 已过 admin_param_text 的原始 URL
      * @return string 合法 URL 原样，或 ''（拒绝）
      */
@@ -116,7 +120,7 @@ class LinkManageService
         if ($url !== '' && !preg_match('#^https?://#i', $url)) {
             return '';
         }
-        return $url;
+        return xn_url_strip($url);
     }
 
     /**

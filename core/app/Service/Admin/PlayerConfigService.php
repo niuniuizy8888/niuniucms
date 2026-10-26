@@ -40,9 +40,11 @@ class PlayerConfigService
             // 与出站闸共用 outbound_block_private()（含 INFRA-02 override 口径）。
             $parsed_url = parse_url($player_url);
             if (outbound_block_private() && !empty($parsed_url['host'])) {
-                $host = $parsed_url['host'];
-                $ip = gethostbyname($host);
-                if ($ip !== $host && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                $host = trim($parsed_url['host'], '[]');
+                // 主机本身是 IP 字面量（127.0.0.1 / [::1]）时直接判；域名才解析。
+                // 旧实现 `$ip !== $host` 本意是跳过解析失败的域名，却把 IP 字面量一并放行了
+                $ip = filter_var($host, FILTER_VALIDATE_IP) ? $host : gethostbyname($host);
+                if (filter_var($ip, FILTER_VALIDATE_IP) && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                     return array('success' => false, 'msg' => '禁止使用内网/保留地址作为播放器解析地址');
                 }
             }

@@ -47,12 +47,14 @@ class AdminIndexService
         empty($email) and message('email', lang('email_is_empty'));
 
         // 限流键用字符串 IP（IPv6 下 $longip≡0 会让全部 v6 出口共享一个桶；）
-        if (!login_rate_check(ip(), 10, 300)) {
-            message(-1, '登录尝试过于频繁，请5分钟后再试');
+        // 次数/窗口读「限速设置」（未配置 10/300）；键加 admin| 前缀，与前台登录分桶计数
+        list($rateMax, $rateWindow) = login_rate_limits(10, 300);
+        if (!login_rate_check('admin|' . ip(), $rateMax, $rateWindow)) {
+            message(-1, '登录尝试过于频繁，请' . max(1, (int)ceil($rateWindow / 60)) . '分钟后再试');
         }
         // 审计修复（F-06）：与前台同口径，邮箱限流键归一为小写（DB 大小写不敏感）。
         // L-2（R4）：账户桶改为「账号+IP 组合」键，消除纯账号锁定 DoS（换 IP 猛打某邮箱不再能全局锁死受害者账号）；无验证码体系故仅 账号+IP + 每IP 两桶。
-        if ($email !== '' && !login_rate_check('uip_' . mb_strtolower($email, 'UTF-8') . '|' . ip(), 10, 300)) {
+        if ($email !== '' && !login_rate_check('admin_uip_' . mb_strtolower($email, 'UTF-8') . '|' . ip(), 10, 300)) {
             message(-1, '该账户在本 IP 登录尝试过于频繁，请5分钟后再试');
         }
 

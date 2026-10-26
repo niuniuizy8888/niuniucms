@@ -62,7 +62,8 @@ class UserService
     {
         $safe_token = param('safe_token');
         FALSE === bull_token_verify(0, $safe_token, 'user_login') and message(-1, lang('illegal_operation'));
-        login_rate_check(ip()) or message(-1, lang('login_too_frequent'));
+        list($rateMax, $rateWindow) = login_rate_limits(5, 300); // 「限速设置」登录次数，未配置沿用 5/300
+        login_rate_check(ip(), $rateMax, $rateWindow) or message(-1, lang('login_too_frequent'));
 
         $email = filter_all_html(param('email'));
         $password = param('password');

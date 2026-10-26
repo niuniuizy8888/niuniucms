@@ -20,7 +20,10 @@ class ApiArtService
         if ('' === $code || !preg_match('#^[A-Za-z0-9_.-]{1,32}$#', $code)) {
             return ['success' => false, 'msg' => '采集源编码仅允许字母/数字/下划线/点/短横线（1-32 位）'];
         }
-        
+        if ('' === ApiSourceService::resolveUrl($api)) {
+            return ['success' => false, 'msg' => '采集源地址必须为 http/https 协议'];
+        }
+
         $conf['api'][$code] = [
             'api' => $api,
             'code' => $code,

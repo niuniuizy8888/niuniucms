@@ -28,7 +28,8 @@ class CategoryManageService
     /**
      * 分类编辑页数据装配：读取分类行并 array_htmlspecialchars 后输出表单字段 + 父级候选树 + safe_token。
      * 分类不存在时 message(-1) 中断（fail-closed）。调用方 cate.php case 'update' GET 分支。
-     * 注意：分类名入库前已转义，此处展示再转一次——存量特殊字符名存在双重转义观感（已登记可疑点）。
+     * name/seo_title/seo_key 入库前已 htmlspecialchars，回显前先 html_entity_decode 还原原文，
+     * 再统一 array_htmlspecialchars 一次——否则每「打开→保存」一轮就多一层 &amp;（实测累积）。
      * @param int $cid 分类 id
      * @param array $catelist 全量分类列表
      * @param int $uid 当前管理员 uid
@@ -41,6 +42,9 @@ class CategoryManageService
         $_cate = cate_read($cid, TRUE);
         empty($_cate) and message(-1, lang('cate_not_exists'));
 
+        foreach (array('name', 'seo_title', 'seo_key') as $_k) {
+            isset($_cate[$_k]) and $_cate[$_k] = html_entity_decode((string)$_cate[$_k], ENT_QUOTES, 'UTF-8');
+        }
         array_htmlspecialchars($_cate);
         return array(
             '_cid' => $cid,

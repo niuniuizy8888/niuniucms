@@ -9,7 +9,9 @@ class ConfigBootstrapService
      * 档位同时决定站点 path 与 cookie 域：0/1 ⇒ './' + cookie_path 置空；2/3 ⇒ '/' + cookie_path '/'。
      * 改档后旧 URL 形态立即失效（前台链接全部按新档位重建），需 nginx 伪静态同步跟上（见 .skills/deploy）。
      * @param int $rewrite 档位 0-3（调用方 SetManageService::saveRewrite 已用 admin_param_int 钳在 0..3）
-     * @return array {success:true, msg:string}（恒成功——file_replace_var 的写失败只回布尔、此处未判）
+     * 写入成功后走「设置→缓存」同一入口清 KV/页缓存与编译产物（导航等缓存里的旧形态链接随之失效）；
+     * 切到 2/3（需 nginx 伪静态规则）时提示先确认服务器规则已配置——本机自探测会被出站内网闸拦截，故只提示不探测。
+     * @return array {success:bool, msg:string} 配置文件不可写时 success=false
      */
     public static function saveRewrite(int $rewrite): array
     {
@@ -24,9 +26,21 @@ class ConfigBootstrapService
             $replace['cookie_path'] = '/';
         }
         // 启动期配置（伪静态/路径/cookie 域）：请求入口在 KV 注入前即依赖这些值，必须物理写入 config/config.php
-        file_replace_var(\nncms_runtime_path_w('config.php'), $replace);
-        admin_audit_log('rewrite_update', array('rewrite' => $rewrite));
-        return array('success' => true, 'msg' => lang('modify_successfully'));
+        $old = intval(_SERVER('conf')['url_rewrite_on'] ?? 0);
+        if (FALSE === file_replace_var(\nncms_runtime_path_w('config.php'), $replace)) {
+            xn_log('rewrite save failed: config.php not writable', 'error');
+            return array('success' => false, 'msg' => '保存失败：配置文件不可写');
+        }
+        admin_audit_log('rewrite_update', array('rewrite' => $rewrite, 'old' => $old));
+        if ($old !== $rewrite) {
+            $conf = _SERVER('conf');
+            SystemMaintenanceService::clearCache(1, 1, (string)($conf['cache_path'] ?? ''));
+        }
+        $msg = lang('modify_successfully');
+        if ($old !== $rewrite && $rewrite >= 2) {
+            $msg .= '。当前模式依赖服务器伪静态规则，请立即打开前台确认；若出现 404，请改回原模式或补上 nginx 规则';
+        }
+        return array('success' => true, 'msg' => $msg);
     }
 
     /**

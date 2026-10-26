@@ -28,7 +28,7 @@ trait SetManageWebsiteTrait
             ),
             'setting' => $setting,
             'input' => array(
-                'sitename' => form_text('sitename', $conf['sitename']),
+                'sitename' => form_text('sitename', self::decodeStoredText($conf['sitename'])),
                 'logo' => form_text('logo', $conf['logo']),
                 'pagesize' => form_text('pagesize', $conf['pagesize']),
                 'postlist_pagesize' => form_text('postlist_pagesize', $conf['postlist_pagesize']),
@@ -43,9 +43,9 @@ trait SetManageWebsiteTrait
                 'sitemap_play' => form_radio('sitemap_play', array('1' => '开', '0' => '关'), array_value($conf, 'sitemap_play', 0)),
                 'sitemap_num' => form_text('sitemap_num', $conf['sitemap_num']),
                 'down_pic' => form_radio_yes_no('down_pic', $conf['down_pic']),
-                'area' => form_text('area', $conf['area']),
-                'lang' => form_text('lang', $conf['lang']),
-                'year' => form_text('year', $conf['year']),
+                'area' => form_text('area', self::decodeStoredText($conf['area'])),
+                'lang' => form_text('lang', self::decodeStoredText($conf['lang'])),
+                'year' => form_text('year', self::decodeStoredText($conf['year'])),
                 'agg' => form_textarea('agg', $conf['agg'], '', '100%', 100),
                 'tg' => form_text('tg', $conf['tg']),
                 'email' => form_text('email', $conf['email']),
@@ -53,6 +53,17 @@ trait SetManageWebsiteTrait
             ),
             'safe_token' => bull_token_set($uid, 'admin_set'),
         );
+    }
+
+    /**
+     * 入库已 htmlspecialchars 的文本（sitename/area/lang/year）回显前还原原文，
+     * 交给 form_text 统一转义一次——否则每「打开→保存」一轮就多一层 &amp;。
+     * @param mixed $v 配置存储值
+     * @return string 原文
+     */
+    private static function decodeStoredText($v): string
+    {
+        return html_entity_decode((string)$v, ENT_QUOTES, 'UTF-8');
     }
 
     /**

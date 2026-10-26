@@ -371,6 +371,14 @@ class ApiExecutionService
             return array('error' => true, 'msg' => lang('data_malformation'));
         }
 
+        // 采集地址一律按 code 取已保存配置（ApiSourceService::set 已做协议校验），不信任 URL 参数里的 api——
+        // 否则保存侧校验形同虚设，可直接 ?api=gopher://… 让服务端出网
+        $conf = _SERVER('conf');
+        $api = isset($conf['api'][$code]['api']) ? (string)$conf['api'][$code]['api'] : '';
+        if ('' === ApiSourceService::resolveUrl($api)) {
+            return array('error' => true, 'msg' => '采集源不存在或地址无效，请先在采集列表中设置该采集源');
+        }
+
         $h = $hoursMap[$type];
         $t = '';
         // ⚠ 批处理（2026-10 采集提速）：逐页通路的真实瓶颈不是入库，而是**每页一次的浏览器往返**：
@@ -599,7 +607,9 @@ class ApiExecutionService
         $apicate = $conf['bind'][$code];
         $ress = array();
 
-        $vod_names = array_column($data['data'], 'vod_name');
+        // 查重口径与入库口径一致：库里 name 存的是 storedVodName() 的转义文本，
+        // 拿远端原文直接比对时带 & < > " ' 的片名永远匹配不上 => 每采一次新增一条
+        $vod_names = array_map(array(__CLASS__, 'storedVodName'), array_column($data['data'], 'vod_name'));
         $existing_vods = array();
         if (!empty($vod_names)) {
             // 发布前检查修复（C-2）：500/批分批 whereIn（fastDbFindExistingRowsMap 同款形态），
@@ -628,7 +638,7 @@ class ApiExecutionService
             $prefetch_urls = array();
             foreach ($data['data'] as $pv) {
                 if (!isset($apicate[$pv['type_name']]) || empty($pv['vod_name'])) continue;
-                if (!empty($existing_vods[$pv['vod_name']])) continue;
+                if (!empty($existing_vods[self::storedVodName($pv['vod_name'])])) continue;
                 if (!preg_match('#^https?://#i', (string)($pv['vod_pic'] ?? ''))) continue;
                 $pu = xn_url_strip($pv['vod_pic']);
                 if ('' !== $pu) $prefetch_urls[$pu] = $pu;
@@ -662,7 +672,7 @@ class ApiExecutionService
                 $cj_play_url_arr = $payload['cj_play_url'];
                 $cj_play_server_arr = $payload['cj_play_server'];
                 $cj_play_note_arr = $payload['cj_play_note'];
-                $info = $existing_vods[$v['vod_name']] ?? null;
+                $info = $existing_vods[$arr['name']] ?? null;
                 if (!$info) {
                     $vid = \App\Repository\RepositoryFactory::vod()->insert($arr); \App\Service\Front\TypeService::bumpFacets();
                     $vod_vid = array('vid' => $vid, 'cid' => $cid);
@@ -683,6 +693,10 @@ class ApiExecutionService
                     $vid = $info['vid'];
                     $update['create_date'] = time();
                     !empty($update) && FALSE === video_update($vid, $update) and message(-1, lang('update_thread_failed'));
+                }
+                // 本站无对应播放器的来源整组被剔除：显式提示，避免「采集完成」却丢了播放地址
+                if (!empty($payload['dropped_from'])) {
+                    $msg .= " <font color='orange'>（未配置播放器，已跳过来源：" . htmlspecialchars(implode(',', array_unique($payload['dropped_from'])), ENT_QUOTES, 'UTF-8') . '）</font>';
                 }
             }
             $ress[] = ($k + 1) . '、' . htmlspecialchars($v['vod_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
@@ -705,7 +719,7 @@ class ApiExecutionService
     {
         $arr = array();
         $arr['vod_id'] = intval($v['vod_id']);
-        $arr['name'] = htmlspecialchars($v['vod_name'], ENT_QUOTES);
+        $arr['name'] = self::storedVodName($v['vod_name']);
         $arr['en'] = htmlspecialchars($v['vod_en'], ENT_QUOTES);
         $arr['sub'] = htmlspecialchars($v['vod_sub'], ENT_QUOTES);
         $arr['letter'] = htmlspecialchars($v['vod_letter'], ENT_QUOTES);
@@ -738,12 +752,14 @@ class ApiExecutionService
         $cj_play_url_arr = explode('$$$', $v['vod_play_url']);
         $cj_play_server_arr = explode('$$$', $v['vod_play_server']);
         $cj_play_note_arr = explode('$$$', $v['vod_play_note']);
+        $dropped_from = array();
         foreach ($cj_play_from_arr as $kk => $vv) {
             if (empty($vv) || empty($players[$vv])) {
+                '' !== trim((string)$vv) and $dropped_from[] = (string)$vv;
                 unset($cj_play_from_arr[$kk], $cj_play_url_arr[$kk], $cj_play_server_arr[$kk], $cj_play_note_arr[$kk]);
                 continue;
             }
-            $cj_play_url_arr[$kk] = rtrim($cj_play_url_arr[$kk], '#');
+            $cj_play_url_arr[$kk] = self::filterPlayUrlScheme(rtrim((string)($cj_play_url_arr[$kk] ?? ''), '#'));
             if ($param['filter'] > 0 && strpos(',' . $param['filter_from'] . ',', $vv) !== false) {
                 continue;
             }
@@ -762,7 +778,43 @@ class ApiExecutionService
             'cj_play_url' => $cj_play_url_arr,
             'cj_play_server' => $cj_play_server_arr,
             'cj_play_note' => $cj_play_note_arr,
+            'dropped_from' => $dropped_from,
         );
+    }
+
+    /**
+     * 远端片名 → 库内 name 列口径：htmlspecialchars(ENT_QUOTES) + vod 列宽截断。
+     * 入库（videoRowPayload）与查重（importVideoData whereIn / 预取跳过）必须共用本函数，否则口径漂移即重复入库。
+     * @param mixed $name 远端 vod_name 原文
+     * @return string 与 vod.name 存储值逐字节一致的文本
+     */
+    private static function storedVodName($name): string
+    {
+        $row = \App\Service\Content\VideoService::fitColumns(array('name' => htmlspecialchars((string)$name, ENT_QUOTES)));
+        return (string)$row['name'];
+    }
+
+    /**
+     * 单个播放组（`集名$地址#集名$地址`）逐集协议闸：地址带 scheme 时只放行 http/https，
+     * javascript:/data:/vbscript: 等整集剔除；无 scheme 的解析 ID（如 `第1集$abc123`）原样保留，交播放器解析。
+     * @param string $group 单个播放组原文
+     * @return string 过滤后的播放组
+     */
+    private static function filterPlayUrlScheme(string $group): string
+    {
+        if ('' === $group) return '';
+        $out = array();
+        foreach (explode('#', $group) as $ep) {
+            $pos = strpos($ep, '$');
+            $url = trim(false === $pos ? $ep : substr($ep, $pos + 1));
+            // 去控制字符/空白后再判 scheme（防 `java\tscript:` 之类分隔绕过）
+            $probe = preg_replace('/[\x00-\x20\x7F]/', '', $url);
+            if (preg_match('#^([a-z][a-z0-9+.\-]*):#i', $probe, $m) && !in_array(strtolower($m[1]), array('http', 'https'), true)) {
+                continue;
+            }
+            $out[] = $ep;
+        }
+        return implode('#', $out);
     }
 
     /**
@@ -995,7 +1047,8 @@ class ApiExecutionService
                 $get_tag = get_tag($v['art_name']);
                 $tags = $v['type_name'] . ',' . $get_tag;
                 $arr['content'] = self::sanitizeImportedArtContent($v['art_content'] ?? '');
-                $info = \App\Repository\RepositoryFactory::art()->findOne(array('name' => $v['art_name']));
+                // 查重口径同入库（转义后文本），原文比对会让带 & < > " ' 的标题重复入库
+                $info = \App\Repository\RepositoryFactory::art()->findOne(array('name' => $arr['name']));
                 if (!$info) {
                     $aid = \App\Repository\RepositoryFactory::art()->insert($arr);
                     $art_aid = array('aid' => $aid, 'cid' => $cid);
@@ -1227,6 +1280,8 @@ class ApiExecutionService
         $html = https_request($url, '', '', 30, 0, 8 * 1048576); // 传输中 8MB 上限（审查修复：采集页整包入内存面）
         $json = json_decode($html, true);
         if (!$json) {
+            // 源不可达 / 被出站闸拦截（https_request 返回 FALSE）/ 非 JSON：留错误日志，不再静默
+            xn_log('collect fetch failed: ' . (FALSE === $html ? 'request blocked or unreachable' : 'invalid json') . ', url: ' . $url, 'error');
             return array('code' => 1002, 'msg' => 'JSON格式错误' . ', url: ' . $url . ', response: ' . mb_substr($html, 0, 150));
         }
         $array_page = array();
@@ -1324,6 +1379,7 @@ class ApiExecutionService
                 return $arr['class'];
             }
         }
+        xn_log('collect class list failed: ' . $api, 'error');
         return array();
     }
 
@@ -1343,11 +1399,11 @@ class ApiExecutionService
         $cached = cache_get($cacheKey);
         if (is_array($cached) && !empty($cached)) return $cached;
 
-        $api = trim($api);
-        if ('' === $api) {
-            $conf = _SERVER('conf');
-            $api = isset($conf['api'][$code]['api']) ? (string)$conf['api'][$code]['api'] : '';
-        }
+        // 已保存的源以配置为准；未保存（向导首次绑定）才用传入地址，且同样过协议闸
+        $conf = _SERVER('conf');
+        $stored = isset($conf['api'][$code]['api']) ? (string)$conf['api'][$code]['api'] : '';
+        $api = '' !== $stored ? $stored : trim($api);
+        if ('' === ApiSourceService::resolveUrl($api)) return array();
         $cls = self::fetchSourceClassList($api);
         if (!empty($cls)) cache_set($cacheKey, $cls, 3600);
         return $cls;

@@ -99,7 +99,7 @@ class SetManageService
     {
         self::verifyToken($uid, 'admin_set_rw');
         $result = ConfigBootstrapService::saveRewrite(admin_param_int('rewrite', 0, 0, 3));
-        return array('code' => 0, 'message' => $result['msg']);
+        return array('code' => empty($result['success']) ? -1 : 0, 'message' => $result['msg']);
     }
 
     /**

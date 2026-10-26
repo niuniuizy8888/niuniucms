@@ -22,12 +22,11 @@ trait SetManageThrottleTrait
         $throttle = is_file($throttleFile) ? include $throttleFile : array();
         if (!is_array($throttle)) $throttle = array();
 
-        $routeMetaFile = APP_PATH . 'core/config/route_meta.php';
-        $routeMeta = is_file($routeMetaFile) ? include $routeMetaFile : array();
-        if (!is_array($routeMeta)) $routeMeta = array();
-
-        // 提取登录限流参数
-        $loginThrottle = $routeMeta['user']['login']['throttle'] ?? array();
+        // 登录限流（同 IP 尝试次数/窗口）：前后台登录均经 login_rate_limits() 读取，未保存过显示后台默认 10/300
+        $loginThrottle = array(
+            'max' => intval($throttle['login_max'] ?? 10),
+            'window' => intval($throttle['login_window'] ?? 300),
+        );
 
         return array(
             'header' => array(
@@ -41,10 +40,10 @@ trait SetManageThrottleTrait
                 'session_window' => form_text('session_window', array_value($throttle, 'session_window', 60)),
                 'ip_limit' => form_text('ip_limit', array_value($throttle, 'ip_limit', 10)),
                 'ip_window' => form_text('ip_window', array_value($throttle, 'ip_window', 600)),
-                'login_max' => form_text('login_max', array_value($loginThrottle, 'max', 30)),
+                'login_max' => form_text('login_max', array_value($loginThrottle, 'max', 10)),
                 'login_window' => form_text('login_window', array_value($loginThrottle, 'window', 300)),
-                'register_max' => form_text('register_max', 10),
-                'register_window' => form_text('register_window', 3600),
+                'register_max' => form_text('register_max', array_value($throttle, 'register_max', 10)),
+                'register_window' => form_text('register_window', array_value($throttle, 'register_window', 3600)),
                 'verify_blacklist' => form_radio('verify_blacklist', array('1' => '开启', '0' => '关闭'), array_value($throttle, 'verify_blacklist', 1) ? 1 : 0),
                 'verify_robot' => form_radio('verify_robot', array('1' => '开启', '0' => '关闭'), array_value($throttle, 'verify_robot', 0) ? 1 : 0),
                 'bot_list' => form_textarea('bot_list', implode("\n", array_value($throttle, 'bot_list', array())), '', '100%', 80),
@@ -93,32 +92,20 @@ trait SetManageThrottleTrait
         $throttle['api_limit'] = admin_param_int('api_limit', 30, 1, 100000);
         $throttle['api_window'] = admin_param_int('api_window', 600, 10, 86400);
 
-        // 写入 throttle.php
-        $content = "<?php\nreturn " . var_export($throttle, true) . ";\n";
-        $r = file_put_contents_try($throttleFile, $content);
-        if (false === $r) return array('code' => -1, 'message' => '保存限速配置失败');
-
-        // 更新 route_meta.php 中的登录限流
-        $loginMax = admin_param_int('login_max', 30, 1, 10000);
+        // 登录/注册限流与其余项同落 throttle.php（运行时可写配置）。
+        // 不再改写 core/config/route_meta.php：core/ 部署只读，且 var_export 回写会冲掉该文件注释。
+        $loginMax = admin_param_int('login_max', 10, 1, 10000);
         $loginWindow = admin_param_int('login_window', 300, 10, 86400);
-        $routeMetaFile = APP_PATH . 'core/config/route_meta.php';
-        $routeMeta = is_file($routeMetaFile) ? include $routeMetaFile : array();
-        if (!is_array($routeMeta)) $routeMeta = array();
-        $routeMeta['user']['login']['throttle'] = array(
-            'scene' => 'login_page',
-            'max' => $loginMax,
-            'window' => $loginWindow,
-        );
-        $metaContent = "<?php\nreturn " . var_export($routeMeta, true) . ";\n";
-        file_put_contents_try($routeMetaFile, $metaContent);
+        $throttle['login_max'] = $loginMax;
+        $throttle['login_window'] = $loginWindow;
+        $throttle['register_max'] = admin_param_int('register_max', 10, 1, 10000);
+        $throttle['register_window'] = admin_param_int('register_window', 3600, 10, 86400);
 
-        // 更新注册限流（写入 UserService 使用的常量）
-        $registerMax = admin_param_int('register_max', 10, 1, 10000);
-        $registerWindow = admin_param_int('register_window', 3600, 10, 86400);
-        $throttle['register_max'] = $registerMax;
-        $throttle['register_window'] = $registerWindow;
-        $content2 = "<?php\nreturn " . var_export($throttle, true) . ";\n";
-        file_put_contents_try($throttleFile, $content2);
+        $content = "<?php\nreturn " . var_export($throttle, true) . ";\n";
+        if (false === file_put_contents_try($throttleFile, $content)) {
+            xn_log('throttle save failed: ' . basename($throttleFile) . ' not writable', 'error');
+            return array('code' => -1, 'message' => '保存限速配置失败（配置文件不可写）');
+        }
 
         cache_delete('throttle_config');
         admin_audit_log('throttle_save', array(

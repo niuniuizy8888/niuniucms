@@ -67,8 +67,7 @@ class AdManageService
         self::verifyToken($uid);
 
         $name = filter_all_html(admin_param_text('name', '', 100));
-        $url = self::safeUrl(admin_param_text('url', '', 255));
-        $img_url = self::safeImgUrl(admin_param_text('img_url', '', 255));
+        list($url, $img_url) = self::validatedUrls();
         $area = filter_all_html(admin_param_text('area', '', 32));
         $days = admin_param_int('days', 30, 0, 3650);
         $arr = array(
@@ -99,8 +98,7 @@ class AdManageService
         $id = admin_param_int('id');
         $update = array();
         $name = admin_param_text('name', '', 100);
-        $url = self::safeUrl(admin_param_text('url', '', 255));
-        $img_url = self::safeImgUrl(admin_param_text('img_url', '', 255)); // 列宽 255；允许本地 upload/ 相对路径
+        list($url, $img_url) = self::validatedUrls(); // 列宽 255；图片允许本地 upload/ 相对路径
         $area = admin_param_text('area', '', 32);
         $days = param('days', '');
         $name !== '' and $update['name'] = filter_all_html($name);
@@ -166,16 +164,27 @@ class AdManageService
         admin_audit_log('ad_delete', array('id' => $id));
     }
 
+    /**
+     * 取并校验广告跳转链接与图片地址：填了但不合法时直接报错（此前静默存空，运营侧表现为「填了没生效」）。
+     * @return array{0:string,1:string} [url, img_url]
+     */
+    private static function validatedUrls(): array
+    {
+        $rawUrl = admin_param_text('url', '', 255);
+        $rawImg = admin_param_text('img_url', '', 255);
+        $url = self::safeUrl($rawUrl);
+        $img_url = self::safeImgUrl($rawImg);
+        '' !== $rawUrl && '' === $url and message('url', '广告链接必须以 http:// 或 https:// 开头');
+        '' !== $rawImg && '' === $img_url and message('img_url', '广告图片只支持 http(s) 地址或上传后的 upload/ 路径');
+        return array($url, $img_url);
+    }
+
     // 链接仅允许 http/https（与 LinkManageService::normalizeUrl 同口径，防 javascript: 注入）
     /**
      * 广告链接/图片地址的 scheme 白名单闸：**只放行以 http:// 或 https:// 开头的串**，
-     * 其余（javascript: / data: / vbscript: / 协议相对双斜杠 / 站内相对路径）一律返回**空串**
-     * ——是「静默改空」而不是拒绝报错，保存链路照常成功，只是该列变成空值，
-     * 运营侧表现为「链接填了却没生效」，排查时先看这里而不是查库。
-     * 空串入参按「未填」对待，原样返回空串（不视为非法）。
-     * ⚠ 边界口径（红线 §二.4）：本闸**只判前缀**，不校验后续字符、也**不做输出转义**——
-     *   与 player_parse_kind() 那套「scheme + 字符闸」的严格口径不同（那边还会拦空白/引号/尖括号/反斜杠），
-     *   两处刻意保持各自的适用范围，别互相抄；广告位输出到模板前仍需按上下文转义（模板裸 echo）。
+     * 其余（javascript: / data: / vbscript: / 协议相对双斜杠 / 站内相对路径）一律返回**空串**，
+     * 由 validatedUrls() 转成报错。空串入参按「未填」对待，原样返回空串（不视为非法）。
+     * 合法地址再过 xn_url_strip 去引号/尖括号/控制字符（防第三方主题裸输出进属性逃逸）。
      * @param string $url 后台表单传来的地址（签名已声明 string，取参侧是 admin_param_text，长度限 255 与列宽对齐）
      * @return string 合法的 http/https 地址原文，或空串（非法/未填）
      */
@@ -184,7 +193,7 @@ class AdManageService
         if ($url !== '' && !preg_match('#^https?://#i', $url)) {
             return '';
         }
-        return $url;
+        return xn_url_strip($url);
     }
 
     /**
@@ -199,7 +208,7 @@ class AdManageService
             return '';
         }
         if (preg_match('#^https?://#i', $url)) {
-            return $url;
+            return xn_url_strip($url);
         }
         $path = str_replace('\\', '/', $url);
         if (strpos($path, '..') !== false) {
