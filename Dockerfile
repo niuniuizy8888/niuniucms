@@ -33,9 +33,10 @@ RUN set -eux; \
         mbstring \
         gd \
         zip \
-        opcache \
         bcmath; \
-    docker-php-ext-enable opcache || true; \
+    if ! php -m | grep -q '^Zend OPcache$'; then \
+        docker-php-ext-install -j"$(nproc)" opcache; \
+    fi; \
     rm -rf /var/lib/apt/lists/*; \
     rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf; \
     rm -f /usr/local/etc/php-fpm.d/www.conf /usr/local/etc/php-fpm.d/zz-docker.conf
@@ -44,16 +45,17 @@ COPY docker/php.ini /usr/local/etc/php/conf.d/zz-nncms.ini
 COPY docker/www.conf /usr/local/etc/php-fpm.d/www.conf
 COPY docker/nginx.conf /etc/nginx/conf.d/nncms.conf
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh \
+RUN sed -i 's/\r$//' /entrypoint.sh \
+    && chmod +x /entrypoint.sh \
     && mkdir -p /run/nginx /var/log/nginx \
     && chown -R www-data:www-data /var/log/nginx
 
 WORKDIR ${NN_APP_ROOT}
-COPY --chown=www-data:www-data . ${NN_APP_ROOT}
+COPY --chown=root:root . ${NN_APP_ROOT}
 
 RUN mkdir -p data runtime/cache runtime/log runtime/tmp upload plugins template \
     && chown -R www-data:www-data data runtime upload plugins template \
-    && chmod 555 core || true
+    && chmod -R a+rX core
 
 EXPOSE 80
 

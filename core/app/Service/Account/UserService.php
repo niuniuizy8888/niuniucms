@@ -32,51 +32,25 @@ class UserService
     }
 
     /**
-     * 更新用户行并成对失效三类读缓存：分布式缓存 user-{uid}、按登录索引进的 user_email_{md5} /
-     * user_name_{md5}，以及请求级静态表 self::$g_static_users（合并新值而非删除）。
-     * 凭据变更（$data 含 password 或 salt）时先回读当前行、把它现有的 email/username 两个键清掉——
-     * 否则旧 hash 留在缓存里 1 小时，旧密码仍可登录、新密码反被拒（审计修复，勿简化这段）。
-     * 内部走 self::read() 取现行，会顺带填充静态缓存并触发 format()（多一次缓存/DB 读，仅在改密时）。
-     * @param mixed $uid  目标用户主键（组装为 array('uid'=>$uid) 条件，绑定值）
-     * @param array $data 列名=>值 更新集（签名已声明；列名以 + 结尾走原子自增表达式）
-     * @return int|FALSE 影响行数；$uid 为空或底层 user__update 失败为 FALSE（注意：更新 0 行也算成功返回 int）
+     * 更新成功后清理用户缓存及旧版登录索引缓存；凭据变化时吊销其它会话。
+     * 失败返回 FALSE，成功返回影响行数（包含合法的 0），失败不修改缓存。
      */
     public static function update($uid, array $data)
     {
         if (empty($uid)) return FALSE;
-        // 审计修复：凭据变更（改密/改盐）必须失效按 email/username 索引的登录查询缓存。
-        // readByEmail/readByUsername 缓存整行（含 password hash）TTL 3600s，而此前仅在 $data 含
-        // email/username 时才清键——改密只传 password/salt，旧 hash 仍在缓存里，旧密码可在 1 小时内
-        // 继续登录成功、新密码反被拒（管理员重置密码同样受影响）。
-        if (isset($data['password']) || isset($data['salt'])) {
-            $cur = self::read($uid);
-            if (!empty($cur['email'])) cache_delete('user_email_' . md5($cur['email']));
-            if (!empty($cur['username'])) cache_delete('user_name_' . md5($cur['username']));
-        }
-        if (isset($data['email'])) {
-            cache_delete('user_email_' . md5($data['email']));
-        }
-        if (isset($data['username'])) {
-            cache_delete('user_name_' . md5($data['username']));
-        }
-        if (isset(self::$g_static_users[$uid])) {
-            $old = self::$g_static_users[$uid];
-            if (isset($data['email']) && isset($old['email']) && $old['email'] != $data['email']) {
-                cache_delete('user_email_' . md5($old['email']));
-            }
-            if (isset($data['username']) && isset($old['username']) && $old['username'] != $data['username']) {
-                cache_delete('user_name_' . md5($old['username']));
-            }
-        }
+        $cur = self::read($uid);
         $result = user__update($uid, $data);
+        // 写失败时保留真实缓存和会话，不能把未持久化的密码合并到内存。
+        if (FALSE === $result) return FALSE;
+        foreach (array('email' => 'user_email_', 'username' => 'user_name_') as $field => $prefix) {
+            if (!empty($cur[$field])) cache_delete($prefix . md5($cur[$field]));
+            if (!empty($data[$field])) cache_delete($prefix . md5($data[$field]));
+        }
         cache_delete('user-' . $uid);
-        isset(self::$g_static_users[$uid]) and self::$g_static_users[$uid] = array_merge(self::$g_static_users[$uid], $data);
-        // 上线前审计 AUTH-02：改密/改盐后吊销该 uid 其它会话（保留当前 sid，由调用方 regenerate）
-        if (FALSE !== $result && (isset($data['password']) || isset($data['salt']))) {
+        unset(self::$g_static_users[$uid]);
+        if (isset($data['password']) || isset($data['salt'])) {
             $curSid = (PHP_SESSION_ACTIVE === session_status()) ? (string)session_id() : '';
-            try {
-                \App\Service\Account\SessionService::destroyByUid((int)$uid, $curSid);
-            } catch (\Throwable $e) {}
+            \App\Service\Account\SessionService::destroyByUid((int)$uid, $curSid);
         }
         return $result;
     }
@@ -170,48 +144,38 @@ class UserService
     }
 
     /**
-     * 按 email 读用户（登录/找回链路）：分布式缓存 user_email_{md5(email)}（TTL 3600s）⇒ miss 回表 ⇒ 缓存**格式化后的整行**。
-     * ⚠ 缓存含 password hash 与 salt ⇒ 任何改密/改盐必须同时清该键（UserService::update() 已按此处理，勿绕过本服务直接写库）。
-     * 只缓存命中行：查无此人返回 NULL 且不写缓存（负结果每次回表）。
-     * @param string $email 邮箱原文（签名已声明；键用 md5($email) 不做大小写/空白归一，调用方需自行保证一致性）
-     * @return array|null 用户行（含敏感列，输出前需 safeInfo()）；未命中为 NULL
+     * 登录和找回密码始终从主库读取凭据。数据库排序规则可能将不同大小写、重音
+     * 视为同一账户，不能按输入字符串缓存整行密码；旧版别名缓存也不再读取。
      */
     public static function readByEmail(string $email)
     {
-        $key = 'user_email_' . md5($email);
-        $user = cache_get($key);
-        if (NULL === $user) {
-            $user = user__read(array('email' => $email));
-            if ($user) {
-                self::format($user);
-                cache_set($key, $user, 3600);
-            }
-        }
-        if ($user) self::$g_static_users[$user['uid']] = $user;
-        return $user;
+        return self::readForLogin('email', $email);
     }
 
-    /**
-     * 按用户名读用户（登录链路）：分布式缓存 user_name_{md5(username)}（TTL 3600s）⇒ miss 回表 ⇒ 缓存格式化后的整行。
-     * 缓存键与敏感内容口径同 readByEmail()：改密/改盐必须清该键，改名则由 update() 清旧名与新名两个键。
-     * @param string $username 用户名（签名已声明；键用 md5($username)，不做大小写归一）
-     * @return array|null 用户行（含敏感列）；未命中为 NULL
-     */
     public static function readByUsername(string $username)
     {
-        $key = 'user_name_' . md5($username);
-        $user = cache_get($key);
-        if (NULL === $user) {
-            $user = user__read(array('username' => $username));
-            if ($user) {
-                self::format($user);
-                cache_set($key, $user, 3600);
-            }
-        }
-        if ($user) self::$g_static_users[$user['uid']] = $user;
-        return $user;
+        return self::readForLogin('username', $username);
     }
 
+    private static function readForLogin(string $field, string $value)
+    {
+        $db = _SERVER('db');
+        try {
+            $pdo = $db->connect();
+            if (!$pdo) return NULL;
+            $stmt = $pdo->prepare('SELECT * FROM ' . $db->qi($db->tablepre . 'user')
+                . ' WHERE ' . $db->qi($field) . ' = ? LIMIT 1');
+            $stmt->execute(array($value));
+            $user = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$user) return NULL;
+            self::format($user);
+            self::$g_static_users[$user['uid']] = $user;
+            return $user;
+        } catch (\PDOException $e) {
+            xn_log('credential read failed: ' . $e->getCode(), 'db_error');
+            return NULL;
+        }
+    }
     /**
      * 取 user 表当前最大 uid：直连 RepositoryFactory::user()->maxId('uid')（不经本服务的任何缓存层）。
      * 用途是「下一个可用 id」一类容量探测，不保证无并发空隙。

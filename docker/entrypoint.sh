@@ -23,7 +23,11 @@ if [ ! -f data/install.lock ] && [ -n "${NN_DB_HOST:-}" ]; then
   done
 fi
 
-chown -R www-data:www-data data runtime upload 2>/dev/null || true
+chown -R www-data:www-data data runtime upload plugins template
+
+if [ "${NN_ROLE:-app}" = worker ]; then
+  exec su -s /bin/sh www-data -c 'while :; do php tools/queue_worker.php --limit=1; sleep 2; done'
+fi
 
 php-fpm -D
 exec nginx -g 'daemon off;'

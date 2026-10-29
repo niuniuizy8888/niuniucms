@@ -408,7 +408,6 @@ function install_writable_dirs()
         '../upload/'        => APP_PATH . 'upload/',
         '../plugins/'       => APP_PATH . 'plugins/',
         '../template/'      => APP_PATH . 'template/',
-        '../core/config/'   => APP_PATH . 'core/config/',
         '../data/'          => APP_PATH . 'data/',
     );
 }

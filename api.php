@@ -117,9 +117,7 @@ switch ($route) {
                 $c = trim($c);
                 if ('' !== $c && !empty($apis[$c]['api']) && class_exists('\App\Service\System\TaskQueueService')) {
                     // 同源已有 pending/running 任务时跳过，防计划任务高频调用重复入队（审计修复）
-                    if (0 === \App\Service\System\TaskQueueService::countActive('cron_source', array('code' => $c))) {
-                        \App\Service\System\TaskQueueService::enqueue('cron_source', array('code' => $c));
-                    }
+                    \App\Service\System\TaskQueueService::enqueue('cron_source', array('code' => $c));
                 }
             }
         } else {

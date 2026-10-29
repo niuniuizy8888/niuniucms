@@ -23,10 +23,28 @@ services:
       NN_DB_USER: ${NN_DB_USER:-nncms}
       NN_DB_PASSWORD: ${NN_DB_PASSWORD:-nncms_change_me}
       TZ: Asia/Shanghai
-    volumes:
+    volumes: &app_volumes
       - nncms_data:/var/www/nncms/data
       - nncms_runtime:/var/www/nncms/runtime
       - nncms_upload:/var/www/nncms/upload
+      - nncms_plugins:/var/www/nncms/plugins
+      - nncms_template:/var/www/nncms/template
+    restart: unless-stopped
+    networks:
+      - nncms_net
+
+  worker:
+    image: niuniucms:local
+    container_name: nncms-worker
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      NN_ROLE: worker
+      TZ: Asia/Shanghai
+    volumes: *app_volumes
+    healthcheck:
+      disable: true
     restart: unless-stopped
     networks:
       - nncms_net
@@ -55,6 +73,8 @@ volumes:
   nncms_data:
   nncms_runtime:
   nncms_upload:
+  nncms_plugins:
+  nncms_template:
   nncms_mysql:
 
 networks:

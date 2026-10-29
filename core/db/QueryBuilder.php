@@ -616,13 +616,13 @@ class QueryBuilder
      * 写入：UPDATE，返回影响行数；列名以 + 结尾视为自增表达式（如 son+ => son = son + 1）
      * 未设置 where 时抛异常，防止全表更新
      */
-    public function update(array $data): int
+    public function update(array $data): int|false
     {
         if (empty($data)) return 0;
         if (!$this->wheres) throw new \RuntimeException('QueryBuilder::update requires where conditions');
         $sql = $this->updateSql($data);
         $stmt = $this->db->prepare_execute($sql, $this->params);
-        return $stmt ? $stmt->rowCount() : 0;
+        return $stmt ? $stmt->rowCount() : false;
     }
 
     /**

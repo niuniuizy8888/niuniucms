@@ -174,7 +174,7 @@ include_once CORE_PATH . 'App.php';
 App::set('conf', $conf);
 include CORE_PATH . 'core.php';
 // 上线前审计 WEB-01：函数层已装载后校验 Host（白名单空则放行，见 http_host_allowed）
-if (function_exists('http_host_allowed') && !http_host_allowed(null, $domain, is_array($conf) ? $conf : array())) {
+if (PHP_SAPI !== 'cli' && function_exists('http_host_allowed') && !http_host_allowed(null, $domain, is_array($conf) ? $conf : array())) {
     if (!headers_sent()) {
         http_response_code(400);
         header('Content-Type: text/plain; charset=utf-8');

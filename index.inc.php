@@ -353,24 +353,8 @@ if (isset($domain['site'][$hosts]) && is_array($domain['site'][$hosts])) {
         $nncms['path_tpl'] = $maccms['path_tpl'] = $path_tpl = \App\Service\System\TemplateService::themePublicPath($siteconf['path']);
     }
 }
-// ============================================================
-// 采集任务队列消费：请求尾触发，每请求最多 1 条
-// shutdown 在响应发送后执行（不拖慢页面）；失败自动重试（上限 3）
-// 仅线上模式（DEBUG=0）启用；任务只能由后台动作入队，外部无法凭空制造
-// 处理器注册：组合根接线，Admin 域处理器注册进 System 域队列，
-// 解除 TaskQueueService → ApiExecutionService 的 System→Admin 反向硬依赖
-// ============================================================
+// 队列仅由独立 CLI worker 或后台显式执行，普通网页请求不消费任务。
 \App\Service\Collection\ApiExecutionService::registerTaskHandlers();
-if (0 == DEBUG) {
-    register_shutdown_function(function () {
-        try {
-            \App\Service\System\TaskQueueService::process(1);
-        } catch (\Throwable $e) {
-            xn_log('task_queue tail process error: ' . $e->getMessage(), 'task_queue_error');
-        }
-    });
-}
-
 // ============================================================
 // 插件运行期引导（R3-1）：enabled 插件的 bootstrap.php 在路由分发前装载，
 // 插件经 App::listen 注册运行期事件监听；完成后触发 'addon.boot' 事件。

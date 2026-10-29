@@ -6,7 +6,7 @@ namespace App\Service\System;
  *
  * 触发方式：
  * - 入队：后台采集动作（cronRun 全源拆分入队 / rsync 等）写 scheduler_tasks
- * - 消费：请求尾触发（index.php，每请求 1 条，DEBUG=0）+ 后台任务页手动"执行队列"
+ * - 消费：独立 CLI worker（tools/queue_worker.php）+ 后台任务页手动"执行队列"
  * - 重试：失败自动重试，上限 3 次后置 failed
  */
 class TaskQueueService
@@ -31,16 +31,11 @@ class TaskQueueService
      */
     public static function countActive(string $type, array $param): int
     {
-        $repo = \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id');
-        // SQL 专项审计修复（R10）：判重只需 id/status，排除 param(text)
-        $rows = $repo->find(array('type' => $type, 'param' => xn_json_encode($param)), array(), 1, 50, 'id', array('id', 'status'));
-        $n = 0;
-        foreach ((array)$rows as $row) {
-            if (in_array((int)$row['status'], array(self::STATUS_PENDING, self::STATUS_RUNNING), TRUE)) $n++;
-        }
-        return $n;
+        return \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id')->count(array(
+            'type' => $type, 'param' => xn_json_encode($param),
+            'status' => array(self::STATUS_PENDING, self::STATUS_RUNNING),
+        ));
     }
-
     /**
      * 入队一个任务
      * @param string $type 任务类型（cron_source 等）
@@ -49,25 +44,34 @@ class TaskQueueService
      */
     public static function enqueue(string $type, array $param): int
     {
-        $time = time();
-        $row = array(
-            'type' => $type,
-            'param' => xn_json_encode($param),
-            'status' => self::STATUS_PENDING,
-            'retry' => 0,
-            'error' => '',
-            'create_date' => $time,
-            'run_date' => 0,
-            'finish_date' => 0,
-        );
-        $r = \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id')->create($row);
-        if ($r) {
-            // 新任务入队：清除空闲标志，下一请求尾消费立即恢复（性能轮）
+        // 主库连接级锁使检查与写入串行化；所有入队入口共用，不受历史条数影响。
+        $db = _SERVER('db');
+        $pdo = $db->connect();
+        if (!$pdo) throw new \RuntimeException('任务入队失败：数据库不可用');
+        $json = xn_json_encode($param);
+        $lock = 'nnq_' . hash('sha224', (string)$pdo->query('SELECT DATABASE()')->fetchColumn()
+            . '|' . $db->tablepre . '|' . $type . '|' . $json);
+        $stmt = $pdo->prepare('SELECT GET_LOCK(?, 5)');
+        $stmt->execute(array($lock));
+        if ((int)$stmt->fetchColumn() !== 1) throw new \RuntimeException('任务入队锁超时');
+        try {
+            $table = $db->qi($db->tablepre . 'scheduler_tasks');
+            $stmt = $pdo->prepare('SELECT id FROM ' . $table
+                . ' WHERE type = ? AND BINARY param = BINARY ? AND status IN (0, 1) LIMIT 1');
+            $stmt->execute(array($type, $json));
+            $existing = $stmt->fetchColumn();
+            if ($existing !== false) return (int)$existing;
+            $stmt = $pdo->prepare('INSERT INTO ' . $table
+                . ' (type, param, status, retry, error, create_date, run_date, finish_date) VALUES (?, ?, 0, 0, ?, ?, 0, 0)');
+            $stmt->execute(array($type, $json, '', time()));
+            $id = (int)$pdo->lastInsertId();
             cache_delete(self::EMPTY_FLAG);
+            return $id;
+        } finally {
+            $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+            $stmt->execute(array($lock));
         }
-        return $r ? (int)$r : 0;
     }
-
     /**
      * 消费队列（每请求最多 $limit 条）
      * @return int 实际执行条数

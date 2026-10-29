@@ -471,9 +471,9 @@ class ApiExecutionService
      * @param string $h 小时窗口（taskCronSource 固定传 '24'）
      * @return string 逐页结果拼接文本（行以 <br> 分隔、页间 <hr>；异常含 lang('api_err')），仅供留痕，调用方不解析结构
      */
-    public static function videoApiCron($encodeurl, $code, $h)
+    public static function videoApiCron($encodeurl, $code, $h, bool $strict = false)
     {
-        return self::cronFetchLoop(array(__CLASS__, 'fetchVideoJson'), array(__CLASS__, 'importVideoData'), $encodeurl, $code, $h);
+        return self::cronFetchLoop(array(__CLASS__, 'fetchVideoJson'), array(__CLASS__, 'importVideoData'), $encodeurl, $code, $h, $strict);
     }
 
     /**
@@ -494,8 +494,8 @@ class ApiExecutionService
         // 走队列的失败→重试（上限 3）→failed 状态机，不再产生僵尸任务
         if (!isset($conf['bind'][$code])) throw new \RuntimeException('采集源未绑定分类: ' . $code);
         $encodeurl = (string)$cfg['api'];
-        self::videoApiCron($encodeurl, $code, '24');
-        self::artApiCron($encodeurl, $code, '24');
+        self::videoApiCron($encodeurl, $code, '24', true);
+        self::artApiCron($encodeurl, $code, '24', true);
     }
 
     /**
@@ -535,9 +535,9 @@ class ApiExecutionService
      * @param string $h 小时窗口
      * @return string 逐页结果拼接文本（同 videoApiCron，仅供留痕）
      */
-    public static function artApiCron($encodeurl, $code, $h)
+    public static function artApiCron($encodeurl, $code, $h, bool $strict = false)
     {
-        return self::cronFetchLoop(array(__CLASS__, 'fetchArtJson'), array(__CLASS__, 'importArtData'), $encodeurl, $code, $h);
+        return self::cronFetchLoop(array(__CLASS__, 'fetchArtJson'), array(__CLASS__, 'importArtData'), $encodeurl, $code, $h, $strict);
     }
 
     /**
@@ -552,18 +552,20 @@ class ApiExecutionService
      * @param string $h 小时窗口
      * @return string 逐页结果拼接文本（页间 <hr>；源不可达段含 lang('api_err')）
      */
-    private static function cronFetchLoop($fetch, $import, $encodeurl, $code, $h)
+    private static function cronFetchLoop($fetch, $import, $encodeurl, $code, $h, bool $strict = false)
     {
         $t = $pg = '';
         $res = '';
         $apidate = call_user_func($fetch, $encodeurl, $t, $pg, $h);
         if (!isset($apidate['page']['pagecount'])) {
+            if ($strict) throw new \RuntimeException('采集取页失败：' . $code . ' page=' . (int)$pg);
             $res .= lang('api_err');
         } else {
             for ($i = 1; $i <= $apidate['page']['pagecount']; $i++) {
                 $pg = $i;
                 $apires = call_user_func($fetch, $encodeurl, $t, $pg, $h);
                 if (!isset($apires['page']['pagecount'])) {
+                    if ($strict) throw new \RuntimeException('采集取页失败：' . $code . ' page=' . (int)$pg);
                     $res .= lang('api_err');
                 } elseif ($pg > $apires['page']['pagecount']) {
                     $res .= lang('api_ok');
@@ -1278,11 +1280,12 @@ class ApiExecutionService
         $uri = "?ac=" . $ac . "&t=" . urlencode($t) . "&pg=" . urlencode($pg) . "&h=" . urlencode($h) . "&ids=&wd=";
         $url = "$decodeurl" . $uri;
         $html = https_request($url, '', '', 30, 0, 8 * 1048576); // 传输中 8MB 上限（审查修复：采集页整包入内存面）
-        $json = json_decode($html, true);
-        if (!$json) {
+        $json = json_decode((string)$html, true);
+        if (!is_array($json) || !isset($json['page'], $json['pagecount'], $json['limit'], $json['total'], $json['list'])
+            || !is_array($json['list']) || !is_numeric($json['pagecount']) || (int)$json['pagecount'] < 0) {
             // 源不可达 / 被出站闸拦截（https_request 返回 FALSE）/ 非 JSON：留错误日志，不再静默
             xn_log('collect fetch failed: ' . (FALSE === $html ? 'request blocked or unreachable' : 'invalid json') . ', url: ' . $url, 'error');
-            return array('code' => 1002, 'msg' => 'JSON格式错误' . ', url: ' . $url . ', response: ' . mb_substr($html, 0, 150));
+            return array('code' => 1002, 'msg' => 'JSON格式错误' . ', url: ' . $url . ', response: ' . mb_substr((string)$html, 0, 150));
         }
         $array_page = array();
         $array_page['page'] = $json['page'];
