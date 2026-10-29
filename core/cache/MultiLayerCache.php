@@ -3,7 +3,7 @@
  * 多层缓存管理器
  * 核心功能：
  * 1. 按配置顺序逐层查询（Static → YAC → Redis → Memcached → DB）
- * 2. 低级命中的结果自动回填至所有高级缓存
+ * 2. 缓存读命中仅回填请求内层；新回源数据按已知剩余寿命写入各层
  * 3. 防缓存击穿：分布式锁 + 双查 + 指数退避
  * 4. 故障隔离：单个驱动故障不影响整体
  * 5. 性能统计：响应时间、命中率
@@ -34,8 +34,8 @@ class MultiLayerCache
     /** @var array 事件日志 */
     private static $events = [];
 
-    /** @var array<string,int> TTL 追踪：记录每个 key 的原始 TTL，用于 backfill 保持过期一致性 */
-    private $ttlCache = [];
+    /** @var array<string,int> 绝对截止时间：0=明确永久；缺失=未知，未知值仅回填请求内层 */
+    private $expiryCache = [];
 
     /** @var string|null 空值标记（数据源返回 null 时以此标记写入缓存防击穿） */
     private const NULL_MARKER = "\0__NULL_CACHE__\0";
@@ -273,7 +273,7 @@ class MultiLayerCache
     }
 
     /**
-     * 多层查询：从高到低逐层查询，命中后回填
+     * 多层查询：从高到低逐层查询，命中仅回填请求内层
      */
     /** @return mixed */
     public function get(string $key)
@@ -330,7 +330,7 @@ class MultiLayerCache
             return null;
         }
 
-        // 3. 命中 → 回填所有未命中层级
+        // 3. 命中 → 回填请求内层，不猜测下层值的剩余有效期
         if ($found !== null && $hitLayer > 0) {
             $this->backfill($key, $found, $hitLayer);
         }
@@ -351,7 +351,7 @@ class MultiLayerCache
 
     /**
      * 多层批量查询（R7 性能项：批量 MGET/MSET）——每层一次 getMultiple（Redis=MGET、Memcached=getMulti、
-     * APCu/YAC=multi-fetch），命中层再批量回填更高层。语义与 get() 对齐：null=未命中/空值标记，
+     * APCu/YAC=multi-fetch），命中层再批量回填请求内层。语义与 get() 对齐：null=未命中/空值标记，
      * false 等合法 falsy 值照常返回。
      * @param string[] $keys
      * @return array<string,mixed> key=>value（未命中为 null）
@@ -403,17 +403,21 @@ class MultiLayerCache
     {
         $groups = array();
         foreach ($items as $k => $v) {
-            $ttl = $this->ttlCache[$k] ?? 0;
-            $groups[$ttl][$k] = $v;
+            $ttl = $this->backfillTtl($k);
+            if ($ttl === -1) continue;
+            $groups[$ttl ?? 'unknown'][$k] = $v;
         }
         $limit = ($hitLayer < 0) ? count($this->layers) : $hitLayer;
         for ($i = 0; $i < $limit; $i++) {
+            // 驱动没有返回权威剩余 TTL；读取命中不提升到持久热层。
+            if ($this->layers[$i]->getName() !== 'static') continue;
             if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
             foreach ($groups as $ttl => $chunk) {
+                if ($ttl === 'unknown' && $this->layers[$i]->getName() !== 'static') continue;
                 $chunk = self::itemsForLayer($this->layers[$i]->getName(), $chunk);
                 if (empty($chunk)) continue;
                 try {
-                    $this->layers[$i]->setMultiple($chunk, (int)$ttl);
+                    $this->layers[$i]->setMultiple($chunk, $ttl === 'unknown' ? 0 : (int)$ttl);
                     $this->log('backfill', 'multi(' . count($chunk) . ')', $this->layers[$i]->getName());
                 } catch (\Throwable $e) {
                     $this->log('error', 'multi', $this->layers[$i]->getName(), 0, $e->getMessage());
@@ -431,7 +435,7 @@ class MultiLayerCache
     public function setMultiple(array $items, int $ttl = 0)
     {
         if (empty($items)) return true;
-        foreach ($items as $k => $v) $this->ttlCache[$k] = $ttl;
+        foreach ($items as $k => $v) $this->expiryCache[$k] = $ttl > 0 ? time() + $ttl : 0;
         $ok = true;
         $hotSet = false;
         $allItems = $items;
@@ -478,7 +482,7 @@ class MultiLayerCache
     {
         $keys = array_values(array_unique(array_map('strval', $keys)));
         if (empty($keys)) return true;
-        foreach ($keys as $k) unset($this->ttlCache[$k]);
+        foreach ($keys as $k) unset($this->expiryCache[$k]);
         $ok = true;
         $allKeys = $keys;
         foreach ($this->layers as $layer) {
@@ -559,7 +563,7 @@ class MultiLayerCache
 
         $prevSource   = $this->dataSource;
         $prevNullTtl  = $this->nullCacheTtl;
-        $this->ttlCache[$key] = $ttl; // 登记 TTL，backfill 按此回填正常数据
+        $this->expiryCache[$key] = $ttl > 0 ? time() + $ttl : 0; // 登记 TTL，backfill 按此回填正常数据
         $this->dataSource   = $source;
         $this->nullCacheTtl = $nullTtl;
         try {
@@ -583,7 +587,7 @@ class MultiLayerCache
     /** @return bool */
     public function set(string $key, $value, int $ttl = 0)
     {
-        $this->ttlCache[$key] = $ttl;
+        $this->expiryCache[$key] = $ttl > 0 ? time() + $ttl : 0;
         $ok = true;
         $hotSet = false;
         foreach ($this->layers as $layer) {
@@ -640,7 +644,7 @@ class MultiLayerCache
     public function delete(string $key): bool
     {
         $ok = true;
-        unset($this->ttlCache[$key]);
+        unset($this->expiryCache[$key]);
         foreach ($this->layers as $layer) {
             $name = $layer->getName();
             if (self::skipLayerForKey($name, $key)) continue;
@@ -877,24 +881,32 @@ class MultiLayerCache
 
     // ==================== 回填机制 ====================
 
-    /**
-     * 将数据回填至 hitLayer 之前的所有层级
-     * @param string $key
-     * @param mixed  $value
-     * @param int    $hitLayer 命中层索引（-1 表示回填所有层级）
-     */
-    /** @param mixed $value @return void */
+    /** 未知返回 null，已过期返回 -1；有限 TTL 按秒级截止时间扣除已消耗寿命。 */
+    private function backfillTtl(string $key): ?int
+    {
+        if (!array_key_exists($key, $this->expiryCache)) return null;
+        $expires = $this->expiryCache[$key];
+        if ($expires === 0) return 0;
+        $remaining = (int)$expires - time();
+        return $remaining > 0 ? $remaining : -1;
+    }
+
+    /** 回填到命中层之前；缓存命中仅回填请求内层；新源数据可显式传入 TTL 写入各层。 */
     private function backfill(string $key, $value, int $hitLayer, ?int $ttlOverride = null)
     {
         // ttlOverride 优先（用于空值标记等特殊场景），否则使用原始写入 TTL 保持一致性
-        $ttl = $ttlOverride ?? ($this->ttlCache[$key] ?? 0);
+        $ttl = $ttlOverride ?? $this->backfillTtl($key);
+        if ($ttl === -1) return;
         $limit = ($hitLayer < 0) ? count($this->layers) : $hitLayer;
         for ($i = 0; $i < $limit; $i++) {
+            // 即使本对象记录过 TTL，下层也可能已被其它请求改写。
+            if ($hitLayer >= 0 && $this->layers[$i]->getName() !== 'static') continue;
+            if ($ttl === null && $this->layers[$i]->getName() !== 'static') continue;
             // 熔断窗口内不回填故障层（回填值来自下层，窗口内的 set/delete 已登记 pending 补删）
             if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
             if (self::skipLayerForKey($this->layers[$i]->getName(), $key)) continue;
             try {
-                $this->layers[$i]->set($key, $value, $ttl);
+                $this->layers[$i]->set($key, $value, $ttl ?? 0);
                 $this->log('backfill', $key, $this->layers[$i]->getName());
             } catch (\Throwable $e) {
                 $this->log('error', $key, $this->layers[$i]->getName(), 0, $e->getMessage());

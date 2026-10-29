@@ -455,7 +455,7 @@ trait ContentQueryTrait
     }
 
     /**
-     * 单行读取（两级缓存）：请求内 static memo ⇒ 分布式缓存（键 queryCachePrefix()+intval(id)，
+     * 单行读取：统一缓存入口（含可失效的请求内层，键 queryCachePrefix()+intval(id)，
      * TTL=queryReadTtl）⇒ miss 时 queryReadShell 回表 + format + 回填。
      * 注意缓存的是**格式化后**的行；update() 会主动清对应键。
      * @param int|string $id 空 ⇒ NULL（缓存键按 intval 归一，'12abc' 与 12 同键）
@@ -464,8 +464,6 @@ trait ContentQueryTrait
     public static function read($id)
     {
         if (empty($id)) return NULL;
-        static $cache = array();
-        if (isset($cache[$id])) return $cache[$id];
         $key = self::queryCachePrefix() . intval($id);
         // 站群修复：缓存的是格式化后的行（含按伪静态档位生成的 url/cate_url/tag_url），站群站点的
         // site_rewrite 与主站不同时不能共用主站的键，否则链接形态串站。主站档位键名不变；
@@ -482,7 +480,6 @@ trait ContentQueryTrait
                 cache_set($key, $r, $variant ? min(300, self::queryReadTtl()) : self::queryReadTtl());
             }
         }
-        $cache[$id] = $r ? $r : NULL;
-        return $cache[$id];
+        return $r ? $r : NULL;
     }
 }

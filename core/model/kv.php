@@ -23,107 +23,96 @@ function kv__get($k)
     // hook model_kv_kv__get_end.php
     return $arr ? xn_json_decode($arr['v']) : NULL;
 }
-/**
- * 兼容壳（CLAUDE.md「目录规则」（兼容壳），kv 层实现体）：读 kv 表并 JSON 解码，带请求内 static memo。
- * 长键口径：strlen>32 先 md5 归一（kv 表 k 列宽度约束；get/set/delete 同口径，
- * 直连 kv__get 或 cache_* 层传原始长键会查不到行）。
- * ⚠ static memo 不感知其他进程/后续写入，同请求内 kv_set 后再 kv_get 读到的是旧值。
- * @param string $k 键名（超长自动 md5）
- * @return mixed 解码后的任意 JSON 值；无记录/坏 JSON ⇒ NULL
- */
+/** 请求内 KV memo 的唯一存储，写入、删除后可同步失效。 */
+function &kv_request_cache()
+{
+    static $cache = array();
+    return $cache;
+}
+
+/** 读取 KV，长键归一；请求内 memo 由 kv_set/kv_delete 同步失效。 */
 function kv_get($k)
 {
     // hook model_kv_kv_get_start.php
 
 
-    static $static = array();
+    $static =& kv_request_cache();
     strlen($k) > 32 AND $k = md5($k);
-    if (!isset($static[$k])) {
+    if (!array_key_exists($k, $static)) {
         $static[$k] = kv__get($k);
     }
     // hook model_kv_kv_get_end.php
     return $static[$k];
 }
-/**
- * 兼容壳：写 kv 表（REPLACE 整行覆盖，值 JSON 编码入 v 列）。
- * 先 cache_delete 失效分布式缓存同键（kv_cache_get 读路径），长键同 kv_get 做 md5 归一。
- * ⚠ kv_get 的请求内 static memo 不在此清除——同请求内先读后写再读仍见旧值（跨请求不受影响）。
- * @param string $k 键名
- * @param mixed $v 可被 xn_json_encode 的值
- * @return int|false 透传 DbTableRepository::replace 的 lastInsertId；kv 表无自增列成功通常为 0——
- *                   **不可当成败信号**；$arr 恒非空 ⇒ 本壳实际恒为 int（false 分支到不了）
- */
+/** 写数据库成功后清理请求内 memo 和共享缓存；失败返回 false，成功可返回 0。 */
 function kv_set($k, $v)
 {
     // hook model_kv_kv_set_start.php
 
 
     strlen($k) > 32 AND $k = md5($k);
-    // 性能优化：写库后失效分布式缓存（kv_cache_get 读取路径），保证一致性
-    function_exists('cache_delete') and cache_delete($k);
     $arr = array(
         'k' => $k,
         'v' => xn_json_encode($v),
     );
     $r = \App\Repository\RepositoryFactory::table('kv', 'k')->replace($arr);
+    if ($r !== false) {
+        $memo =& kv_request_cache();
+        unset($memo[$k]);
+        global $g_setting, $g_website;
+        if ($k === 'setting') $g_setting = false;
+        if ($k === 'website') $g_website = false;
+        function_exists('cache_delete') and cache_delete($k);
+    }
     // hook model_kv_kv_set_end.php
     return $r;
 }
-/**
- * 兼容壳：删除 kv 表行（按 k 等值），并同步失效分布式缓存同键；长键 md5 归一。
- * ⚠ 不清 kv_get 的请求内 static memo。
- * @param string $k 键名
- * @return int|false 影响行数（0=行不存在，幂等）；cond 恒为单键数组，正常路径不会走 false 短路
- */
+/** 删除成功后清理请求内 memo、命名空间 memo 和共享缓存；缺失键删除幂等。 */
 function kv_delete($k)
 {
     // hook model_kv_kv_delete_start.php
 
 
     strlen($k) > 32 AND $k = md5($k);
-    function_exists('cache_delete') and cache_delete($k);
     $r = \App\Repository\RepositoryFactory::table('kv', 'k')->delete(array('k' => $k));
+    if ($r !== false) {
+        $memo =& kv_request_cache();
+        unset($memo[$k]);
+        global $g_setting, $g_website;
+        if ($k === 'setting') $g_setting = false;
+        if ($k === 'website') $g_website = false;
+        function_exists('cache_delete') and cache_delete($k);
+    }
     // hook model_kv_kv_delete_end.php
     return$r;
 }
-/**
- * 兼容壳：多级缓存优先读，NULL/FALSE 视为 miss ⇒ 回落 kv_get（DB）并回填缓存。
- * 回填条件是 truthy（`$r and cache_set`）：**falsy 值（0/''/false/空数组）不回写缓存**，
- * 这类值的键每次都会打到 DB。回填用 cache_set 默认 TTL。
- * 注：kv_get 命中路径自带 static memo，本函数不做第二层进程内 memo。
- * @param string $k 键名（透传 kv_get 的长键 md5 口径）
- * @return mixed 缓存/DB 值；均无记录 ⇒ NULL
- */
+/** 共享缓存未命中时直接回库，不使用旧 memo 回填；false、0、空串等均为合法命中。 */
 function kv_cache_get($k)
 {
     // hook model_kv_kv_cache_get_start.php
 
 
+    strlen($k) > 32 AND $k = md5($k);
     $r = cache_get($k);
-    if (NULL === $r || FALSE === $r) {
-        $r = kv_get($k);
-        $r and cache_set($k, $r);
- }
+    if (NULL === $r) {
+        // 共享层失效后直接回库，不能用旧的请求内副本重新填充共享层。
+        $r = kv__get($k);
+        $memo =& kv_request_cache();
+        $memo[$k] = $r;
+        if ($r !== null) cache_set($k, $r);
+    }
     // hook model_kv_kv_cache_get_end.php
     return $r;
 }
-/**
- * 兼容壳：写缓存 + 写 kv 表。
- * ⚠ 顺序陷阱：先 cache_set($k,$v,$life)，随后 kv_set 内部又 cache_delete($k)——
- * 刚写入的缓存键立即被清，实际效果≈只落库（下次 kv_cache_get miss 再回填），
- * 一致性优先、缓存写属白付；改此函数前勿把该行为「优化」掉。
- * @param string $k 键名
- * @param mixed $v 值（JSON 可编码）
- * @param int $life 缓存 TTL 秒（0=驱动默认；见上方陷阱，当前调用下基本不生效）
- * @return int|false 透传 kv_set 的返回值（成功通常为 0，不可当布尔成败用）
- */
+/** 先持久化并失效旧副本，成功后按指定 TTL 写缓存；失败不发布候选值。 */
 function kv_cache_set($k, $v, $life = 0)
 {
     // hook model_kv_kv_cache_set_start.php
 
 
-    cache_set($k, $v, $life);
+    strlen($k) > 32 AND $k = md5($k);
     $r = kv_set($k, $v);
+    if ($r !== false) cache_set($k, $v, $life);
     // hook model_kv_kv_cache_set_end.php
     return $r;
 }
@@ -169,9 +158,10 @@ function setting_set($k, $v)
     global $g_setting;
     FALSE === $g_setting AND $g_setting = kv_cache_get('setting');
     empty($g_setting) AND $g_setting = array();
-    $g_setting[$k] = $v;
+    $candidate = $g_setting;
+    $candidate[$k] = $v;
     // hook model_kv_setting_set_end.php
-    return kv_cache_set('setting', $g_setting);
+    return kv_cache_set('setting', $candidate);
 }
 /**
  * 兼容壳：setting 命名空间删键（全局 memo 里 unset 后整档写回）。
@@ -213,7 +203,8 @@ function website_set($k, $v)
     global $g_website;
     FALSE === $g_website AND $g_website = kv_cache_get('website');
     empty($g_website) AND $g_website = array();
-    $g_website[$k] = $v;
+    $candidate = $g_website;
+    $candidate[$k] = $v;
     // hook model_kv_website_set_end.php
-    return kv_cache_set('website', $g_website);
+    return kv_cache_set('website', $candidate);
 }

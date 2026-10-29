@@ -13,8 +13,10 @@
 function runtime_init()
 {
     global $conf;
-    $runtime = cache_get("runtime");
-    if (NULL === $runtime || empty($runtime['users'])) {
+    $state =& runtime_cache_state();
+    $runtime = cache_get('runtime');
+    $expires = is_array($runtime) ? (int)($runtime['_expires_at'] ?? 0) : 0;
+    if (!is_array($runtime) || $expires <= time() || empty($runtime['users'])) {
         $runtime = array();
         $runtime['users'] = user_count();
         $runtime['vod'] = video_count();
@@ -29,7 +31,8 @@ function runtime_init()
             art_del();
             vod_del();
         }
-        cache_set('runtime', $runtime, 300); // 300s TTL：内容增删经 cache_delete('runtime') 立即失效，同时防永久陈旧（审计修复）
+        $expires = time() + 300;
+        cache_set('runtime', $runtime + array('_expires_at' => $expires), 300);
     }
     // onlines 独立刷新（300s TTL），避免永久冻结
     $onlines = cache_get('runtime_onlines');
@@ -38,6 +41,8 @@ function runtime_init()
         cache_set('runtime_onlines', $onlines, 300);
     }
     $runtime['onlines'] = $onlines;
+    unset($runtime['_expires_at']);
+    $state = array('expires' => $expires, 'dirty' => false);
     return $runtime;
 }
 /**
@@ -62,30 +67,31 @@ function runtime_set($k, $v)
         $v = '+' == $op ? ($runtime[$k] + $v) : ($runtime[$k] - $v);
     }
     $runtime[$k] = $v;
+    $state =& runtime_cache_state();
+    $state['dirty'] = true;
     return TRUE;
 }
-/**
- * 删统计快照键并立即持久化（unset global $runtime 后直接 runtime_save()，不等请求尾）。
- * @param string $k 键名
- * @return bool 恒 TRUE
- */
-/**
- * 把 global $runtime 落缓存 'runtime'（cache_set 不带 TTL = 覆盖 runtime_init 的 300s 重算值，此后一直有效直到被删除/重算）。
- * 进程内 md5 指纹去重：数据未变直接跳过（防每请求数百次 REPLACE INTO nncms_cache 的 P 类热点）。
- * 由文件尾 register_shutdown_function 在每请求结束时自动调用，一般无需手动调。
- * @return void
- */
+/** 请求级统计保存状态；读取不续期，变更也只使用快照的剩余寿命。 */
+function &runtime_cache_state()
+{
+    static $state = array('expires' => 0, 'dirty' => false);
+    return $state;
+}
+
+/** 保存变更后的统计快照，绝不把有限 TTL 改为永久或延后其截止时间。 */
 function runtime_save()
 {
-    global $conf, $runtime;
-    if (empty($runtime)) return;
-    // 数据未变时不重复写入（避免每秒数百次 REPLACE INTO nncms_cache）
-    static $saved_md5 = '';
-    $current_md5 = md5(serialize($runtime));
-    if ($current_md5 === $saved_md5) return;
-    $saved_md5 = $current_md5;
+    global $runtime;
+    $state =& runtime_cache_state();
+    if (empty($runtime) || !$state['dirty']) return;
+    $remaining = (int)$state['expires'] - time();
+    $state['dirty'] = false;
+    if ($remaining <= 0) {
+        cache_delete('runtime');
+        return;
+    }
     function_exists('chdir') and chdir(APP_PATH);
-    cache_set('runtime', $runtime);
+    cache_set('runtime', $runtime + array('_expires_at' => $state['expires']), $remaining);
 }
 /**
  * 作废统计快照：直接删缓存键 'runtime'（内容批量增删/维护脚本后调用，下次 runtime_init() 全量重算）。

@@ -600,14 +600,14 @@ class QueryBuilder
      * 写入：REPLACE，返回自增 ID（无自增返回 0）
      * 任务 3：pgsql 下为主键内省 upsert（ON CONFLICT DO UPDATE，EXCLUDED 取新值）
      */
-    public function replace(array $data): int
+    public function replace(array $data): int|false
     {
         if (empty($data)) return 0;
         $data = $this->safeColumns($data);
         if (empty($data)) return 0;
         $sql = $this->replaceSql($data, self::$pkOverride[$this->type . ':' . $this->table] ?? $this->db->primaryKeys($this->table));
         $stmt = $this->db->prepare_execute($sql, array_values($data));
-        if (!$stmt) return 0;
+        if (!$stmt) return false;
         $pdo = $this->db->wlink;
         return $pdo ? (int)$pdo->lastInsertId() : 0;
     }
@@ -658,13 +658,13 @@ class QueryBuilder
     /**
      * 写入：DELETE，返回影响行数；未设置 where 时抛异常，防止全表删除
      */
-    public function delete(): int
+    public function delete(): int|false
     {
         if (!$this->wheres) throw new \RuntimeException('QueryBuilder::delete requires where conditions');
         $this->params = [];
         $sql = $this->deleteSql();
         $stmt = $this->db->prepare_execute($sql, $this->params);
-        return $stmt ? $stmt->rowCount() : 0;
+        return $stmt ? $stmt->rowCount() : false;
     }
 
     /**

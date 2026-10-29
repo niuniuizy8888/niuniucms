@@ -1268,30 +1268,19 @@ function page_cache_site_suffix()
 /**
  * 推进内容版本 → 全站页缓存即时失效。
  * 由内容写入路径调用（DbTableRepository 内容表白名单 / 分类缓存清理等）。
- * 节流：同进程 2 秒内短路（避免采集逐行写入反复推进），跨进程再以共享时间戳兜底。
+ * 每次成功写入都生成新版本，短间隔更新也必须失效。
  * @return bool 是否真正推进
  */
 function page_cache_bump($force = FALSE)
 {
-    static $localLast = 0;
-    $now = time();
-    if (!$force && $now - $localLast < 2) return FALSE;   // 同请求/同 CLI 进程内直接短路
-    $localLast = $now;
+    // 保留 force 参数兼容旧调用。每次变更都推进，不能丢弃短间隔内的最后一次失效。
     try {
-        if (!$force) {
-            $last = function_exists('cache_shared_get') ? cache_shared_get('page_content_bump_ts') : NULL;
-            if (is_numeric($last) && ($now - (int)$last) < 2) return FALSE; // 跨进程节流
-        }
-        cache_set('page_content_bump_ts', $now, 120);
-        cache_set('page_content_ver', $now . '-' . mt_rand(100000, 999999), 0);
-        // 返回值仅代表「已尝试推进」：cache_set 是各层 AND，CLI 无 APCu 时会返回 false，
-        // 但共享层（Redis）已写入即可跨 worker 生效，故不以其结果判断成败。
+        cache_set('page_content_ver', bin2hex(random_bytes(16)), 0);
         return TRUE;
     } catch (\Throwable $e) {
         return FALSE;
     }
 }
-
 /**
  * 页面级缓存-起点（与 page_cache_end 配对；route/*.php 顶部 `if (page_cache_start($k)) return;`）。
  * 键先叠加内容版本 page_cache_vkey()（跨 FPM worker 即时失效，R6-04）。
