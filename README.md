@@ -2,6 +2,21 @@
 
 NiuNiuCMS 是一个基于 PHP + MySQL 的视频内容管理系统，包含前台展示、后台管理、采集、插件和云端能力。
 
+## 推荐资源
+
+| 资源名称 | 类型 | 官网 | 推荐指数 |
+| :--- | :---: | :--- | :---: |
+| 无水印资源 | 影视资源 | [www.wsyzy.cc](https://www.wsyzy.cc/) | ⭐⭐⭐⭐⭐ |
+| 无尽资源站无水印版 | 影视资源 | [wujinwszy.com](https://wujinwszy.com/) | ⭐⭐⭐⭐⭐ |
+| 快车资源 | 影视资源 | [kuaichezy.vip](https://kuaichezy.vip) | ⭐⭐⭐⭐⭐ |
+| 牛牛资源 | 影视资源 | [www.niuniuzy.org](https://www.niuniuzy.org/) | ⭐⭐⭐⭐⭐ |
+| 最大资源 | 影视资源 | [zuidazy.co](https://zuidazy.co/) | ⭐⭐⭐⭐⭐ |
+| 索尼资源 | 影视资源 | [suonizy.cc](https://suonizy.cc) | ⭐⭐⭐⭐⭐ |
+| 无尽资源 | 影视资源 | [www.wujinzy.com](http://www.wujinzy.com) | ⭐⭐⭐⭐⭐ |
+| 鸭鸭资源 | 影视资源 | [yayazy.com](https://yayazy.com/) | ⭐⭐⭐⭐⭐ |
+| 闪电资源 | 影视资源 | [shandianzy.com](https://shandianzy.com/) | ⭐⭐⭐⭐⭐ |
+| ok资源 | 影视资源 | [okzyw.cc](https://okzyw.cc) | ⭐⭐⭐⭐⭐ |
+
 ## 环境要求
 
 - PHP 8.0+（推荐 8.2+；7.x 不再支持，访问时会提示切换版本）
