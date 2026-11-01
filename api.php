@@ -107,6 +107,11 @@ switch ($route) {
 
     // ---- 计划任务采集（后台任务页 cron URL，入队异步逐源执行） ----
     case 'cron':
+        $hours = \App\Service\Collection\ApiExecutionService::cronHours($_GET['h'] ?? 24);
+        if ($hours === null) {
+            http_response_code(400);
+            exit('invalid h: expected 1-8760 hours');
+        }
         $code = isset($_GET['froms']) && '' !== (string)$_GET['froms']
             ? (string)$_GET['froms']
             : (isset($_GET['code']) ? (string)$_GET['code'] : '');
@@ -116,13 +121,15 @@ switch ($route) {
             foreach (explode(',', $code) as $c) {
                 $c = trim($c);
                 if ('' !== $c && !empty($apis[$c]['api']) && class_exists('\App\Service\System\TaskQueueService')) {
-                    // 同源已有 pending/running 任务时跳过，防计划任务高频调用重复入队（审计修复）
-                    \App\Service\System\TaskQueueService::enqueue('cron_source', array('code' => $c));
+                    // 24 小时保持旧任务参数形态；其他窗口按源与窗口共同去重。
+                    $taskParam = array('code' => $c);
+                    if ($hours !== 24) $taskParam['h'] = $hours;
+                    \App\Service\System\TaskQueueService::enqueue('cron_source', $taskParam);
                 }
             }
         } else {
             // 未指定源：全源入队（与 ApiExecutionService::cronRun 一致）
-            \App\Service\Collection\ApiExecutionService::cronRun(0);
+            \App\Service\Collection\ApiExecutionService::cronRun(0, $hours);
         }
         header('Content-Type: text/plain; charset=utf-8');
         echo 'ok';
@@ -149,9 +156,11 @@ switch ($route) {
         }
         $encodeurl = (string)$apis[$fromCode]['api'];
         try {
-            // 视频 + 文章同页采集（采集源为混合站，各自对响应结构做判断）
-            $resV = \App\Service\Collection\ApiExecutionService::videoApiPage($encodeurl, $fromCode, '', $page, $h);
-            $resA = \App\Service\Collection\ApiExecutionService::artApiPage($encodeurl, $fromCode, '', $page, $h);
+            // 向导保存的源只走对应类型；未标注类型的旧混合源继续兼容两条链路。
+            $model = (int)($apis[$fromCode]['model'] ?? -1);
+            $resV = $resA = [lang('api_err')];
+            if ($model !== 1) $resV = \App\Service\Collection\ApiExecutionService::videoApiPage($encodeurl, $fromCode, '', $page, $h);
+            if ($model !== 0) $resA = \App\Service\Collection\ApiExecutionService::artApiPage($encodeurl, $fromCode, '', $page, $h);
         } catch (\Throwable $e) {
             // 单页失败不返回 "ok" → main.go 侧重试（最多 10 次）
             if (function_exists('xn_log')) {
@@ -161,7 +170,7 @@ switch ($route) {
             exit('rsync error');
         }
         // fetch 失败时 videoApiPage/artApiPage 返回 api_err 数组（不抛异常）——
-        // 两路均失败才报错，否则 main.go 会误判成功
+        // 当前启用的链路均失败才报错；跳过的类型不计作成功。
         $errText = lang('api_err');
         $strV = implode('|', (array)$resV);
         $strA = implode('|', (array)$resA);

@@ -205,7 +205,7 @@ class ApiMiscService
      * @param string $cate 分类模板键（v/x/av/art）
      * @return array
      */
-    private static function remoteCategoryTree(string $cate): array
+    public static function remoteCategoryTree(string $cate): array
     {
         if (!in_array($cate, array('v', 'x', 'av', 'art'), TRUE)) return array();
 

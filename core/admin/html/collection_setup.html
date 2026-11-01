@@ -1,0 +1,14 @@
+<link rel="stylesheet" href="/static/css/collection-setup.css?v=<?php echo filemtime(APP_PATH.'static/css/collection-setup.css'); ?>">
+<div class="modal fade" id="collectionWizard" tabindex="-1" aria-labelledby="cwTitle" data-bs-backdrop="static"
+ data-source-model="<?php echo (int)($collection_model ?? 0); ?>"
+ data-source-preview="<?php echo xn_h(url('api-setup_preview',[],true)); ?>" data-source-apply="<?php echo xn_h(url('api-setup_apply',[],true)); ?>"
+ data-template-preview="<?php echo xn_h(url('cate-setup_preview',[],true)); ?>" data-template-apply="<?php echo xn_h(url('cate-setup_apply',[],true)); ?>"
+ data-source-token="<?php echo xn_h(bull_token_set($uid,'admin_api_setup')); ?>" data-template-token="<?php echo xn_h(bull_token_set($uid,'admin_cate')); ?>">
+ <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content cw-shell">
+  <div class="modal-header"><div><span class="cw-eyebrow">COLLECTION SETUP</span><h5 id="cwTitle" class="modal-title">一键采集</h5></div><button type="button" class="cw-close" data-bs-dismiss="modal" aria-label="关闭向导" title="关闭"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
+  <div class="modal-body"><ol class="cw-steps"><li data-step="1"><b>1</b><span>选择分类</span></li><li data-step="2"><b>2</b><span>设置选项</span></li><li data-step="3"><b>3</b><span>确认执行</span></li></ol>
+   <div id="cwError" class="alert alert-danger d-block" role="alert" hidden></div><div id="cwContent" aria-live="polite"></div>
+  </div><div class="modal-footer"><span id="cwCount" class="me-auto text-muted small"></span><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">关闭</button><button class="btn btn-light" id="cwBack">上一步</button><button class="btn btn-primary" id="cwNext">下一步</button></div>
+ </div></div>
+</div>
+<script src="/static/js/collection-setup.js?v=<?php echo filemtime(APP_PATH.'static/js/collection-setup.js'); ?>"></script>

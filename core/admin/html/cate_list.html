@@ -73,16 +73,11 @@
                         添加分类
                     </button>
                     <div class="dropdown d-inline">
-                        <button class="btn btn-secondary" data-bs-toggle="dropdown">导入 ▼</button>
+                        <button class="btn btn-secondary" data-bs-toggle="dropdown">选择导入分类 ▾</button>
                         <div class="dropdown-menu dropdown-menu-end">
-                            <form action="<?php echo url('api-intov', '', TRUE); ?>" method="post" class="d-inline">
-                                <input type="hidden" name="safe_token" value="<?php echo $import_token; ?>">
-                                <button type="submit" class="dropdown-item">导入影视分类</button>
-                            </form>
-                            <form action="<?php echo url('api-intox', '', TRUE); ?>" method="post" class="d-inline">
-                                <input type="hidden" name="safe_token" value="<?php echo $import_token; ?>">
-                                <button type="submit" class="dropdown-item">导入X分类</button>
-                            </form>
+                            <button class="dropdown-item" data-setup-kind="template" data-setup-key="v">影视分类</button>
+                            <button class="dropdown-item" data-setup-kind="template" data-setup-key="x">X 分类</button>
+                            <button class="dropdown-item" data-setup-kind="template" data-setup-key="art">文章分类</button>
                         </div>
                     </div>
                     <form action="<?php echo url('api-del', '', TRUE); ?>" method="post" class="d-inline" onsubmit="return cateClearGuard(this);">
@@ -204,3 +199,5 @@ $('table').on('click', 'a.delete', function() {
     return false;
 });
 </script>
+
+<?php include _include(ADMIN_PATH.'html/collection_setup.html'); ?>

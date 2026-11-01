@@ -12,7 +12,7 @@ class ApiExecutionService
      * @param int $force 非 0=忽略 cron_1_last_date 强制入队；0=按到期判定
      * @return void
      */
-    public static function cronRun($force = 0)
+    public static function cronRun($force = 0, int $hours = 24)
     {
         $conf = _SERVER('conf');         $time = _SERVER('time');         global $runtime;
         $cron1LastDate = cache_get('cron_1_last_date');
@@ -24,12 +24,13 @@ class ApiExecutionService
                 sess_gc($conf['online_hold_time']);
                 $runtime['onlines'] = max(1, online_count());
                 $apilist = $conf['api'];
-                $h = '24';
                 // 队列化：计划任务按源拆分入队（异步逐源执行，避免同步全量超时）
                 if (is_array($apilist)) {
                     foreach ($apilist as $k => $v) {
                         if (empty($v['api'])) continue;
-                        \App\Service\System\TaskQueueService::enqueue('cron_source', array('code' => (string)$k));
+                        $taskParam = array('code' => (string)$k);
+                        if ($hours !== 24) $taskParam['h'] = $hours;
+                        \App\Service\System\TaskQueueService::enqueue('cron_source', $taskParam);
                     }
                 }
                 cache_set('cron_1_last_date', ($time + 1500));
@@ -95,6 +96,42 @@ class ApiExecutionService
     {
         if (is_array($r) && !empty($r['msg'])) return (string)$r['msg'];
         return $action . '失败：商店无响应或任务不存在（请检查 cloud_api 配置与商店 rsync 端点/worker）';
+    }
+
+    /** 模态框操作：暂停复用云端保留断点的 stop，启动会从断点继续。 */
+    public static function cloudAction(string $action, string $code): array
+    {
+        if (!in_array($action, ['register','start','pause','stop','status'], true)
+            || !preg_match('/^[A-Za-z0-9_.-]{1,32}$/', $code)) {
+            return ['code'=>1, 'message'=>'操作或采集源无效'];
+        }
+        $conf = _SERVER('conf');
+        if (empty($conf['api'][$code]['api']) || empty($conf['bind'][$code])) {
+            return ['code'=>1, 'message'=>'请先选择分类并保存采集配置'];
+        }
+        if (!outbound_url_safe(url_domain())) {
+            return ['code'=>1, 'message'=>'当前站点地址无法供云端访问。请部署到支持海外访问的公网域名后，再注册和使用云端异步采集。'];
+        }
+        if ($action === 'register') {
+            $r = \App\Service\System\CloudOpsService::storeInstallRegister(true);
+            admin_audit_log('api_cloud_register', ['ok'=>!empty($r['ok'])]);
+            return ['code'=>!empty($r['ok']) ? 0 : 1, 'message'=>!empty($r['ok']) ? '本站已注册到云端，可以启动采集。' : ($r['msg'] ?? '注册失败，请重试')];
+        }
+        if ($action === 'status') {
+            $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
+            $taskCode = md5($token . $code . 'all');
+            $r = self::remoteSyncBase(self::rsyncUrl('tasks', 'status', 'token=' . urlencode($token) . '&code=' . $taskCode));
+            if (!is_array($r) || (!isset($r['progress']) && !isset($r['total']))) {
+                return ['code'=>1, 'message'=>(string)($r['msg'] ?? '未查询到任务，请先注册并启动采集')];
+            }
+            return ['code'=>0, 'message'=>'进度已更新', 'task'=>self::normalizeRsyncTask($r, $code)];
+        }
+        $r = $action === 'start' ? self::rsyncStart($code) : self::rsyncStop($code);
+        $msg = is_array($r) ? trim((string)($r['msg'] ?? '')) : '';
+        $ok = is_array($r) && (isset($r['code']) ? (int)$r['code'] === 0 : (bool)preg_match('/^(ok|success|running|pending|stopped)$/i', $msg));
+        admin_audit_log('api_cloud_' . $action, ['source'=>$code, 'ok'=>$ok]);
+        $labels = ['start'=>'已请求启动，已有断点时将继续采集。', 'pause'=>'已请求暂停，云端在分页结束后停下并保留断点。', 'stop'=>'已请求停止，云端保留采集进度。'];
+        return ['code'=>$ok ? 0 : 1, 'message'=>$ok ? $labels[$action] : ($msg !== '' ? $msg : '云端未确认操作，请稍后重试或查看进度')];
     }
 
     /**
@@ -172,8 +209,9 @@ class ApiExecutionService
         }
         // 上线前审计修复（H-A1）：$code 直拼缓存键与全站共享键空间碰撞，统一加前缀。
         // 发布前检查修复（A-6）：键口径收敛 pageBookmarkKey()（原此处丢 'pg' 后缀与写侧失配=续页恒空）
-        $page = (int)cache_get(self::pageBookmarkKey($code));
-        $allPage = self::apiPageCount($encodeurl);
+        $model = (int)($conf['api'][$code]['model'] ?? 0);
+        $page = (int)cache_get(self::pageBookmarkKey($code, $model === 1 ? 'artpg' : 'pg'));
+        $allPage = self::apiPageCount($encodeurl, $model);
         $taskCode = md5($token . $fromCode . 'all');
         if ($allPage != lang('api_err')) {
             // 修复：书签缺失时 cache_get 返回 null，旧实现直接拼出 `page=`（空串）⇒
@@ -468,7 +506,7 @@ class ApiExecutionService
      * 视频全量 cron 采集：把 fetchVideoJson/importVideoData 交给 cronFetchLoop 从第 1 页跑到尾页。
      * @param string $encodeurl 采集源地址（密文或明文 http(s)）
      * @param string $code 采集源编码
-     * @param string $h 小时窗口（taskCronSource 固定传 '24'）
+     * @param string $h 小时窗口（旧任务默认 '24'）
      * @return string 逐页结果拼接文本（行以 <br> 分隔、页间 <hr>；异常含 lang('api_err')），仅供留痕，调用方不解析结构
      */
     public static function videoApiCron($encodeurl, $code, $h, bool $strict = false)
@@ -478,10 +516,10 @@ class ApiExecutionService
 
     /**
      * cron_source 任务处理器（TaskQueueService 注册回调；解耦后由组合根接线）
-     * 单采集源增量拉取（h=24，对应原有宝塔 cron 的逐源语义）。
-     * 与机器通道 route=rsync 保持一致：同一采集源同时尝试视频和文章两条入库链，
-     * 避免定时任务只更新视频、不更新资讯。
-     * @param array $param 任务参数（code=采集源编码）
+     * 单采集源增量拉取（h 为小时窗口，旧任务默认 24）。
+     * 与机器通道 route=rsync 保持一致：向导保存的采集源按类型执行，
+     * 未标注类型的旧配置仍兼容视频、文章两条入库链。
+     * @param array $param 任务参数（code=采集源编码，h=可选小时窗口）
      */
     public static function taskCronSource(array $param): void
     {
@@ -493,9 +531,21 @@ class ApiExecutionService
         // 会越过 TaskQueueService::process() 的 try/catch 使任务永久卡 running；此处预检改为抛异常，
         // 走队列的失败→重试（上限 3）→failed 状态机，不再产生僵尸任务
         if (!isset($conf['bind'][$code])) throw new \RuntimeException('采集源未绑定分类: ' . $code);
+        $hours = self::cronHours($param['h'] ?? 24);
+        if ($hours === null) throw new \RuntimeException('采集时间范围无效');
         $encodeurl = (string)$cfg['api'];
-        self::videoApiCron($encodeurl, $code, '24', true);
-        self::artApiCron($encodeurl, $code, '24', true);
+        $model = (int)($cfg['model'] ?? -1);
+        if ($model !== 1) self::videoApiCron($encodeurl, $code, (string)$hours, true);
+        if ($model !== 0) self::artApiCron($encodeurl, $code, (string)$hours, true);
+    }
+
+    /** HTTP 入口和队列消费共用窗口校验，禁止负数、数组及异常超大范围。 */
+    public static function cronHours($value): ?int
+    {
+        if (!is_int($value) && !is_string($value)) return null;
+        if (!preg_match('/^[0-9]{1,4}$/D', (string)$value)) return null;
+        $hours = (int)$value;
+        return $hours >= 1 && $hours <= 8760 ? $hours : null;
     }
 
     /**
@@ -1212,14 +1262,14 @@ class ApiExecutionService
 
     /**
      * 取采集源全量总页数（h='' 不限窗口口径，rsyncStart 的分母）：
-     * fetchVideoJson 拿不到 pagecount 时原样返回 lang('api_err') 字符串——
+     * 按内容类型取页，拿不到 pagecount 时原样返回 lang('api_err') 字符串——
      * 调用方用 `$allPage != lang('api_err')` 区分成败，不是 int|false 语义。
      * @param string $encodeurl 采集源地址（core_decrypt 密文或明文 http(s)）
      * @return mixed 源站 pagecount（JSON 解出的 int/float/string 原样透传）或错误文案字符串
      */
-    private static function apiPageCount($encodeurl)
+    private static function apiPageCount($encodeurl, int $model = 0)
     {
-        $apidate = self::fetchVideoJson($encodeurl, '', '', '');
+        $apidate = $model === 1 ? self::fetchArtJson($encodeurl, '', '', '') : self::fetchVideoJson($encodeurl, '', '', '');
         if (!isset($apidate['page']['pagecount'])) {
             return lang('api_err');
         }

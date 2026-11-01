@@ -70,9 +70,10 @@ class PlayService
             return array('found' => false, 'reason' => 'player_not_found');
         }
         // on=0 是后台「弹幕播放器=开启」（该配置族沿用 0=开启 的历史口径）；
-        // 开启弹幕、或该线路本就选了内置播放器时，前台内联渲染本站播放器，不外链。
+        // 向导明确选择官方播放器的线路优先使用其解析地址；旧线路仍沿用全局弹幕设置。
         $danmu_on = isset($conf['danmu']['on']) ? intval($conf['danmu']['on']) : 0;
-        $player_local = ('inline' === $player_kind) || 0 === $danmu_on;
+        $prefer_external = !empty($conf['vodplayer'][$froms]['prefer_external']);
+        $player_local = ('inline' === $player_kind) || (0 === $danmu_on && !$prefer_external);
 
         $like_state = \App\Service\Content\LikeService::check($vid, $uid, 0) ? 'un' : '';
         $favorite_state = \App\Service\Content\FavoriteService::check($vid, $uid, 0) ? 'un' : '';

@@ -7,6 +7,25 @@ $action = param(1, 'list');
 $header['title'] = lang('cate_page');
 $catelist = cate_list_cache();
 switch ($action) {
+    case 'setup_preview':
+    case 'setup_apply':
+        if ('POST' !== $method) message(1, lang('method_error'));
+        admin_bull_token_guard($uid, 'admin_cate', param('safe_token'));
+        try {
+            if ($action === 'setup_preview') {
+                $data = \App\Service\Collection\CollectionSetupService::preview('template', (string)param('key'));
+            } else {
+                $choices = json_decode((string)param('choices', '', FALSE), true);
+                if (!is_array($choices)) throw new \RuntimeException('请选择分类');
+                $data = \App\Service\Collection\CollectionSetupService::apply((string)param('plan'), $choices, (string)param('player','keep'), (string)param('run','save'), (bool)group_access($gid,'managecate'), 'template');
+            }
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['code'=>0,'data'=>$data], JSON_UNESCAPED_UNICODE);
+        } catch (\RuntimeException $e) {
+            message(1, xn_h($e instanceof \PDOException ? '保存失败，请重试；本次修改已回滚' : $e->getMessage()));
+        }
+        exit;
+
     case 'list':
         if ('GET' == $method) {
             extract(\App\Service\Admin\CategoryManageService::listPage($catelist, $uid), EXTR_SKIP);

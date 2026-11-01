@@ -6,6 +6,35 @@ FALSE === group_access($gid, 'manageapi') and message(1, lang('user_group_insuff
 $action = param(1, 'list');
 $header['title'] = lang('api_page');
 switch ($action) {
+    case 'async_action':
+        if ('POST' !== $method) message(1, lang('method_error'));
+        admin_bull_token_guard($uid, 'admin_api_rsync', param('safe_token'));
+        $result = \App\Service\Collection\ApiExecutionService::cloudAction((string)param('operation'), (string)param('code'));
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($result, JSON_UNESCAPED_UNICODE);
+        exit;
+
+    case 'setup_preview':
+    case 'setup_apply':
+        if ('POST' !== $method) message(1, lang('method_error'));
+        admin_bull_token_guard($uid, 'admin_api_setup', param('safe_token'));
+        try {
+            if ($action === 'setup_preview') {
+                $data = \App\Service\Collection\CollectionSetupService::preview('source', (string)param('key'), (int)param('model', 0));
+            } else {
+                $choices = json_decode((string)param('choices', '', FALSE), true);
+                if (!is_array($choices)) throw new \RuntimeException('请选择分类');
+                $playerName = _POST('player_name', null);
+                if ($playerName !== null && !is_string($playerName)) throw new \RuntimeException('播放器名称格式无效');
+                $data = \App\Service\Collection\CollectionSetupService::apply((string)param('plan'), $choices, (string)param('player','keep'), (string)param('run','save'), (bool)group_access($gid,'managecate'), 'source', $playerName);
+            }
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['code'=>0,'data'=>$data], JSON_UNESCAPED_UNICODE);
+        } catch (\RuntimeException $e) {
+            message(1, xn_h($e instanceof \PDOException ? '保存失败，请重试；本次修改已回滚' : $e->getMessage()));
+        }
+        exit;
+
     case 'import_sources':
         // B3：从商店一键导入资源站（明文地址；code 冲突跳过）
         if ('POST' == $method) {
