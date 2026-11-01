@@ -38,6 +38,16 @@
         <div class="login-form">
             <h2 class="login-form-title">欢迎回来</h2>
             <p class="login-form-sub">请使用后台管理员账号登录</p>
+            <?php if (!empty($entry_mismatch)) { ?>
+            <div class="alert alert-warning d-block text-break" role="alert">
+                <strong>后台入口配置不一致</strong>
+                <p class="mt-2 mb-2">当前入口为 <code><?php echo xn_h($entry_mismatch['current']); ?></code>，
+                    <code>admin_entry</code> 仍配置为 <code><?php echo xn_h($entry_mismatch['configured']); ?></code>。</p>
+                <p class="mb-2">请打开站点中的 <code><?php echo xn_h($entry_mismatch['config']); ?></code>，将参数修改为：</p>
+                <code><?php echo xn_h("'admin_entry' => " . var_export($entry_mismatch['current'], true)); ?></code>
+                <p class="mt-2 mb-0">保存后刷新本页再登录。请修改上述实际生效的配置文件，后台文件名与该参数必须一致。</p>
+            </div>
+            <?php } else { ?>
             <form action="<?php echo url('index-login', '', TRUE);?>" method="post" id="form">
                 <input type="hidden" name="safe_token" value="<?php echo $safe_token; ?>">
                 <div class="mb-3">
@@ -60,6 +70,7 @@
                 </button>
             </form>
             <p class="login-form-tip">如忘记密码，请联系系统管理员重置</p>
+            <?php } ?>
         </div>
     </div>
 

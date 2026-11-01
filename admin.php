@@ -6,7 +6,8 @@
  * 加固靠三道纵深：① 登录限流（`login_rate_check()`，每 IP 10 次/300s + 账号+IP 组合 10 次/300s，L-2 消除纯账号锁定 DoS）；
  * ② 后台写操作三件套（强制 POST + 取参白名单 + `admin_bull_token_guard()` 场景令牌）；
  * ③ 未登录一律被 `admin_token_check()` 改写进登录页。**若想再隐去入口名**：把本文件改成随机名
- * （如 3x9k2m.php）并同步 `core/config/config.php` 的 `admin_entry` 即可，其余代码无需改动
+ * （如 3x9k2m.php）并同步生效配置（新安装为 `data/config.php`，旧站可能为 `core/config/config.php`）
+ * 的 `admin_entry` 即可，其余代码无需改动；未同步时登录页会显示对应路径和修改提示。
  * （后台链接与表单统一经 `url()` 读 `admin_entry` 生成；升级时的入口同步见
  * `CloudOpsService::syncAdminEntry()`——它按 `admin_entry` 覆盖线上入口名对应的文件）。
  * 历史沿革：早期版本把 `admin.php` 自身 403 掉、强制先改名才能用；改为「可用 + 建议改名」后

@@ -3,11 +3,28 @@ namespace App\Service\Admin;
 
 class AdminIndexService
 {
+    /** 后台文件改名后，提示修改实际生效的配置，避免向旧入口提交账号密码。 */
+    public static function entryMismatch(): ?array
+    {
+        global $conf;
+        // 使用服务器执行的脚本名，不从查询参数或 Host 推断后台入口。
+        $current = basename((string)($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        $configured = !empty($conf['admin_entry']) ? (string)$conf['admin_entry'] : 'admin.php';
+        if ('' === $current || $current === $configured) {
+            return null;
+        }
+        return array(
+            'current' => $current,
+            'configured' => $configured,
+            'config' => substr(nncms_runtime_path('config.php'), strlen(APP_PATH)),
+        );
+    }
+
     /**
      * 后台登录页视图数据（admin route/index.php case 'login' GET）。
      *
      * @param int $uid 当前会话 uid（匿名传 0，登录令牌挂匿名指纹环）
-     * @return array {header, safe_token}（safe_token=bull_token_set('admin_login')，签发失败可能为 FALSE）
+     * @return array {header, safe_token, entry_mismatch}
      */
     public static function loginPage(int $uid): array
     {
@@ -16,6 +33,7 @@ class AdminIndexService
                 'title' => lang('admin_login'),
             ),
             'safe_token' => bull_token_set($uid ?: 0, 'admin_login'),
+            'entry_mismatch' => self::entryMismatch(),
         );
     }
 
@@ -36,6 +54,13 @@ class AdminIndexService
     public static function login($uid, int $longip, int $time): array
     {
         global $conf; // 上线前安全审计修复（F-20）：此前未导入 $conf，登录跳转恒落回退 'admin.php'
+        if ($mismatch = self::entryMismatch()) {
+            return array(
+                'code' => 1,
+                'message' => '后台入口配置不一致，请打开 ' . xn_h($mismatch['config'])
+                    . '，将 admin_entry 修改为 ' . xn_h($mismatch['current']) . ' 后刷新页面。',
+            );
+        }
         $safeToken = param('safe_token');
         // 审计修复（F-04）：与 loginPage 签发同场景绑定（此前传空场景跳过会话指纹环，
         // 任意 uid=0 场景令牌（user_login/create/danmu_send）在密码正确时均可当后台登录 CSRF 令牌）。

@@ -34,7 +34,7 @@
                 <div class="mt-2"><strong>操作步骤：</strong></div>
                 <ol class="mb-2 ps-3">
                   <li>把站点根目录的 <code>admin.php</code> 重命名为随机文件名，例如 <code>3x9k2m.php</code>。</li>
-                  <li>打开 <code>core/config/config.php</code>，把 <code>admin_entry</code> 的值同步改为新的文件名，例如 <code>'admin_entry' =&gt; '3x9k2m.php'</code>。</li>
+                  <li>打开 <code><?php echo htmlspecialchars(substr(nncms_runtime_path('config.php'), strlen(APP_PATH)), ENT_QUOTES, 'UTF-8');?></code>，把 <code>admin_entry</code> 的值同步改为新的文件名，例如 <code>'admin_entry' =&gt; '3x9k2m.php'</code>。新安装通常使用 <code>data/config.php</code>，旧站可能使用 <code>core/config/config.php</code>，请以上述实际生效的路径为准。</li>
                 </ol>
                 <div class="mb-1"><strong>请务必两步同时完成：</strong></div>
                 <div>只改文件不改配置，或只改配置不改文件，后台链接和登录提交都会指向错误地址，导致后台 404 无法访问。</div>
