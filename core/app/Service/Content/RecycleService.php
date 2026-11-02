@@ -159,10 +159,15 @@ class RecycleService
      */
     public static function purge(int $id = 0): bool
     {
-        if ($id > 0) {
-            return (bool)self::repo()->delete(array('id' => $id));
+        $deleted = (bool)self::repo()->delete($id > 0 ? array('id' => $id) : array('id' => array('>' => 0)));
+        if ($deleted) {
+            try {
+                \App\Service\Collection\VideoVersionService::purgeOrphans();
+            } catch (\Throwable $e) {
+                xn_log('recycle purge: version source cleanup failed', 'recycle_error');
+            }
         }
-        return (bool)self::repo()->delete(array('id' => array('>' => 0)));
+        return $deleted;
     }
 
     /**

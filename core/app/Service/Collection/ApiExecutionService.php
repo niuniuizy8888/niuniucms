@@ -637,7 +637,9 @@ class ApiExecutionService
 
     /**
      * 视频采集页入库（importVideo 主流程）：按 conf['bind'][$code] 的「源类型名→cid」映射逐条处理——
-     * 重名条目（whereIn 500/批预查存量，C-2）走 mergePlayUpdates 合并播放组后 video_update；
+     * 按「去除首尾空白后的片名 + 本地分类」取候选，再核对豆瓣 ID / 年份，避免合并同名作品；
+     * 同页新增/更新立即刷新内存索引。
+     * 持站点级采集锁，在主库事务中重新查重并写入，避免不同源或异步请求并发重复插入。
      * 新条目 videoRowPayload 组装载荷 → RepositoryFactory::vod()->insert → video_vid_create
      * → 分类计数 +1 → applyPosterAndTag（海报/标签补充更新）。down_pic=1 且函数可用时先
      * https_request_multi 并发预取新增条目海报（失败静默，落盘侧回退单发流式下载）。
@@ -659,28 +661,9 @@ class ApiExecutionService
         $apicate = $conf['bind'][$code];
         $ress = array();
 
-        // 查重口径与入库口径一致：库里 name 存的是 storedVodName() 的转义文本，
-        // 拿远端原文直接比对时带 & < > " ' 的片名永远匹配不上 => 每采一次新增一条
-        $vod_names = array_map(array(__CLASS__, 'storedVodName'), array_column($data['data'], 'vod_name'));
-        $existing_vods = array();
-        if (!empty($vod_names)) {
-            // 发布前检查修复（C-2）：500/批分批 whereIn（fastDbFindExistingRowsMap 同款形态），
-            // 消除 LIMIT 1000 截断——匹配行超限时尾部条目被误判新增 => 重复入库
-            // 项目审查修复：此处原本是无 select() 的 `builder()->whereIn(...)->get()` ⇒ `SELECT *` 取回
-            // vod 全列（含 play_url 均值 5.4KB/最大 171KB 与 longtext），500 条一批可达数十 MB，
-            // 且绕过了 sql_star_select 劝退哨兵。下游只用到 vid + 四个 play_* 列
-            //（mergePlayUpdates 的 `$info[...]` 全部引用点已核对），故显式列清单。
-            $exist_fields = array('vid', 'name', 'play_from', 'play_url', 'play_server', 'play_note');
-            foreach (array_chunk(array_values(array_unique($vod_names)), 500) as $vod_name_chunk) {
-                if (empty($vod_name_chunk)) continue;
-                $rows = \App\Repository\RepositoryFactory::vod()->builder()->select($exist_fields)->whereIn('name', $vod_name_chunk)->get();
-                if ($rows) {
-                    foreach ($rows as $row) {
-                        $existing_vods[$row['name']] = $row;
-                    }
-                }
-            }
-        }
+        // 海报预取只使用提示快照；真正入库在持锁后从主库重新查重。
+        $existing_vods = !empty($conf['down_pic'])
+            ? self::findExistingVideos($data['data'], $apicate) : array();
 
         // 采集性能专项：并发预取新增条目的海报，替代逐张串行下载（curl_multi，SSRF 逐跳校验）。
         // 条件与 applyPosterAndTag 一致（down_pic 开启）、仅新增条目（已存在的走 mergePlayUpdates 不下载）、
@@ -690,7 +673,8 @@ class ApiExecutionService
             $prefetch_urls = array();
             foreach ($data['data'] as $pv) {
                 if (!isset($apicate[$pv['type_name']]) || empty($pv['vod_name'])) continue;
-                if (!empty($existing_vods[self::storedVodName($pv['vod_name'])])) continue;
+                $candidates = $existing_vods[self::videoIdentity(self::storedVodName($pv['vod_name']), $apicate[$pv['type_name']])] ?? array();
+                if (self::matchingVideo($candidates, array('year' => $pv['vod_year'] ?? 0, 'douban_id' => $pv['vod_douban_id'] ?? 0))) continue;
                 if (!preg_match('#^https?://#i', (string)($pv['vod_pic'] ?? ''))) continue;
                 $pu = xn_url_strip($pv['vod_pic']);
                 if ('' !== $pu) $prefetch_urls[$pu] = $pu;
@@ -704,56 +688,209 @@ class ApiExecutionService
             }
         }
 
-        foreach ($data['data'] as $k => $v) {
-            $color = 'red';
-            $des = '';
-            $msg = '';
-            $arr = array();
-            if (!isset($apicate[$v['type_name']])) {
-                // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
-                // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
-                $des = lang('api_type_ok') . htmlspecialchars((string)$v['type_name'], ENT_QUOTES, 'UTF-8');
-            } elseif (empty($v['vod_name'])) {
-                $des = lang('api_url_err');
-            } else {
-                $payload = self::videoRowPayload($v, $apicate[$v['type_name']], $players, $param);
-                $arr = $payload['arr'];
-                $cid = $arr['cid'];
-                $tags = $payload['tags'];
-                $cj_play_from_arr = $payload['cj_play_from'];
-                $cj_play_url_arr = $payload['cj_play_url'];
-                $cj_play_server_arr = $payload['cj_play_server'];
-                $cj_play_note_arr = $payload['cj_play_note'];
-                $info = $existing_vods[$arr['name']] ?? null;
-                if (!$info) {
-                    $vid = \App\Repository\RepositoryFactory::vod()->insert($arr); \App\Service\Front\TypeService::bumpFacets();
-                    $vod_vid = array('vid' => $vid, 'cid' => $cid);
-                    video_vid_create($vod_vid);
-                    $vod_vid and cate_update($cid, array('videos+' => 1));
-                    if ($vid > 0) {
+        $db = _SERVER('db');
+        $pdo = $db->connect();
+        if (!$pdo || $db->inTransaction()) throw new \RuntimeException('采集数据库暂不可用，请稍后重试');
+        // 同站视频采集按页串行写入；远程取页、海报下载均不占用此锁。
+        $lock = 'collect_vod_' . substr(hash('sha256', $db->tablepre . $pdo->query('SELECT DATABASE()')->fetchColumn()), 0, 32);
+        $stmt = $pdo->prepare('SELECT GET_LOCK(?, 30)');
+        $stmt->execute(array($lock));
+        if ((int)$stmt->fetchColumn() !== 1) throw new \RuntimeException('其他视频采集正在入库，请稍后重试当前页');
+        $created = $categoryCounts = $touched = array();
+        try {
+            if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
+            $existing_vods = self::findExistingVideos($data['data'], $apicate);
+            $candidates = array();
+            foreach ($existing_vods as $rows) foreach ($rows as $vid => $row) $candidates[$vid] = $row;
+            $versionStates = VideoVersionService::load($candidates);
+            $originalStates = $versionStates;
+            foreach ($data['data'] as $k => $v) {
+                $color = 'red';
+                $des = '';
+                $msg = '';
+                $arr = array();
+                if (!isset($apicate[$v['type_name']])) {
+                    // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
+                    // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
+                    $des = lang('api_type_ok') . htmlspecialchars((string)$v['type_name'], ENT_QUOTES, 'UTF-8');
+                } elseif (self::storedVodName($v['vod_name'] ?? '') === '') {
+                    $des = lang('api_url_err');
+                } else {
+                    $payload = self::videoRowPayload($v, $apicate[$v['type_name']], $players, $param);
+                    $arr = $payload['arr'];
+                    $cid = $arr['cid'];
+                    $tags = $payload['tags'];
+                    $cj_play_from_arr = $payload['cj_play_from'];
+                    $cj_play_url_arr = $payload['cj_play_url'];
+                    $cj_play_server_arr = $payload['cj_play_server'];
+                    $cj_play_note_arr = $payload['cj_play_note'];
+                    $identity = self::videoIdentity($arr['name'], $cid);
+                    $owner = VideoVersionService::owner((string)$code, (int)$arr['vod_id']);
+                    $info = self::matchingVideo($existing_vods[$identity] ?? array(), $arr);
+                    if (!$info) {
+                        $vid = \App\Repository\RepositoryFactory::vod()->insert($arr);
+                        if (!$vid) throw new \RuntimeException('视频入库失败，本页已回滚，请重试');
+                        $categoryCounts[$cid] = ($categoryCounts[$cid] ?? 0) + 1;
                         $color = 'green';
                         $des = lang('api_db_ok');
+                        // 同一页后续条目必须看到刚插入的影片和最新播放组。
+                        $existing_vods[$identity][$vid] = array_merge($arr, array('vid' => $vid));
+                        $versionStates[$vid] = VideoVersionService::seed($arr, $owner);
+                        $created[] = array('vid' => $vid, 'cid' => $cid, 'tags' => $tags, 'arr' => $arr);
                     } else {
-                        $color = 'red';
-                        $des = lang('api_db_err');
+                        $vid = $info['vid'];
+                        $update = self::mergePlayUpdates($info, $cj_play_from_arr, $cj_play_url_arr, $cj_play_server_arr, $cj_play_note_arr, $config, $des, $color, $owner, $versionStates[$vid]);
+                        $update['create_date'] = time();
+                        if ($info['name'] !== $arr['name']) $update['name'] = $arr['name'];
+                        foreach (array('year', 'douban_id') as $field) {
+                            if (empty($info[$field]) && !empty($arr[$field])) $update[$field] = $arr[$field];
+                        }
+                        if (FALSE === video_update($vid, $update)) throw new \RuntimeException('视频更新失败，本页已回滚，请重试');
+                        $existing_vods[$identity][$vid] = array_merge($info, $update);
                     }
-                    $vod_update = array();
-                    self::applyPosterAndTag($vid, $cid, $tags, $vod_update, $arr, $conf, $poster_prefetch);
-                    !empty($vod_update) && FALSE === video_update($vid, $vod_update) and message(-1, lang('update_thread_failed'));
-                } else {
-                    $update = self::mergePlayUpdates($info, $cj_play_from_arr, $cj_play_url_arr, $cj_play_server_arr, $cj_play_note_arr, $config, $des, $color);
-                    $vid = $info['vid'];
-                    $update['create_date'] = time();
-                    !empty($update) && FALSE === video_update($vid, $update) and message(-1, lang('update_thread_failed'));
+                    $touched[$vid] = $vid;
+                    // 本站无对应播放器的来源整组被剔除：显式提示，避免「采集完成」却丢了播放地址
+                    if (!empty($payload['dropped_from'])) {
+                        $msg .= " <font color='orange'>（未配置播放器，已跳过来源：" . htmlspecialchars(implode(',', array_unique($payload['dropped_from'])), ENT_QUOTES, 'UTF-8') . '）</font>';
+                    }
                 }
-                // 本站无对应播放器的来源整组被剔除：显式提示，避免「采集完成」却丢了播放地址
-                if (!empty($payload['dropped_from'])) {
-                    $msg .= " <font color='orange'>（未配置播放器，已跳过来源：" . htmlspecialchars(implode(',', array_unique($payload['dropped_from'])), ENT_QUOTES, 'UTF-8') . '）</font>';
+                $ress[] = ($k + 1) . '、' . htmlspecialchars($v['vod_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
+            }
+            foreach (array_chunk($created, 500) as $chunk) {
+                $indexes = array_map(static fn($item) => array('vid' => $item['vid'], 'cid' => $item['cid']), $chunk);
+                if (\App\Repository\RepositoryFactory::vodVid()->bigInsert($indexes) !== count($indexes)) {
+                    throw new \RuntimeException('视频分类关联写入失败，本页已回滚，请重试');
                 }
             }
-            $ress[] = ($k + 1) . '、' . htmlspecialchars($v['vod_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
+            foreach ($categoryCounts as $cid => $count) {
+                if (!cate_update($cid, array('videos+' => $count))) throw new \RuntimeException('分类计数更新失败，本页已回滚，请重试');
+            }
+            $changedStates = array();
+            foreach ($versionStates as $vid => $state) {
+                if (isset($originalStates[$vid]) ? $state !== $originalStates[$vid] : !empty($state['groups'])) $changedStates[$vid] = $state;
+            }
+            VideoVersionService::save($changedStates);
+            if (!$db->commit()) throw new \RuntimeException('采集提交失败，请重试当前页');
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            throw $e;
+        } finally {
+            $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+            $stmt->execute(array($lock));
+        }
+        // 提交后再次失效，避免事务期间其他请求缓存了旧播放组。
+        foreach ($touched as $vid) content_cache_delete('vod_', $vid);
+        if ($touched) page_cache_bump();
+        if ($created) \App\Service\Front\TypeService::bumpFacets();
+        foreach ($created as $item) {
+            $vod_update = array();
+            self::applyPosterAndTag($item['vid'], $item['cid'], $item['tags'], $vod_update, $item['arr'], $conf, $poster_prefetch);
+            !empty($vod_update) && FALSE === video_update($item['vid'], $vod_update) and message(-1, lang('update_thread_failed'));
         }
         return $ress;
+    }
+
+    /** 片名已经过 storedVodName()；分类必须使用绑定后的本地 cid。 */
+    private static function videoIdentity(string $name, $cid): string
+    {
+        return (int)$cid . ':' . $name;
+    }
+
+    /** 元数据冲突时不能合并；多个不同作品都可能匹配时单独保留，不猜测归属。 */
+    private static function matchingVideo(array $candidates, array $incoming): ?array
+    {
+        $id = max(0, (int)($incoming['douban_id'] ?? 0));
+        $year = max(0, (int)($incoming['year'] ?? 0));
+        $best = array(); $bestScore = -1;
+        foreach ($candidates as $row) {
+            $rowId = max(0, (int)($row['douban_id'] ?? 0));
+            $rowYear = max(0, (int)($row['year'] ?? 0));
+            if ($id && $rowId && $id !== $rowId) continue;
+            $sameId = $id && $id === $rowId;
+            if (!$sameId && $year && $rowYear && $year !== $rowYear) continue;
+            // 相同豆瓣 ID 优先；缺失信息不作为冲突，但不能随意挑选同名重拍片。
+            $score = $sameId ? 10 : (($id === $rowId && $year === $rowYear) ? 8 : (($year && $year === $rowYear) ? 4 : 0));
+            if ($score > $bestScore) { $best = array(); $bestScore = $score; }
+            if ($score === $bestScore) $best[] = $row;
+        }
+        if (!$best) return null;
+        $ids = $years = array();
+        foreach ($best as $row) {
+            if (!empty($row['douban_id'])) $ids[(int)$row['douban_id']] = true;
+            if (!empty($row['year'])) $years[(int)$row['year']] = true;
+        }
+        if (count($ids) > 1 || ($bestScore !== 10 && count($years) > 1)) return null;
+        usort($best, static fn($a, $b) => (int)$a['vid'] <=> (int)$b['vid']);
+        return $best[0];
+    }
+
+    /**
+     * 分批查重，不使用默认分页上限；正式写入时由调用方的驱动事务保证读主库。
+     * 对未命中的片名再兼容历史前后空格，避免升级后旧记录被当成新影片。
+     * 保留同名候选，交 matchingVideo 核对作品信息，不在采集时删除用户已有内容。
+     */
+    private static function findExistingVideos(array $items, array $bindings): array
+    {
+        $wanted = $names = $cids = $found = array();
+        foreach ($items as $item) {
+            if (!isset($bindings[$item['type_name'] ?? ''])) continue;
+            $name = self::storedVodName($item['vod_name'] ?? '');
+            if ($name === '') continue;
+            $cid = (int)$bindings[$item['type_name']];
+            $wanted[self::videoIdentity($name, $cid)] = $name;
+            $names[$name] = $name;
+            $raw = \App\Service\Content\VideoService::fitColumns(array('name' => htmlspecialchars((string)$item['vod_name'], ENT_QUOTES, 'UTF-8')));
+            $names[$raw['name']] = $raw['name'];
+            $cids[$cid] = $cid;
+        }
+        if (!$wanted) return $found;
+        $fields = array('vid', 'cid', 'alias', 'name', 'year', 'douban_id', 'play_from', 'play_url', 'play_server', 'play_note');
+        $remember = static function (array $rows) use (&$found, $wanted) {
+            foreach ($rows as $row) {
+                $key = self::videoIdentity(self::storedVodName(htmlspecialchars_decode($row['name'], ENT_QUOTES)), $row['cid']);
+                if (isset($wanted[$key])) $found[$key][$row['vid']] = $row;
+            }
+        };
+        foreach (array_chunk(array_values($names), 500) as $chunk) {
+            $rows = \App\Repository\RepositoryFactory::vod()->builder()->select($fields)
+                ->whereIn('cid', array_values($cids))->whereIn('name', $chunk)->get();
+            if ($rows === false) throw new \RuntimeException('视频查重失败，已停止本页采集');
+            $remember($rows);
+        }
+        $missing = array();
+        foreach ($items as $item) {
+            if (!isset($bindings[$item['type_name'] ?? ''])) continue;
+            $name = self::storedVodName($item['vod_name'] ?? '');
+            $key = self::videoIdentity($name, $bindings[$item['type_name']]);
+            if ($name !== '' && !self::matchingVideo($found[$key] ?? array(), array('year' => $item['vod_year'] ?? 0, 'douban_id' => $item['vod_douban_id'] ?? 0))) $missing[$key] = true;
+        }
+        if ($missing) {
+            $db = _SERVER('db');
+            $prefix = $db->tablepre;
+            if (!preg_match('/^[A-Za-z0-9_]+$/', $prefix)) throw new \RuntimeException('无效的数据表前缀');
+            // 只取轻量元数据，再按匹配 vid 取播放地址；兼容旧全角空格、NBSP 等首尾空白。
+            $cidSql = implode(',', array_fill(0, count($cids), '?'));
+            $spaces = preg_split('//u', " \t\r\n\v\f\u{0085}\u{00A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{200B}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}", -1, PREG_SPLIT_NO_EMPTY);
+            $patterns = array_map(static fn($space) => $space . '%', $spaces);
+            foreach ($missing as $key => $_) $patterns[] = strtr($wanted[$key], array('=' => '==', '%' => '=%', '_' => '=_')) . '%';
+            $legacyIds = array();
+            foreach (array_chunk(array_unique($patterns), 100) as $chunk) {
+                $prefixSql = implode(' OR ', array_fill(0, count($chunk), "name LIKE ? ESCAPE '='"));
+                $params = array_merge(array_values($cids), $chunk);
+                $stmt = $db->prepare_execute("SELECT vid,cid,name FROM `{$prefix}vod` WHERE cid IN ($cidSql) AND ($prefixSql)", $params);
+                if (!$stmt) throw new \RuntimeException('历史视频查重失败，已停止本页采集');
+                while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
+                    $key = self::videoIdentity(self::storedVodName(htmlspecialchars_decode($row['name'], ENT_QUOTES)), $row['cid']);
+                    if (isset($missing[$key])) $legacyIds[(int)$row['vid']] = (int)$row['vid'];
+                }
+            }
+            foreach (array_chunk($legacyIds, 500) as $chunk) {
+                $rows = \App\Repository\RepositoryFactory::vod()->builder()->select($fields)->whereIn('vid', $chunk)->get();
+                if ($rows === false) throw new \RuntimeException('历史视频读取失败，已停止本页采集');
+                $remember($rows);
+            }
+        }
+        return $found;
     }
 
     /**
@@ -800,21 +937,33 @@ class ApiExecutionService
             $v['vod_play_url'] = '';
         }
 
-        $cj_play_from_arr = explode('$$$', $v['vod_play_from']);
-        $cj_play_url_arr = explode('$$$', $v['vod_play_url']);
-        $cj_play_server_arr = explode('$$$', $v['vod_play_server']);
-        $cj_play_note_arr = explode('$$$', $v['vod_play_note']);
+        $sources = explode('$$$', $v['vod_play_from']);
+        $sourceUrls = explode('$$$', $v['vod_play_url']);
+        $sourceServers = explode('$$$', $v['vod_play_server']);
+        $sourceNotes = explode('$$$', $v['vod_play_note']);
+        $cj_play_from_arr = $cj_play_url_arr = $cj_play_server_arr = $cj_play_note_arr = $positions = array();
         $dropped_from = array();
-        foreach ($cj_play_from_arr as $kk => $vv) {
+        foreach ($sources as $kk => $vv) {
             if (empty($vv) || empty($players[$vv])) {
                 '' !== trim((string)$vv) and $dropped_from[] = (string)$vv;
-                unset($cj_play_from_arr[$kk], $cj_play_url_arr[$kk], $cj_play_server_arr[$kk], $cj_play_note_arr[$kk]);
                 continue;
             }
-            $cj_play_url_arr[$kk] = self::filterPlayUrlScheme(rtrim((string)($cj_play_url_arr[$kk] ?? ''), '#'));
-            if ($param['filter'] > 0 && strpos(',' . $param['filter_from'] . ',', $vv) !== false) {
+            if (($param['filter'] ?? 0) > 0 && in_array($vv, explode(',', $param['filter_from'] ?? ''), true)) {
                 continue;
             }
+            $url = self::filterPlayUrlScheme(rtrim((string)($sourceUrls[$kk] ?? ''), '#'));
+            if (isset($positions[$vv])) {
+                // 同一条源数据中的重复播放组是并列资源，不是先后更新；保留全部不同地址。
+                $index = $positions[$vv];
+                $entries = array_merge(explode('#', $cj_play_url_arr[$index]), explode('#', $url));
+                $cj_play_url_arr[$index] = implode('#', array_unique(array_filter($entries, static fn($entry) => $entry !== '')));
+                continue;
+            }
+            $positions[$vv] = count($cj_play_from_arr);
+            $cj_play_from_arr[] = $vv;
+            $cj_play_url_arr[] = $url;
+            $cj_play_server_arr[] = $sourceServers[$kk] ?? '';
+            $cj_play_note_arr[] = $sourceNotes[$kk] ?? '';
         }
         $arr['play_from'] = (string)join('$$$', (array)$cj_play_from_arr);
         // play 族入库字符闸：剔除引号/尖括号/控制字符（防前台 iframe src 属性逃逸，红线「输出必须转义」入库侧落点）
@@ -835,14 +984,15 @@ class ApiExecutionService
     }
 
     /**
-     * 远端片名 → 库内 name 列口径：htmlspecialchars(ENT_QUOTES) + vod 列宽截断。
+     * 远端片名 → 去除首尾空白（保留片名内部空格）→ 转义 → vod 列宽截断。
      * 入库（videoRowPayload）与查重（importVideoData whereIn / 预取跳过）必须共用本函数，否则口径漂移即重复入库。
      * @param mixed $name 远端 vod_name 原文
      * @return string 与 vod.name 存储值逐字节一致的文本
      */
     private static function storedVodName($name): string
     {
-        $row = \App\Service\Content\VideoService::fitColumns(array('name' => htmlspecialchars((string)$name, ENT_QUOTES)));
+        $name = preg_replace('/^[\\s\\p{Z}\\x{200B}\\x{FEFF}]+|[\\s\\p{Z}\\x{200B}\\x{FEFF}]+$/u', '', (string)$name) ?? trim((string)$name);
+        $row = \App\Service\Content\VideoService::fitColumns(array('name' => htmlspecialchars($name, ENT_QUOTES, 'UTF-8')));
         return (string)$row['name'];
     }
 
@@ -980,9 +1130,10 @@ class ApiExecutionService
     /**
      * 重名视频的播放组合并（仅当 conf['api_api']['vod']['uprule'] 含 'a' 才动作）：
      * 采集组名库里没有 → 整组追加；已有且 play_url 不同 → 替换该组
-     * （urlrole=1 时按 '#' 分集与旧值合并去重；组名找不到对应键时 array_search 返回 false，
-     * 实际命中的是旧 play_url 串首元素——依赖拆组后键位对齐的前提）。
-     * 仅在真发生合并（$ec）时返回 play_from/play_url/play_server/play_note
+     * （urlrole=1 时按 '#' 分集与旧值合并去重）。电影的 HD / HD粤语等版本入口单独保护：
+     * 同一来源条目的入口更新地址，其他资源/版本保留；普通剧集仍遵循原有合并/覆盖规则。
+     * 每次操作都基于已合并的最新播放组。
+     * 仅在真发生合并时返回 play_from/play_url/play_server/play_note
      * （后三者出 xn_url_strip 字符闸；play_from 原样）。
      * @param array $info 库中既有 vod 行（取 play_from/play_url/play_server/play_note）
      * @param array $cj_play_from_arr 采集侧播放组名数组（videoRowPayload 产出）
@@ -994,69 +1145,60 @@ class ApiExecutionService
      * @param string $color 引用出参：发生合并时改写为 'green'
      * @return array 待 video_update 的字段集；无需更新时为空数组
      */
-    private static function mergePlayUpdates(array $info, array $cj_play_from_arr, array $cj_play_url_arr, array $cj_play_server_arr, array $cj_play_note_arr, array $config, &$des, &$color): array
+    private static function mergePlayUpdates(array $info, array $cj_play_from_arr, array $cj_play_url_arr, array $cj_play_server_arr, array $cj_play_note_arr, array $config, &$des, &$color, string $owner, array &$versionState): array
     {
-        $update = array();
-        $ec = false;
-        if (strpos(',' . $config['uprule'], 'a') !== false && !empty($cj_play_from_arr)) {
-            $old_play_from = $info['play_from'];
-            $old_play_url = $info['play_url'];
-            $old_play_server = $info['play_server'];
-            $old_play_note = $info['play_note'];
-            foreach ($cj_play_from_arr as $k2 => $v2) {
-                $cj_play_from = $v2;
-                $cj_play_url = $cj_play_url_arr[$k2];
-                $cj_play_server = $cj_play_server_arr[$k2];
-                $cj_play_note = $cj_play_note_arr[$k2];
-                if ($cj_play_url == $info['play_url']) {
-                    $des .= lang('api_play_ok');
-                } elseif (empty($cj_play_from)) {
-                    $des .= lang('api_play_err');
-                } elseif (!str_contains('$$$' . $info['play_from'] . '$$$', '$$$' . $cj_play_from . '$$$')) {
-                    $color = 'green';
-                    $des .= lang('api_code_ok');
-                    if (!empty($old_play_from)) {
-                        $old_play_url .= "$$$";
-                        $old_play_from .= "$$$";
-                        $old_play_server .= "$$$";
-                        $old_play_note .= "$$$";
-                    }
-                    $old_play_url .= "" . $cj_play_url;
-                    $old_play_from .= "" . $cj_play_from;
-                    $old_play_server .= "" . $cj_play_server;
-                    $old_play_note .= "" . $cj_play_note;
-                    $ec = true;
-                } elseif (!empty($cj_play_url)) {
-                    $arr1 = explode("$$$", $old_play_url);
-                    $arr2 = explode("$$$", $old_play_from);
-                    $play_key = array_search($cj_play_from, $arr2);
-                    if ($arr1[$play_key] == $cj_play_url) {
-                        $des .= lang('api_code_nup');
-                    } else {
-                        $color = 'green';
-                        $des .= lang('api_code_up');
-                        if ($config['urlrole'] == 1) {
-                            $tmp1 = explode('#', $arr1[$play_key]);
-                            $tmp2 = explode('#', $cj_play_url);
-                            $tmp1 = array_merge($tmp1, $tmp2);
-                            $tmp1 = array_unique($tmp1);
-                            $cj_play_url = join('#', (array)$tmp1);
-                            unset($tmp1, $tmp2);
-                        }
-                        $arr1[$play_key] = $cj_play_url;
-                        $ec = true;
-                    }
-                    $old_play_url = join('$$$', (array)$arr1);
+        if (strpos(',' . ($config['uprule'] ?? ''), 'a') === false || !$cj_play_from_arr) return array();
+        $from = empty($info['play_from']) ? array() : explode('$$$', $info['play_from']);
+        $urls = explode('$$$', $info['play_url']);
+        $servers = explode('$$$', $info['play_server']);
+        $notes = explode('$$$', $info['play_note']);
+        $changed = false;
+        foreach ($cj_play_from_arr as $k => $source) {
+            if ($source === '') { $des .= lang('api_play_err'); continue; }
+            $url = xn_url_strip($cj_play_url_arr[$k] ?? '');
+            // 依据当前播放组查找；即使两个来源地址相同，也应保留各自的线路。
+            $index = array_search($source, $from, true);
+            $groupState = $versionState['groups'][$source] ?? array();
+            // 即使地址未变，也要认领完全一致的历史入口，后续换链才能按来源更新。
+            $versions = VideoVersionService::merge($index === false ? '' : ($urls[$index] ?? ''), $url, $owner, $groupState);
+            if ($groupState) $versionState['groups'][$source] = $groupState;
+            else unset($versionState['groups'][$source]);
+            if ($index === false) {
+                $index = count($from);
+                $from[$index] = $source;
+                $urls[$index] = $url;
+                $servers[$index] = $cj_play_server_arr[$k] ?? '';
+                $notes[$index] = $cj_play_note_arr[$k] ?? '';
+                $changed = true;
+                $color = 'green';
+                $des .= lang('api_code_ok');
+            } elseif ($url !== '' && $url !== ($urls[$index] ?? '')) {
+                if ($versions !== null) {
+                    $url = $versions;
+                } elseif (($config['urlrole'] ?? 0) == 1) {
+                    $url = implode('#', array_unique(array_merge(explode('#', $urls[$index] ?? ''), explode('#', $url))));
                 }
-            }
-            if ($ec) {
-                $update['play_from'] = $old_play_from;
-                $update['play_url'] = xn_url_strip($old_play_url);
-                $update['play_server'] = xn_url_strip($old_play_server);
-                $update['play_note'] = xn_url_strip($old_play_note);
+                $urls[$index] = $url;
+                $changed = true;
+                $color = 'green';
+                $des .= lang('api_code_up');
+            } else {
+                $des .= lang('api_code_nup');
             }
         }
-        return $update;
+        if (!$changed) return array();
+        // 旧数据可能省略末尾空 server/note，逐组补齐以免追加线路后错位。
+        $aligned = static function (array $values) use ($from): string {
+            $out = array();
+            foreach ($from as $i => $_) $out[] = $values[$i] ?? '';
+            return implode('$$$', $out);
+        };
+        return array(
+            'play_from' => implode('$$$', $from),
+            'play_url' => xn_url_strip($aligned($urls)),
+            'play_server' => xn_url_strip($aligned($servers)),
+            'play_note' => xn_url_strip($aligned($notes)),
+        );
     }
 
     /**

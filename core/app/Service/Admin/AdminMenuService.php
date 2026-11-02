@@ -305,7 +305,7 @@ class AdminMenuService
         $html .= "<div class=\"app-sidebar\">\n";
         $html .= "    <div class=\"side-header\">\n";
         $html .= "        <a class=\"header-brand1\" href=\"" . ADMIN_URL . "\">\n";
-        $html .= "            <img src=\"/static/logo.png\" alt=\"logo\" style=\"height:30px;\">\n";
+        $html .= "            <img class=\"side-brand-logo\" src=\"/static/logo.png\" alt=\"logo\">\n";
         $html .= "            <span class=\"side-brand-text\">" . APP_NAME . "</span>\n";
         $html .= "        </a>\n";
         $html .= "    </div>\n";
