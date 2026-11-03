@@ -16,10 +16,11 @@ var code='',modal=document.getElementById('scheduleModal');
 // 从当前页面保留公网协议、端口和安装目录，避免反代传给 PHP 的 Host 丢失端口。
 var base=new URL('.',window.location.href).href.replace(/\/$/,'');
 var token=<?php echo json_encode(api_wire_token('api'),JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;
-function quote(s){return "'"+s.replace(/'/g,"'\\''")+"'";}
+// 部分宝塔版本的非 root 任务用 bash -c 单引号包住整条命令；参数用双引号并转义 shell 展开字符。
+function quote(s){return '"'+s.replace(/[\\"$`]/g,'\\$&')+'"';}
 function command(){
  var hours=document.getElementById('scheduleHours').value;
- var endpoint=base+'/api.php?route=collect&code='+encodeURIComponent(code)+'&h='+hours;
+ var endpoint=(base+'/api.php?route=collect&code='+encodeURIComponent(code)+'&h='+hours).replace(/'/g,'%27');
  document.getElementById('scheduleCommand').value='curl -fsSL --connect-timeout 15 --max-time 3600 --max-redirs 10000 -H '+quote('X-NNCMS-Token: '+token)+' '+quote(endpoint);
  document.getElementById('copyScheduleResult').textContent='';
 }

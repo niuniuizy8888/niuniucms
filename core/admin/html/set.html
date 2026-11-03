@@ -55,6 +55,29 @@
                         </div>
                     </div>
 
+                    <section class="border rounded p-3 mb-4" id="video-match-rules" style="scroll-margin-top:90px" aria-labelledby="video-match-title">
+                        <h6 class="fw-semibold mb-2" id="video-match-title">视频重复入库规则</h6>
+                        <p class="text-muted small mb-3">决定采集到同名视频时，是更新已有视频还是新建一条。视频采集页、云端异步和定时任务使用同一规则。</p>
+                        <label class="form-label" for="collectionMatchMode">匹配方式</label>
+                        <select class="form-select mb-2" id="collectionMatchMode" name="collection_match_mode" style="max-width:420px" aria-describedby="collectionMatchDefault">
+                            <option value="auto" <?php echo $video_match_rule['mode']==='auto'?'selected':''; ?>>默认规则（保留现有行为）</option>
+                            <option value="custom" <?php echo $video_match_rule['mode']==='custom'?'selected':''; ?>>自定义条件</option>
+                        </select>
+                        <p class="text-muted small" id="collectionMatchDefault">默认按片名和分类匹配，同时核对年份与豆瓣 ID；年份冲突时分开入库，相同豆瓣 ID 可忽略年份差异。副标题不参与。</p>
+                        <div id="collectionMatchCustom" <?php echo $video_match_rule['mode']==='custom'?'':'hidden'; ?>>
+                            <div class="d-flex flex-wrap align-items-center gap-3 my-3">
+                                <label class="d-flex align-items-center gap-2 mb-0"><input type="checkbox" class="form-check-input m-0" checked disabled>片名（必选）</label>
+                                <?php foreach ($video_match_fields as $field=>$label) { ?>
+                                <label class="d-flex align-items-center gap-2 mb-0"><input type="checkbox" class="form-check-input m-0" name="collection_match_fields[]" value="<?php echo xn_h($field); ?>"<?php echo in_array($field,$video_match_rule['fields'],true)?' checked':''; ?>><?php echo xn_h($label); ?></label>
+                                <?php } ?>
+                            </div>
+                            <p class="small mb-2" id="collectionMatchSummary" role="status"></p>
+                            <p class="text-muted small mb-2">勾选的条件须同时相同；来源未提供的字段不参与比较。文字条件按完整内容匹配，忽略首尾空白。不勾选分类时，会在全站同名视频中查找，并保留原视频分类。</p>
+                            <p class="small mb-0">跨年份综艺可只勾选「分类」，不勾选「年份」「副标题」。同名重拍作品可能因此合并，请按站点内容选择。</p>
+                        </div>
+                        <p class="text-muted small mt-3 mb-0">保存后用于后续采集，不自动整理历史重复视频。若已有多条符合自定义条件，更新 ID 最小的一条，其他记录保留。匹配后仍按来源保留和更新播放地址，不会仅因都叫 HD 而相互覆盖。</p>
+                    </section>
+
                     <h6 class="fw-semibold mb-3" style="font-size:11px;color:var(--nn-text-muted);text-transform:uppercase;letter-spacing:.08em;">功能开关</h6>
                     <div class="row g-3 mb-4">
                         <div class="col-md-2">
@@ -138,6 +161,16 @@
 <?php include _include(ADMIN_PATH.'html/foot.html');?>
 <script>
 var jform = $('#form');
+(function(){
+    var mode=document.getElementById('collectionMatchMode'),box=document.getElementById('collectionMatchCustom');
+    function refreshRule(){
+        var custom=mode.value==='custom';box.hidden=!custom;
+        document.getElementById('collectionMatchDefault').hidden=custom;
+        var labels=['片名'];box.querySelectorAll('input[name="collection_match_fields[]"]:checked').forEach(function(input){labels.push(input.parentElement.textContent.trim());});
+        document.getElementById('collectionMatchSummary').textContent='当前匹配条件：'+labels.join(' ＋ ');
+    }
+    mode.addEventListener('change',refreshRule);box.addEventListener('change',refreshRule);refreshRule();
+})();
 jform.on('submit', function() {
     jform.reset();
     var jthis = $(this);

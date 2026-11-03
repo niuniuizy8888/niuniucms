@@ -641,7 +641,8 @@ class ApiExecutionService
 
     /**
      * 视频采集页入库（importVideo 主流程）：按 conf['bind'][$code] 的「源类型名→cid」映射逐条处理——
-     * 按「去除首尾空白后的片名 + 本地分类」取候选，再核对豆瓣 ID / 年份，避免合并同名作品；
+     * 默认按「去除首尾空白后的片名 + 本地分类」取候选，再核对豆瓣 ID / 年份；
+     * 自定义模式只核对用户选择的字段，未选分类时可跨分类匹配。
      * 同页新增/更新立即刷新内存索引。
      * 持站点级采集锁，在主库事务中重新查重并写入，避免不同源或异步请求并发重复插入。
      * 新条目 videoRowPayload 组装载荷 → RepositoryFactory::vod()->insert → video_vid_create
@@ -656,6 +657,7 @@ class ApiExecutionService
     public static function importVideoData($data, $code)
     {
         $conf = _SERVER('conf');
+        $matchRule = VideoMatchRuleService::settings($conf);
         $param = array('filter' => 0);
         $config = $conf['api_api']['vod'];
         $players = $conf['vodplayer'];
@@ -667,7 +669,7 @@ class ApiExecutionService
 
         // 海报预取只使用提示快照；真正入库在持锁后从主库重新查重。
         $existing_vods = !empty($conf['down_pic'])
-            ? self::findExistingVideos($data['data'], $apicate) : array();
+            ? self::findExistingVideos($data['data'], $apicate, $matchRule) : array();
 
         // 采集性能专项：并发预取新增条目的海报，替代逐张串行下载（curl_multi，SSRF 逐跳校验）。
         // 条件与 applyPosterAndTag 一致（down_pic 开启）、仅新增条目（已存在的走 mergePlayUpdates 不下载）、
@@ -677,8 +679,8 @@ class ApiExecutionService
             $prefetch_urls = array();
             foreach ($data['data'] as $pv) {
                 if (!isset($apicate[$pv['type_name']]) || empty($pv['vod_name'])) continue;
-                $candidates = $existing_vods[self::videoIdentity(self::storedVodName($pv['vod_name']), $apicate[$pv['type_name']])] ?? array();
-                if (self::matchingVideo($candidates, array('year' => $pv['vod_year'] ?? 0, 'douban_id' => $pv['vod_douban_id'] ?? 0))) continue;
+                $candidates = $existing_vods[self::videoIdentity(self::storedVodName($pv['vod_name']), $apicate[$pv['type_name']], $matchRule)] ?? array();
+                if (self::matchingVideo($candidates, VideoMatchRuleService::sourceMetadata($pv, (int)$apicate[$pv['type_name']]), $matchRule)) continue;
                 if (!preg_match('#^https?://#i', (string)($pv['vod_pic'] ?? ''))) continue;
                 $pu = xn_url_strip($pv['vod_pic']);
                 if ('' !== $pu) $prefetch_urls[$pu] = $pu;
@@ -703,7 +705,7 @@ class ApiExecutionService
         $created = $categoryCounts = $touched = array();
         try {
             if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
-            $existing_vods = self::findExistingVideos($data['data'], $apicate);
+            $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule);
             $candidates = array();
             foreach ($existing_vods as $rows) foreach ($rows as $vid => $row) $candidates[$vid] = $row;
             $versionStates = VideoVersionService::load($candidates);
@@ -728,9 +730,9 @@ class ApiExecutionService
                     $cj_play_url_arr = $payload['cj_play_url'];
                     $cj_play_server_arr = $payload['cj_play_server'];
                     $cj_play_note_arr = $payload['cj_play_note'];
-                    $identity = self::videoIdentity($arr['name'], $cid);
+                    $identity = self::videoIdentity($arr['name'], $cid, $matchRule);
                     $owner = VideoVersionService::owner((string)$code, (int)$arr['vod_id']);
-                    $info = self::matchingVideo($existing_vods[$identity] ?? array(), $arr);
+                    $info = self::matchingVideo($existing_vods[$identity] ?? array(), $arr, $matchRule);
                     if (!$info) {
                         $vid = \App\Repository\RepositoryFactory::vod()->insert($arr);
                         if (!$vid) throw new \RuntimeException('视频入库失败，本页已回滚，请重试');
@@ -794,15 +796,18 @@ class ApiExecutionService
         return $ress;
     }
 
-    /** 片名已经过 storedVodName()；分类必须使用绑定后的本地 cid。 */
-    private static function videoIdentity(string $name, $cid): string
+    /** 片名已经过 storedVodName()；只有启用分类条件时才按本地 cid 分桶。 */
+    private static function videoIdentity(string $name, $cid, ?array $rule = null): string
     {
-        return (int)$cid . ':' . $name;
+        $rule = $rule ?? VideoMatchRuleService::settings(_SERVER('conf'));
+        return (VideoMatchRuleService::usesCategory($rule) ? (int)$cid : 0) . ':' . $name;
     }
 
-    /** 元数据冲突时不能合并；多个不同作品都可能匹配时单独保留，不猜测归属。 */
-    private static function matchingVideo(array $candidates, array $incoming): ?array
+    /** 默认规则核对元数据冲突；自定义规则按管理员选择的条件匹配。 */
+    private static function matchingVideo(array $candidates, array $incoming, ?array $rule = null): ?array
     {
+        $rule = $rule ?? VideoMatchRuleService::settings(_SERVER('conf'));
+        if ($rule['mode'] === 'custom') return VideoMatchRuleService::matchCustom($candidates, $incoming, $rule);
         $id = max(0, (int)($incoming['douban_id'] ?? 0));
         $year = max(0, (int)($incoming['year'] ?? 0));
         $best = array(); $bestScore = -1;
@@ -833,15 +838,17 @@ class ApiExecutionService
      * 对未命中的片名再兼容历史前后空格，避免升级后旧记录被当成新影片。
      * 保留同名候选，交 matchingVideo 核对作品信息，不在采集时删除用户已有内容。
      */
-    private static function findExistingVideos(array $items, array $bindings): array
+    private static function findExistingVideos(array $items, array $bindings, ?array $rule = null): array
     {
+        $rule = $rule ?? VideoMatchRuleService::settings(_SERVER('conf'));
+        $useCategory = VideoMatchRuleService::usesCategory($rule);
         $wanted = $names = $cids = $found = array();
         foreach ($items as $item) {
             if (!isset($bindings[$item['type_name'] ?? ''])) continue;
             $name = self::storedVodName($item['vod_name'] ?? '');
             if ($name === '') continue;
             $cid = (int)$bindings[$item['type_name']];
-            $wanted[self::videoIdentity($name, $cid)] = $name;
+            $wanted[self::videoIdentity($name, $cid, $rule)] = $name;
             $names[$name] = $name;
             $raw = \App\Service\Content\VideoService::fitColumns(array('name' => htmlspecialchars((string)$item['vod_name'], ENT_QUOTES, 'UTF-8')));
             $names[$raw['name']] = $raw['name'];
@@ -849,15 +856,17 @@ class ApiExecutionService
         }
         if (!$wanted) return $found;
         $fields = array('vid', 'cid', 'alias', 'name', 'year', 'douban_id', 'play_from', 'play_url', 'play_server', 'play_note');
-        $remember = static function (array $rows) use (&$found, $wanted) {
+        if ($rule['mode'] === 'custom') $fields = array_values(array_unique(array_merge($fields, $rule['fields'])));
+        $remember = static function (array $rows) use (&$found, $wanted, $rule) {
             foreach ($rows as $row) {
-                $key = self::videoIdentity(self::storedVodName(htmlspecialchars_decode($row['name'], ENT_QUOTES)), $row['cid']);
+                $key = self::videoIdentity(self::storedVodName(htmlspecialchars_decode($row['name'], ENT_QUOTES)), $row['cid'], $rule);
                 if (isset($wanted[$key])) $found[$key][$row['vid']] = $row;
             }
         };
         foreach (array_chunk(array_values($names), 500) as $chunk) {
-            $rows = \App\Repository\RepositoryFactory::vod()->builder()->select($fields)
-                ->whereIn('cid', array_values($cids))->whereIn('name', $chunk)->get();
+            $query = \App\Repository\RepositoryFactory::vod()->builder()->select($fields)->whereIn('name', $chunk);
+            if ($useCategory) $query->whereIn('cid', array_values($cids));
+            $rows = $query->get();
             if ($rows === false) throw new \RuntimeException('视频查重失败，已停止本页采集');
             $remember($rows);
         }
@@ -865,8 +874,8 @@ class ApiExecutionService
         foreach ($items as $item) {
             if (!isset($bindings[$item['type_name'] ?? ''])) continue;
             $name = self::storedVodName($item['vod_name'] ?? '');
-            $key = self::videoIdentity($name, $bindings[$item['type_name']]);
-            if ($name !== '' && !self::matchingVideo($found[$key] ?? array(), array('year' => $item['vod_year'] ?? 0, 'douban_id' => $item['vod_douban_id'] ?? 0))) $missing[$key] = true;
+            $key = self::videoIdentity($name, $bindings[$item['type_name']], $rule);
+            if ($name !== '' && !self::matchingVideo($found[$key] ?? array(), VideoMatchRuleService::sourceMetadata($item, (int)$bindings[$item['type_name']]), $rule)) $missing[$key] = true;
         }
         if ($missing) {
             $db = _SERVER('db');
@@ -874,17 +883,18 @@ class ApiExecutionService
             if (!preg_match('/^[A-Za-z0-9_]+$/', $prefix)) throw new \RuntimeException('无效的数据表前缀');
             // 只取轻量元数据，再按匹配 vid 取播放地址；兼容旧全角空格、NBSP 等首尾空白。
             $cidSql = implode(',', array_fill(0, count($cids), '?'));
+            $categorySql = $useCategory ? "cid IN ($cidSql) AND " : '';
             $spaces = preg_split('//u', " \t\r\n\v\f\u{0085}\u{00A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{200B}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}", -1, PREG_SPLIT_NO_EMPTY);
             $patterns = array_map(static fn($space) => $space . '%', $spaces);
             foreach ($missing as $key => $_) $patterns[] = strtr($wanted[$key], array('=' => '==', '%' => '=%', '_' => '=_')) . '%';
             $legacyIds = array();
             foreach (array_chunk(array_unique($patterns), 100) as $chunk) {
                 $prefixSql = implode(' OR ', array_fill(0, count($chunk), "name LIKE ? ESCAPE '='"));
-                $params = array_merge(array_values($cids), $chunk);
-                $stmt = $db->prepare_execute("SELECT vid,cid,name FROM `{$prefix}vod` WHERE cid IN ($cidSql) AND ($prefixSql)", $params);
+                $params = array_merge($useCategory ? array_values($cids) : array(), $chunk);
+                $stmt = $db->prepare_execute("SELECT vid,cid,name FROM `{$prefix}vod` WHERE {$categorySql}($prefixSql)", $params);
                 if (!$stmt) throw new \RuntimeException('历史视频查重失败，已停止本页采集');
                 while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
-                    $key = self::videoIdentity(self::storedVodName(htmlspecialchars_decode($row['name'], ENT_QUOTES)), $row['cid']);
+                    $key = self::videoIdentity(self::storedVodName(htmlspecialchars_decode($row['name'], ENT_QUOTES)), $row['cid'], $rule);
                     if (isset($missing[$key])) $legacyIds[(int)$row['vid']] = (int)$row['vid'];
                 }
             }

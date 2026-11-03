@@ -16,6 +16,16 @@ class ConfigRuntimeService
      */
     public static function saveWebsiteSettings(array $payload, array $config): array
     {
+        $matchSettings = array();
+        if (array_key_exists('collection_match_mode', $payload)) {
+            try {
+                $matchSettings = \App\Service\Collection\VideoMatchRuleService::validate(
+                    $payload['collection_match_mode'], $payload['collection_match_fields'] ?? array()
+                );
+            } catch (\InvalidArgumentException $e) {
+                return array('success' => false, 'msg' => $e->getMessage());
+            }
+        }
         // 上线前安全审计修复（存储型 XSS，VULN-002）：
         // sitename/area/lang/year 输出在模板属性上下文（<img alt="{$nncms.site_name}">、
         // <meta content="{$nncms.site_name}"/>、ld+json），filter_all_html/xn_html_safe 均不处理引号，
@@ -46,7 +56,7 @@ class ConfigRuntimeService
             'email' => preg_replace('/[\x00-\x1F\x7F<>"\'`]/', '', (string)($payload['email'] ?? '')),
         );
         // ⚠ 写失败如实上报（审查修复）：旧实现无视 kv REPLACE 返回值，库写失败仍回「保存成功」。
-        if (FALSE === config_runtime_set_values($replace)) {
+        if (FALSE === config_runtime_set_values(array_merge($replace, $matchSettings))) {
             return array('success' => false, 'msg' => lang('save_failed'));
         }
 

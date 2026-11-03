@@ -2,6 +2,7 @@
 namespace App\Service\Admin\Traits;
 
 use App\Service\Admin\ConfigRuntimeService;
+use App\Service\Collection\VideoMatchRuleService;
 
 /**
  * 站点设置（websitePage/saveWebsite）（从 SetManageService 拆分，Trait 组合）
@@ -27,6 +28,8 @@ trait SetManageWebsiteTrait
                 'title' => lang('set_web'),
             ),
             'setting' => $setting,
+            'video_match_rule' => VideoMatchRuleService::settings($conf),
+            'video_match_fields' => VideoMatchRuleService::FIELDS,
             'input' => array(
                 'sitename' => form_text('sitename', self::decodeStoredText($conf['sitename'])),
                 'logo' => form_text('logo', $conf['logo']),
@@ -74,7 +77,7 @@ trait SetManageWebsiteTrait
      * 写 KV 运行时层，不物理改写 config.php，CLAUDE.md「当前架构·配置分层」）。
      * @param array $config 完整配置（作 saveWebsiteSettings 的合并底）
      * @param int $uid 管理员 UID
-     * @return array {code, message} 供 message() 输出（现行 saveWebsiteSettings 恒成功，code 固定 0）
+     * @return array {code, message} 供 message() 输出
      */
     public static function saveWebsite(array $config, int $uid): array
     {
@@ -124,8 +127,14 @@ trait SetManageWebsiteTrait
             'tpl_mode' => admin_param_int('tpl_mode', 0, 0, 2),
             'website_mode' => admin_param_int('website_mode', 0, 0, 1),
         );
+        // 兼容旧表单：未提交规则时保留原值；自定义条件全不选表示只按片名。
+        if (isset($_POST['collection_match_mode'])) {
+            // 原始类型交给严格白名单校验，防止参数强转把无效数组或字符串变成有效规则。
+            $payload['collection_match_mode'] = $_POST['collection_match_mode'];
+            $payload['collection_match_fields'] = $_POST['collection_match_fields'] ?? array();
+        }
         $result = ConfigRuntimeService::saveWebsiteSettings($payload, $config);
-        return array('code' => 0, 'message' => $result['msg']);
+        return array('code' => $result['success'] ? 0 : -1, 'message' => $result['msg']);
     }
 
     /**
