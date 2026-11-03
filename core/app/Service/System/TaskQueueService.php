@@ -6,7 +6,7 @@ namespace App\Service\System;
  *
  * 触发方式：
  * - 入队：后台采集动作（cronRun 全源拆分入队 / rsync 等）写 scheduler_tasks
- * - 消费：独立 CLI worker（tools/queue_worker.php）+ 后台任务页手动"执行队列"
+ * - 消费：宝塔直接采集命令、独立 CLI worker + 后台任务页手动"执行队列"
  * - 重试：失败自动重试，上限 3 次后置 failed
  */
 class TaskQueueService
@@ -44,6 +44,12 @@ class TaskQueueService
      */
     public static function enqueue(string $type, array $param): int
     {
+        return self::enqueueDetailed($type, $param)['id'];
+    }
+
+    /** 返回任务 ID、状态和复用标记，供计划任务输出真实的入队结果。 */
+    public static function enqueueDetailed(string $type, array $param): array
+    {
         // 主库连接级锁使检查与写入串行化；所有入队入口共用，不受历史条数影响。
         $db = _SERVER('db');
         $pdo = $db->connect();
@@ -56,17 +62,18 @@ class TaskQueueService
         if ((int)$stmt->fetchColumn() !== 1) throw new \RuntimeException('任务入队锁超时');
         try {
             $table = $db->qi($db->tablepre . 'scheduler_tasks');
-            $stmt = $pdo->prepare('SELECT id FROM ' . $table
+            $stmt = $pdo->prepare('SELECT id,status FROM ' . $table
                 . ' WHERE type = ? AND BINARY param = BINARY ? AND status IN (0, 1) LIMIT 1');
             $stmt->execute(array($type, $json));
-            $existing = $stmt->fetchColumn();
-            if ($existing !== false) return (int)$existing;
+            $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
+            cache_delete(self::EMPTY_FLAG);
+            if ($existing) return array('id' => (int)$existing['id'], 'status' => (int)$existing['status'], 'reused' => true);
             $stmt = $pdo->prepare('INSERT INTO ' . $table
                 . ' (type, param, status, retry, error, create_date, run_date, finish_date) VALUES (?, ?, 0, 0, ?, ?, 0, 0)');
             $stmt->execute(array($type, $json, '', time()));
             $id = (int)$pdo->lastInsertId();
             cache_delete(self::EMPTY_FLAG);
-            return $id;
+            return array('id' => $id, 'status' => self::STATUS_PENDING, 'reused' => false);
         } finally {
             $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
             $stmt->execute(array($lock));
@@ -78,73 +85,120 @@ class TaskQueueService
      */
     public static function process(int $limit = 1): int
     {
-        // 队列空闲标志：60s 内已确认无 pending/running 时跳过全部 DB 探测（性能轮，
-        // 省 2 查询/请求；enqueue() 会即时删标志，任务消费延迟为零）
-        if (cache_get(self::EMPTY_FLAG)) return 0;
-        $time = time();
-        $done = 0;
-        $hadPending = FALSE;
-        $hadRunning = FALSE;
+        return count(self::processDetailed($limit));
+    }
+
+    /** 每条任务每轮只尝试一次；返回真实结果，失败不能按执行条数误报成功。 */
+    public static function processDetailed(int $limit = 1): array
+    {
+        if (cache_get(self::EMPTY_FLAG)) return array();
+        $limit = max(1, min(20, $limit));
+        $results = array();
         $repo = \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id');
-        // 僵尸任务回收：running 超过 1800s（进程被 SIGKILL/内存耗尽）重置回 pending 并计重试，达上限置 failed（审计修复）
-        // SQL 专项审计修复（R10）：只需 id/run_date/retry/status
-        $stale = $repo->find(array('status' => self::STATUS_RUNNING), array(), 1, 100, 'id', array('id', 'run_date', 'retry', 'status'));
-        $hadRunning = count((array)$stale) > 0;
-        foreach ((array)$stale as $srow) {
-            if (intval($srow['run_date']) > 0 && ($time - intval($srow['run_date'])) > 1800) {
-                $retry = (int)$srow['retry'] + 1;
-                if ($retry >= self::MAX_RETRY) {
-                    $repo->update(array('id' => intval($srow['id'])), array('status' => self::STATUS_FAILED, 'retry' => $retry, 'error' => 'zombie timeout'));
-                } else {
-                    $repo->update(array('id' => intval($srow['id'])), array('status' => self::STATUS_PENDING, 'retry' => $retry, 'run_date' => 0));
-                }
+        $running = $repo->builder()->select(array('id', 'run_date'))->where('status', '=', self::STATUS_RUNNING)->limit(100)->get();
+        if ($running === false) throw new \RuntimeException('执行中任务读取失败');
+        foreach ($running as $row) {
+            if (count($results) >= $limit) break;
+            if ((int)$row['run_date'] > 0 && time() - (int)$row['run_date'] > 1800) {
+                $result = self::processTask((int)$row['id']);
+                if ($result['attempted']) $results[] = $result;
             }
         }
-        for ($i = 0; $i < $limit; $i++) {
-            $row = $repo->findOne(array('status' => self::STATUS_PENDING), array('id' => 1));
-            if (empty($row) || empty($row['id'])) break;
-            $hadPending = TRUE;
-            $id = (int)$row['id'];
-            // CAS 抢占：仅 pending → running 成功才执行（并发安全）
-            $upd = $repo->update(
-                array('id' => $id, 'status' => self::STATUS_PENDING),
-                array('status' => self::STATUS_RUNNING, 'run_date' => $time)
-            );
-            if (!$upd) continue; // 已被其他请求取走
-            $err = '';
+        $pending = $repo->builder()->select(array('id'))->where('status', '=', self::STATUS_PENDING)->orderBy('id', 'ASC')->limit($limit)->get();
+        if ($pending === false) throw new \RuntimeException('待执行任务读取失败');
+        $attempted = array_column($results, 'id');
+        foreach ($pending as $row) {
+            if (count($results) >= $limit) break;
+            if (in_array((int)$row['id'], $attempted, true)) continue;
+            $result = self::processTask((int)$row['id']);
+            if ($result['attempted']) $results[] = $result;
+        }
+        if (!$results && !$running && !$pending) cache_set(self::EMPTY_FLAG, 1, self::EMPTY_FLAG_TTL);
+        return $results;
+    }
+
+    /** 主库读取，避免刚入队后从副本读不到任务。 */
+    public static function readTask(int $id): array
+    {
+        $db = _SERVER('db');
+        $stmt = $db->connect()->prepare('SELECT id,type,param,status,retry,error,create_date,run_date,finish_date FROM '
+            . $db->qi($db->tablepre . 'scheduler_tasks') . ' WHERE id=?');
+        $stmt->execute(array($id));
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$row) throw new \RuntimeException('任务不存在：' . $id);
+        foreach (array('id','status','retry','create_date','run_date','finish_date') as $field) $row[$field] = (int)$row[$field];
+        return $row;
+    }
+
+    /** 进度不进入任务参数，避免分页推进破坏同源同窗口去重；主库批量读防止续采倒退。 */
+    public static function progressList(array $ids): array
+    {
+        if (!$ids) return array();
+        $keys = array_map(static fn($id) => 'task_progress_' . (int)$id, $ids);
+        $db = _SERVER('db');
+        $stmt = $db->connect()->prepare('SELECT k,v FROM ' . $db->qi($db->tablepre . 'kv')
+            . ' WHERE k IN (' . implode(',', array_fill(0, count($keys), '?')) . ')');
+        $stmt->execute($keys);
+        $result = array();
+        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+            $value = json_decode($row['v'], true, 512, JSON_THROW_ON_ERROR);
+            if (!is_array($value)) throw new \RuntimeException('采集进度数据无效');
+            $result[(int)substr($row['k'], strlen('task_progress_'))] = $value;
+        }
+        return $result;
+    }
+
+    public static function saveProgress(int $id, array $progress): void
+    {
+        if (kv_set('task_progress_' . $id, $progress) === false) throw new \RuntimeException('采集进度保存失败');
+    }
+
+    /** 定向执行；连接锁保护活跃的长任务，避免仅凭开始时间把它当成僵尸。 */
+    public static function processTask(int $id): array
+    {
+        $db = _SERVER('db');
+        $pdo = $db->connect();
+        $lock = 'nnrun_' . hash('sha224', $pdo->query('SELECT DATABASE()')->fetchColumn() . '|' . $db->tablepre . '|' . $id);
+        $stmt = $pdo->prepare('SELECT GET_LOCK(?, 0)');
+        $stmt->execute(array($lock));
+        $acquired = (int)$stmt->fetchColumn() === 1;
+        try {
+            $row = self::readTask($id);
+            $row['attempted'] = false;
+            if (!$acquired) return $row;
+            $repo = \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id');
+            if ($row['status'] === self::STATUS_RUNNING && $row['run_date'] > 0 && time() - $row['run_date'] > 1800) {
+                $retry = $row['retry'] + 1;
+                $changes = array('retry' => $retry, 'status' => $retry >= self::MAX_RETRY ? self::STATUS_FAILED : self::STATUS_PENDING,
+                    'error' => '执行进程中断或超时', 'run_date' => 0);
+                if ($retry >= self::MAX_RETRY) $changes['finish_date'] = time();
+                if (!$repo->update(array('id' => $id, 'status' => self::STATUS_RUNNING), $changes)) throw new \RuntimeException('任务状态恢复失败');
+                $row = array_merge($row, $changes);
+                if ($row['status'] === self::STATUS_FAILED) { $row['attempted'] = true; return $row; }
+            }
+            if ($row['status'] !== self::STATUS_PENDING) return $row;
+            $started = time();
+            $claimed = $repo->update(array('id' => $id, 'status' => self::STATUS_PENDING), array('status' => self::STATUS_RUNNING, 'run_date' => $started));
+            if ($claimed === false) throw new \RuntimeException('任务执行状态写入失败');
+            if (!$claimed) return array_merge(self::readTask($id), array('attempted' => false));
+            $error = '';
+            $complete = false;
             try {
-                self::dispatch((string)$row['type'], xn_json_decode((string)$row['param']));
+                $complete = self::dispatch($row['type'], xn_json_decode($row['param']), $id);
             } catch (\Throwable $e) {
-                $err = substr(str_replace(array("\r", "\n"), ' ', (string)$e->getMessage()), 0, 480);
+                $error = mb_substr(str_replace(array("\r", "\n"), ' ', $e->getMessage()), 0, 480, 'UTF-8');
+                if (trim($error) === '') $error = '任务执行异常：' . get_class($e);
             }
-            $finish = time();
-            if ($err === '') {
-                $repo->update(
-                    array('id' => $id),
-                    array('status' => self::STATUS_FINISHED, 'finish_date' => $finish, 'error' => '', 'run_date' => $time)
-                );
-            } else {
-                $retry = (int)$row['retry'] + 1;
-                if ($retry >= self::MAX_RETRY) {
-                    $repo->update(
-                        array('id' => $id),
-                        array('status' => self::STATUS_FAILED, 'retry' => $retry, 'error' => $err, 'finish_date' => $finish)
-                    );
-                } else {
-                    // 重试：回 pending（run_date 清 0）
-                    $repo->update(
-                        array('id' => $id),
-                        array('status' => self::STATUS_PENDING, 'retry' => $retry, 'error' => $err, 'run_date' => 0)
-                    );
-                }
-            }
-            $done++;
+            $retry = $row['retry'] + ($error !== '' ? 1 : 0);
+            $status = $error === '' ? ($complete ? self::STATUS_FINISHED : self::STATUS_PENDING)
+                : ($retry >= self::MAX_RETRY ? self::STATUS_FAILED : self::STATUS_PENDING);
+            $changes = array('status' => $status, 'retry' => $retry, 'error' => $error, 'run_date' => $status === self::STATUS_PENDING ? 0 : $started,
+                'finish_date' => $status === self::STATUS_PENDING ? 0 : time());
+            if (!$repo->update(array('id' => $id, 'status' => self::STATUS_RUNNING), $changes)) throw new \RuntimeException('任务结果保存失败，请检查任务状态');
+            return array_merge($row, $changes, array('attempted' => true));
+        } finally {
+            if ($acquired) { $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)'); $stmt->execute(array($lock)); }
         }
-        // 本轮确认队列全空（无 running 残留、无 pending）：置空闲标志，后续请求免 DB 探测
-        if ($done === 0 && !$hadPending && !$hadRunning) {
-            cache_set(self::EMPTY_FLAG, 1, self::EMPTY_FLAG_TTL);
-        }
-        return $done;
     }
 
     /** @var array<string, callable> 任务类型处理器注册表（组合根注册，System 域不直接依赖业务域） */
@@ -170,14 +224,15 @@ class TaskQueueService
      * 任务分发执行
      * @throws \RuntimeException 执行失败
      */
-    private static function dispatch(string $type, $param)
+    private static function dispatch(string $type, $param, int $id): bool
     {
         $param = is_array($param) ? $param : array();
         $handler = self::$handlers[$type] ?? null;
         if ($handler === null) {
             throw new \RuntimeException('未知任务类型: ' . $type);
         }
-        $handler($param);
+        // false 表示本批完成、任务尚有后续分页；旧 void 处理器仍视为整项完成。
+        return $handler($param, $id) !== false;
     }
 
     /**
@@ -200,9 +255,12 @@ class TaskQueueService
     public static function listPage(int $page = 1, int $pagesize = 20): array
     {
         $repo = \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id');
+        $rows = $repo->builder()->select(array('id', 'type', 'param', 'status', 'retry', 'error', 'create_date', 'run_date', 'finish_date'))
+            ->orderBy('id', 'DESC')->page(max(1, $page), $pagesize)->get();
+        if ($rows === false) throw new \RuntimeException('任务列表读取失败');
         return array(
-            // SQL 专项审计修复（R10）：列表排除 param(text)
-            'list' => $repo->find(array(), array('id' => -1), max(1, $page), $pagesize, 'id', array('id', 'type', 'status', 'retry', 'error', 'create_date', 'run_date', 'finish_date')),
+            // 本页需从 param 显示采集源和小时窗口，限页读取。
+            'list' => array_column($rows, null, 'id'),
             'total' => (int)$repo->count(array()),
         );
     }
@@ -225,7 +283,7 @@ class TaskQueueService
         if (count($ids) <= $keep) return 0;
         $del = array_slice($ids, $keep);
         foreach ($del as $did) {
-            $repo->delete(array('id' => (int)$did));
+            if ($repo->delete(array('id' => (int)$did))) kv_delete('task_progress_' . (int)$did);
         }
         return count($del);
     }

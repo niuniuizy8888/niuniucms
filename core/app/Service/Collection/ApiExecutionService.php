@@ -10,31 +10,33 @@ class ApiExecutionService
      * （⚠ 已修：原第三参 TRUE 被 int $ttl coerce 成 1 秒 TTL，日频形同虚设，现与 cron1 同样不传 TTL）。
      * 本身不直接出网采集。
      * @param int $force 非 0=忽略 cron_1_last_date 强制入队；0=按到期判定
-     * @return void
+     * @return array 入队结果；尚未到触发时间或其他请求持锁时为空。
      */
     public static function cronRun($force = 0, int $hours = 24)
     {
         $conf = _SERVER('conf');         $time = _SERVER('time');         global $runtime;
+        $tasks = array();
         $cron1LastDate = cache_get('cron_1_last_date');
         $cron2LastDate = cache_get('cron_2_last_date');
         if ($time > $cron1LastDate || $force) {
             $lock = cache_get('cron_lock_1');
             if (NULL === $lock) {
                 cache_set('cron_lock_1', 1, 10);
-                sess_gc($conf['online_hold_time']);
-                $runtime['onlines'] = max(1, online_count());
-                $apilist = $conf['api'];
-                // 队列化：计划任务按源拆分入队（异步逐源执行，避免同步全量超时）
-                if (is_array($apilist)) {
-                    foreach ($apilist as $k => $v) {
-                        if (empty($v['api'])) continue;
-                        $taskParam = array('code' => (string)$k);
-                        if ($hours !== 24) $taskParam['h'] = $hours;
-                        \App\Service\System\TaskQueueService::enqueue('cron_source', $taskParam);
+                try {
+                    sess_gc($conf['online_hold_time']);
+                    $runtime['onlines'] = max(1, online_count());
+                    $apilist = $conf['api'];
+                    // 队列化：计划任务按源拆分入队（异步逐源执行，避免同步全量超时）
+                    if (is_array($apilist)) {
+                        foreach ($apilist as $k => $v) {
+                            if (empty($v['api']) || empty($conf['bind'][$k])) continue;
+                            $tasks = array_merge($tasks, CollectionScheduleService::enqueue(array((string)$k), $hours));
+                        }
                     }
+                    cache_set('cron_1_last_date', ($time + 1500));
+                } finally {
+                    cache_delete('cron_lock_1');
                 }
-                cache_set('cron_1_last_date', ($time + 1500));
-                cache_delete('cron_lock_1');
             }
         }
         if ($time > $cron2LastDate || $force) {
@@ -51,6 +53,7 @@ class ApiExecutionService
                 cache_delete('cron_lock_2');
             }
         }
+        return $tasks;
     }
 
     /**
@@ -521,8 +524,9 @@ class ApiExecutionService
      * 未标注类型的旧配置仍兼容视频、文章两条入库链。
      * @param array $param 任务参数（code=采集源编码，h=可选小时窗口）
      */
-    public static function taskCronSource(array $param): void
+    public static function taskCronSource(array $param, int $taskId = 0)
     {
+        if ($taskId > 0) return CollectionScheduleService::collectPage($param, $taskId);
         $conf = _SERVER('conf');
         $code = (string)($param['code'] ?? '');
         $cfg = is_array($conf['api'] ?? null) ? ($conf['api'][$code] ?? array()) : array();
@@ -1207,82 +1211,123 @@ class ApiExecutionService
      * content html_entity_decode + mac://→https:// 替换后过 xn_html_safe（富文本入库白名单，红线 §二.4）；
      * 按名查重不存在 → RepositoryFactory::art()->insert → art_aid_create → 分类计数+1 →
      * 标签（同视频口径：TagFlowService::post + 120 字符截断）经 art_update 补写；已存在则跳过。
-     * ⚠ 未绑定分类直接 exit(lang('api_no_set'))，非返回值失败（同 importVideoData）。
+     * 定时采集使用 strict 模式：文章、分类关联与计数按页提交，数据库失败抛异常供任务重试。
      * @param array $apidate fetchJson/fetchArtJson 的返回结构（须含 'data' 源数据行列表）
      * @param string $code 采集源编码
      * @return array 每条一行的展示文本（名称已转义），供拼接输出
      */
-    public static function importArtData($apidate, $code)
+    public static function importArtData($apidate, $code, bool $strict = false)
     {
         $conf = _SERVER('conf');
         if (!isset($conf['bind'][$code])) {
+            if ($strict) throw new \RuntimeException(lang('api_no_set'));
             exit(lang('api_no_set'));
         }
         $apicate = $conf['bind'][$code];
         $ress = array();
-        foreach ($apidate['data'] as $k => $v) {
-            $color = 'red';
-            $des = '';
-            $msg = '';
-            $arr = array();
-            if (!isset($apicate[$v['type_name']])) {
-                // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
-                // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
-                $des = lang('api_type_ok') . htmlspecialchars((string)$v['type_name'], ENT_QUOTES, 'UTF-8');
-            } elseif (empty($v['art_name'])) {
-                $des = '名称不得为空';
-            } else {
-                $arr['name'] = htmlspecialchars($v['art_name'], ENT_QUOTES, 'UTF-8');
-                $arr['views'] = intval($v['art_hits']);
-                $arr['pic'] = preg_match('#^https?://#i', $v['art_pic']) ? xn_url_strip(html_entity_decode($v['art_pic'])) : '';
-                $arr['create_date'] = time();
-                $cid = $apicate[$v['type_name']];
-                $arr['cid'] = $cid;
-                $get_tag = get_tag($v['art_name']);
-                $tags = $v['type_name'] . ',' . $get_tag;
-                $arr['content'] = self::sanitizeImportedArtContent($v['art_content'] ?? '');
-                // 查重口径同入库（转义后文本），原文比对会让带 & < > " ' 的标题重复入库
-                $info = \App\Repository\RepositoryFactory::art()->findOne(array('name' => $arr['name']));
-                if (!$info) {
-                    $aid = \App\Repository\RepositoryFactory::art()->insert($arr);
-                    $art_aid = array('aid' => $aid, 'cid' => $cid);
-                    art_aid_create($art_aid);
-                    $art_aid and cate_update($cid, array('arts+' => 1));
-                    if ($aid > 0) {
-                        $color = 'green';
-                        $des = lang('api_db_ok');
+        $db = _SERVER('db');
+        $touched = $tagCache = array();
+        if ($strict && ($db->inTransaction() || !$db->beginTransaction())) {
+            throw new \RuntimeException('无法开始文章采集事务，请重试');
+        }
+        try {
+            foreach ($apidate['data'] as $k => $v) {
+                $color = 'red';
+                $des = '';
+                $msg = '';
+                $arr = array();
+                if (!isset($apicate[$v['type_name']])) {
+                    // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
+                    // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
+                    $des = lang('api_type_ok') . htmlspecialchars((string)$v['type_name'], ENT_QUOTES, 'UTF-8');
+                } elseif (empty($v['art_name'])) {
+                    $des = '名称不得为空';
+                } else {
+                    $arr['name'] = htmlspecialchars($v['art_name'], ENT_QUOTES, 'UTF-8');
+                    $arr['views'] = intval($v['art_hits']);
+                    $arr['pic'] = preg_match('#^https?://#i', $v['art_pic']) ? xn_url_strip(html_entity_decode($v['art_pic'])) : '';
+                    $arr['create_date'] = time();
+                    $cid = $apicate[$v['type_name']];
+                    $arr['cid'] = $cid;
+                    $get_tag = get_tag($v['art_name']);
+                    $tags = $v['type_name'] . ',' . $get_tag;
+                    $arr['content'] = self::sanitizeImportedArtContent($v['art_content'] ?? '');
+                    // 查重口径同入库（转义后文本），原文比对会让带 & < > " ' 的标题重复入库
+                    $rows = \App\Repository\RepositoryFactory::art()->builder()
+                        ->select(array('aid', 'content', 'pic'))->where('name', '=', $arr['name'])->limit(1)->get();
+                    if ($strict && $rows === false) throw new \RuntimeException('文章查重失败，本页已回滚，请重试');
+                    $info = $rows[0] ?? null;
+                    if (!$info) {
+                        $aid = \App\Repository\RepositoryFactory::art()->insert($arr);
+                        if ($strict && !$aid) throw new \RuntimeException('文章入库失败，本页已回滚，请重试');
+                        if ($aid) $touched[$aid] = $aid;
+                        $art_aid = array('aid' => $aid, 'cid' => $cid);
+                        $indexed = art_aid_create($art_aid);
+                        if ($strict && $indexed === false) throw new \RuntimeException('文章分类关联写入失败，本页已回滚，请重试');
+                        $counted = cate_update($cid, array('arts+' => 1));
+                        if ($strict && !$counted) throw new \RuntimeException('文章分类计数更新失败，本页已回滚，请重试');
+                        if ($aid > 0) {
+                            $color = 'green';
+                            $des = lang('api_db_ok');
+                        } else {
+                            $color = 'red';
+                            $des = lang('api_db_err');
+                        }
+                        $vod_update = array();
+                        $tag_json = \App\Service\Content\TagFlowService::post($aid, $cid, $tags);
+                        $tagCache += (array)json_decode($tag_json, true);
+                        if (xn_strlen($tag_json) >= 120) {
+                            $s = xn_substr($tag_json, -1, NULL);
+                            if ('}' != $s) {
+                                $len = mb_strripos($tag_json, ',', 0, 'UTF-8');
+                                $tag_json = $len ? xn_substr($tag_json, 0, $len) . '}' : '';
+                            }
+                        }
+                        !empty($tag_json) and $vod_update['tag'] = $tag_json;
+                        if (!empty($vod_update) && FALSE === art_update($aid, $vod_update)) {
+                            if ($strict) throw new \RuntimeException('文章标签保存失败，本页已回滚，请重试');
+                            message(-1, lang('update_thread_failed'));
+                        }
                     } else {
-                        $color = 'red';
-                        $des = lang('api_db_err');
-                    }
-                    $vod_update = array();
-                    $tag_json = \App\Service\Content\TagFlowService::post($aid, $cid, $tags);
-                    if (xn_strlen($tag_json) >= 120) {
-                        $s = xn_substr($tag_json, -1, NULL);
-                        if ('}' != $s) {
-                            $len = mb_strripos($tag_json, ',', 0, 'UTF-8');
-                            $tag_json = $len ? xn_substr($tag_json, 0, $len) . '}' : '';
+                        $art_update = array();
+                        if (!self::artContentHasText($info['content'] ?? '') && self::artContentHasText($arr['content'] ?? '')) {
+                            $art_update['content'] = $arr['content'];
+                        }
+                        if (empty($info['pic']) && !empty($arr['pic'])) {
+                            $art_update['pic'] = $arr['pic'];
+                        }
+                        if (!empty($art_update)) {
+                            $aid = intval($info['aid']);
+                            $touched[$aid] = $aid;
+                            if (FALSE === art_update($aid, $art_update)) {
+                                if ($strict) throw new \RuntimeException('文章更新失败，本页已回滚，请重试');
+                                message(-1, lang('update_thread_failed'));
+                            }
+                            $des .= '内容补全成功。';
+                        } else {
+                            $des .= '内容存在 跳过。';
                         }
                     }
-                    !empty($tag_json) and $vod_update['tag'] = $tag_json;
-                    !empty($vod_update) && FALSE === art_update($aid, $vod_update) and message(-1, lang('update_thread_failed'));
-                } else {
-                    $art_update = array();
-                    if (!self::artContentHasText($info['content'] ?? '') && self::artContentHasText($arr['content'] ?? '')) {
-                        $art_update['content'] = $arr['content'];
-                    }
-                    if (empty($info['pic']) && !empty($arr['pic'])) {
-                        $art_update['pic'] = $arr['pic'];
-                    }
-                    if (!empty($art_update)) {
-                        FALSE === art_update(intval($info['aid']), $art_update) and message(-1, lang('update_thread_failed'));
-                        $des .= '内容补全成功。';
-                    } else {
-                        $des .= '内容存在 跳过。';
-                    }
                 }
+                $ress[] = ($k + 1) . '、' . htmlspecialchars($v['art_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
             }
-            $ress[] = ($k + 1) . '、' . htmlspecialchars($v['art_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
+            if ($strict && !$db->commit()) throw new \RuntimeException('文章采集提交失败，请重试当前页');
+        } catch (\Throwable $e) {
+            if ($strict) $db->rollBack();
+            throw $e;
+        } finally {
+            if ($strict && $touched) {
+                // 事务结束后再次失效，避免其他请求在提交前重新缓存旧文章或分类计数。
+                foreach ($touched as $aid) content_cache_delete('art_', $aid);
+                foreach ($tagCache as $tagid => $name) {
+                    cache_delete('web_tag_' . $tagid);
+                    cache_delete('web_tag_' . md5($name));
+                }
+                cache_delete('cate-alias-cache');
+                cache_delete('catelist');
+                page_cache_bump();
+                \App\Service\Front\TypeService::bumpFacets();
+            }
         }
         return $ress;
     }

@@ -20,8 +20,15 @@ try {
     if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
     $options = getopt('', array('limit:'));
     $limit = max(1, min(20, (int)($options['limit'] ?? 1)));
-    $done = \App\Service\System\TaskQueueService::process($limit);
-    if ($done) echo 'Processed: ' . $done . PHP_EOL;
+    $results = \App\Service\System\TaskQueueService::processDetailed($limit);
+    $failed = false;
+    foreach ($results as $result) {
+        if ($result['error'] !== '') {
+            $failed = true;
+            fwrite(STDERR, '任务 #' . $result['id'] . ' 采集失败：' . $result['error'] . '；重试 ' . $result['retry'] . '/3' . PHP_EOL);
+        } else echo '任务 #' . $result['id'] . ($result['status'] === \App\Service\System\TaskQueueService::STATUS_FINISHED ? ' 采集完成' : ' 本批已采集，等待继续') . PHP_EOL;
+    }
+    if ($failed) exit(1);
 } catch (\Throwable $e) {
     fwrite(STDERR, 'Queue worker: ' . $e->getMessage() . PHP_EOL);
     exit(1);

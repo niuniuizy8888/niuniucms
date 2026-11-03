@@ -21,9 +21,9 @@
  *      的「执行替换」/「从商店拉取并应用」都调用同一个 `DomainReplaceService`（后台不 HTTP 回环
  *      打自己——本站地址多为内网/回环，会被出站闸 `outbound_url_safe()` 硬拦）。
  *      `timeout` 为**单次替换的 PHP 执行时限**（秒，5–1800，默认 300；大表 REPLACE 很慢）。
- *   3. 后台任务页 cron URL（TaskManageService 生成，宝塔计划任务直调）：
- *      GET api.php?route=cron&token={api_token}&code={源code}&h=24&froms={源code逗号分隔}
- *        按源入队采集（与 ApiExecutionService::cronRun 的队列化口径一致），响应 "ok"
+ *   3. 宝塔计划任务：GET api.php?route=collect&code={源code}&h=24，请求头 X-NNCMS-Token 鉴权。
+ *        每请求处理一页，curl -L 跟随本站跳转续采；完成返回任务编号，失败返回 HTTP 错误。
+ *        旧 route=cron 仍仅登记任务并响应 "ok"，可用 format=json 查看登记结果。
  *
  * 安全（token 派生化）：{api_token} = api_wire_token('api')
  *   = md5( auth_key . '|nncms-api-token|' . 'api' )（派生式见 core/func/security.php::api_wire_token，
@@ -99,6 +99,22 @@ if ($isStoreTok && !$isApiTok && !$isLegacy) {
 
 switch ($route) {
 
+    // 宝塔 curl：每次处理一页，302 只指向本站当前入口，-L 自动续采。
+    case 'collect':
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Cache-Control: no-store');
+        try {
+            $result = \App\Service\Collection\CollectionScheduleService::runHttp($_GET);
+            http_response_code($result['status']);
+            if ($result['status'] === 302) header('Location: ?route=collect&task=' . (int)$result['id']);
+            echo $result['message'] . "\n";
+        } catch (\Throwable $e) {
+            http_response_code($e instanceof \InvalidArgumentException ? 400 : 500);
+            if (!($e instanceof \InvalidArgumentException)) xn_log('scheduled collection failed: ' . $e->getMessage(), 'task_error');
+            echo ($e instanceof \InvalidArgumentException ? $e->getMessage() : '采集失败，请在后台任务管理查看详情') . "\n";
+        }
+        exit;
+
     // ---- 健康检测（main.go /check 调用） ----
     case 'api':
         header('Content-Type: text/plain; charset=utf-8');
@@ -107,32 +123,34 @@ switch ($route) {
 
     // ---- 计划任务采集（后台任务页 cron URL，入队异步逐源执行） ----
     case 'cron':
-        $hours = \App\Service\Collection\ApiExecutionService::cronHours($_GET['h'] ?? 24);
-        if ($hours === null) {
-            http_response_code(400);
-            exit('invalid h: expected 1-8760 hours');
-        }
-        $code = isset($_GET['froms']) && '' !== (string)$_GET['froms']
-            ? (string)$_GET['froms']
-            : (isset($_GET['code']) ? (string)$_GET['code'] : '');
-        $apis = isset($conf['api']) && is_array($conf['api']) ? $conf['api'] : array();
-        if ('' !== $code) {
-            // froms 逗号分隔多源，逐源入队（TaskQueueService，队列化口径）
-            foreach (explode(',', $code) as $c) {
-                $c = trim($c);
-                if ('' !== $c && !empty($apis[$c]['api']) && class_exists('\App\Service\System\TaskQueueService')) {
-                    // 24 小时保持旧任务参数形态；其他窗口按源与窗口共同去重。
-                    $taskParam = array('code' => $c);
-                    if ($hours !== 24) $taskParam['h'] = $hours;
-                    \App\Service\System\TaskQueueService::enqueue('cron_source', $taskParam);
-                }
+        $json = ($_GET['format'] ?? '') === 'json';
+        try {
+            $hours = \App\Service\Collection\ApiExecutionService::cronHours($_GET['h'] ?? 24);
+            if ($hours === null) throw new \InvalidArgumentException('采集窗口必须为 1–8760 小时');
+            $code = $_GET['froms'] ?? '';
+            if ($code === '') $code = $_GET['code'] ?? '';
+            if (!is_string($code)) throw new \InvalidArgumentException('采集源格式无效');
+            $tasks = trim($code) !== ''
+                ? \App\Service\Collection\CollectionScheduleService::enqueue(explode(',', $code), $hours)
+                : \App\Service\Collection\ApiExecutionService::cronRun(0, $hours);
+            if ($json) {
+                header('Content-Type: application/json; charset=utf-8');
+                $reused = count(array_filter($tasks, static fn($task) => $task['reused']));
+                echo json_encode(array('code' => 0, 'message' => $tasks
+                    ? '新增 ' . (count($tasks) - $reused) . ' 个任务，复用 ' . $reused . ' 个已有任务。此命令仅入队，采集尚未完成；请确认独立队列执行程序已配置。'
+                    : '本次未触发全源入队（未到触发间隔、其他请求正在处理或没有已绑定分类的来源），不代表采集完成。', 'tasks' => $tasks), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            } else {
+                // 兼容旧调用方；页面新生成的命令改用 collect 入口。
+                header('Content-Type: text/plain; charset=utf-8');
+                echo 'ok';
             }
-        } else {
-            // 未指定源：全源入队（与 ApiExecutionService::cronRun 一致）
-            \App\Service\Collection\ApiExecutionService::cronRun(0, $hours);
+        } catch (\Throwable $e) {
+            http_response_code($e instanceof \InvalidArgumentException ? 400 : 500);
+            $message = $e instanceof \InvalidArgumentException ? $e->getMessage() : '任务入队失败，请检查后台及服务器日志';
+            if (!($e instanceof \InvalidArgumentException)) xn_log('cron enqueue failed: ' . $e->getMessage(), 'task_error');
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(array('code' => 1, 'message' => $message), JSON_UNESCAPED_UNICODE);
         }
-        header('Content-Type: text/plain; charset=utf-8');
-        echo 'ok';
         exit;
 
     // ---- 单页异步采集（main.go runTask 每页回调） ----
