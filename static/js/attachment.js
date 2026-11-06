@@ -96,7 +96,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.querySelector('#wizardSteps span').textContent=selected.length?'1 已选 '+selected.length+' 张':'1 选择范围';
   $('selectedImages').hidden=!selected.length;
   const typeNames={'vod.pic':'视频封面','vod.pic_slide':'横版海报','art.pic':'文章封面','art.content':'文章正文图片'};
-  $('selectedImages').innerHTML=selected.length?'<strong>已选择 '+selected.length+' 张图片</strong><p class="small mb-2">沿用已保存的扫描信息，无需重新选择分类或图片类型。</p>'+data.assets.filter(a=>selected.includes(String(a.id))).map(a=>{const r=data.references.find(ref=>Number(ref.asset_id)===Number(a.id));const types=r?(r.types||'').split(',').map(t=>typeNames[t]||'图片').join('、'):'图片';return '<div class="att-selected-item"><img src="'+esc(safeUrl(a.display_url))+'" alt="所选图片"><div><strong>'+esc(r?r.title:'附件 #'+a.id)+'</strong><small>'+esc(types)+' · '+labels[a.backend]+'</small></div></div>';}).join(''):'';
+  $('selectedImages').innerHTML=selected.length?'<strong>已选择 '+selected.length+' 张图片</strong><p class="small mb-2">自动核对当前内容引用，无需手动扫描或重新选择分类。</p>'+data.assets.filter(a=>selected.includes(String(a.id))).map(a=>{const r=data.references.find(ref=>Number(ref.asset_id)===Number(a.id));const types=r?(r.types||'').split(',').map(t=>typeNames[t]||'图片').join('、'):'图片';return '<div class="att-selected-item"><img src="'+esc(safeUrl(a.display_url))+'" alt="所选图片"><div><strong>'+esc(r?r.title:'附件 #'+a.id)+'</strong><small>'+esc(types)+' · '+labels[a.backend]+'</small></div></div>';}).join(''):'';
   if(scan)form.querySelectorAll('[name="fields[]"]').forEach(el=>el.checked=true);
   showStep();modal.show();
  }
@@ -153,10 +153,10 @@ document.addEventListener('DOMContentLoaded', function () {
   statusReceivedAt=Date.now();
   $('syncTitle').textContent=targetLabels[j.options.target]+' · #'+j.id;
   const scanning=Number(j.phase)<2, done=j.counts.done+j.counts.failed+j.counts.skipped, reused=j.counts.reused||0, work=j.work_total===undefined?j.total-reused:j.work_total;
-  const savedSelection=Object.prototype.hasOwnProperty.call(j.options,'selection_ref_max');
-  $('progressState').textContent=j.state==='running'?(transportStopped?(j.current?'等待服务器保存当前结果':'请求已暂停，可从保存进度继续'):scanning?(savedSelection?'正在读取已选图片的关联':'正在扫描图片'):'正在同步图片'):labels[j.state]+(j.counts.failed?'，有图片失败':'');
-  $('progressCounts').textContent=scanning?(savedSelection?'已准备 ':'已检查 ')+j.scanned+' / '+j.options.records+(savedSelection?' 条关联':' 条内容'):work===0&&reused?'本次无需下载 · 已就绪 '+reused+' 张':'本次处理 '+done+' / '+work+' 张'+(reused?' · 已就绪 '+reused+' 张':'');
-  $('progressBar').style.width=(scanning?Math.min(100,j.scanned/Math.max(1,j.options.records)*100):(work?done/work*100:100))+'%';
+  const savedSelection=!!(j.options.assets&&j.options.assets.length);
+  $('progressState').textContent=j.state==='running'?(transportStopped?(j.current?'等待服务器保存当前结果':'请求已暂停，可从保存进度继续'):scanning?(savedSelection?'正在核对当前图片引用':'正在扫描图片'):'正在同步图片'):labels[j.state]+(j.counts.failed?'，有图片失败':'');
+  $('progressCounts').textContent=scanning?(savedSelection?'已找到 '+j.scanned+' 条关联 · 分批核对中':'已检查 '+j.scanned+' / '+j.options.records+' 条内容'):work===0&&reused?'本次无需下载 · 已就绪 '+reused+' 张':'本次处理 '+done+' / '+work+' 张'+(reused?' · 已就绪 '+reused+' 张':'');
+  $('progressBar').style.width=(scanning?(savedSelection?Number(j.phase)*50:Math.min(100,j.scanned/Math.max(1,j.options.records)*100)):(work?done/work*100:100))+'%';
   $('executionHint').textContent=j.options.mode==='page'?'逐张处理并保存结果。来源下载超时为 20 秒，失败后继续下一张；FTP 上传按存储设置的超时执行。关闭窗口后暂停发送下一张，可从已保存进度继续。':'后台任务已登记，处理结果会自动刷新。已有执行程序会继续处理；否则请执行下面的宝塔命令。';
   if(j.options.redownload)$('executionHint').textContent+=' 本任务从原始地址重新下载；失败保留原图，共用同一来源的内容复用本任务的下载结果。';
   if(!j.options.work_version&&j.options.target==='local')$('executionHint').textContent+=' 这是旧任务记录，成功数可能包含本地复用；继续时会分批复查待处理项，已有本地文件直接标为已就绪。';

@@ -8,8 +8,7 @@ class AttachmentJobService
         $assets = array_values(array_unique(array_filter(array_map('intval',(array)($input['assets']??[])),static fn($id)=>$id>0)));
         if (count($assets)>500) throw new \InvalidArgumentException('每次最多选择 500 张图片');
         sort($assets, SORT_NUMERIC);
-        // Selected attachments carry their saved references; unrelated bulk filters must
-        // not exclude an article body image or expand the selection to other pictures.
+        // A selection follows current references, independently of bulk form filters.
         if ($assets) $input = array_replace($input, ['fields'=>['vod.pic','vod.pic_slide','art.pic','art.content'], 'ids'=>'', 'cid'=>0, 'since'=>'']);
         $fields = array_values(array_intersect(['vod.pic','vod.pic_slide','art.pic','art.content'], (array)($input['fields'] ?? ['vod.pic','vod.pic_slide','art.pic'])));
         if (!$fields) throw new \InvalidArgumentException('请至少选择一种图片');
@@ -56,20 +55,19 @@ class AttachmentJobService
         $marks = implode(',', array_fill(0,count($o['assets']),'?'));
         $assets = AttachmentSchema::sql('SELECT id,url,backend FROM '.AttachmentSchema::table('attachments').' WHERE id IN ('.$marks.') ORDER BY id', $o['assets'])->fetchAll(\PDO::FETCH_ASSOC);
         if (count($assets) !== count($o['assets'])) throw new \InvalidArgumentException('部分选中的图片已不存在，请刷新列表后重试');
-        $table = AttachmentSchema::table('attachment_items');
-        $where = "(a.id IN ($marks) OR (a.backend='external' AND a.stored_id IN ($marks))) AND i.state IN ('done','reused') AND i.kind IN ('vod','art')";
-        $owner = "CASE WHEN a.backend='external' AND a.stored_id IN (".implode(',',$o['assets']).") THEN a.stored_id ELSE a.id END";
-        $rows = AttachmentSchema::sql('SELECT '.$owner.' AS asset_id,i.kind,COUNT(DISTINCT i.record_id,i.field) AS refs,COUNT(DISTINCT i.record_id) AS records,MAX(i.id) AS last_id FROM '.$table.' i JOIN '.AttachmentSchema::table('attachments').' a ON a.id=i.asset_id WHERE '.$where.' GROUP BY '.$owner.',i.kind', array_merge($o['assets'],$o['assets']))->fetchAll(\PDO::FETCH_ASSOC);
-        $counts=['vod'=>0,'art'=>0]; $known=[]; $o['selection_ref_max']=0; $o['records']=0;
-        foreach ($rows as $row) {
-            $known[(int)$row['asset_id']]=true;
-            $counts[$row['kind']]+=(int)$row['records'];
-            $o['records']+=(int)$row['refs'];
-            $o['selection_ref_max']=max($o['selection_ref_max'],(int)$row['last_id']);
+        $o = self::selectedBounds($o);
+        return ['options'=>$o,'counts'=>['vod'=>0,'art'=>0],'selected'=>$assets,'message'=>'已选择 '.count($assets).' 张图片，开始后分批核对当前视频和文章引用并同步更新；未被内容使用的图片仅同步文件，无需手动扫描'];
+    }
+
+    private static function selectedBounds(array $o): array
+    {
+        foreach (['vod'=>'vid','art'=>'aid'] as $kind=>$pk) {
+            $o['max_'.$kind]=(int)AttachmentSchema::sql('SELECT COALESCE(MAX(`'.$pk.'`),0) FROM '.AttachmentSchema::table($kind))->fetchColumn();
         }
-        $o['selection_unlinked']=array_values(array_filter($o['assets'],static fn($id)=>!isset($known[$id])));
-        $o['records']+=count($o['selection_unlinked']);
-        return ['options'=>$o,'counts'=>$counts,'selected'=>$assets,'message'=>'已选择 '.count($assets).' 张图片，使用已保存的扫描信息（'.$counts['vod'].' 条视频关联、'.$counts['art'].' 条文章关联）'.($o['selection_unlinked']?'；其中 '.count($o['selection_unlinked']).' 张暂无关联记录，仅同步文件':'')];
+        $o['selection_live']=1;
+        $o['records']=count($o['assets']);
+        unset($o['selection_ref_max'],$o['selection_unlinked']);
+        return $o;
     }
 
     public static function create(array $input): array
@@ -184,22 +182,17 @@ class AttachmentJobService
     private static function scan(array $job): void
     {
         $id=(int)$job['id']; $o=$job['options'];
-        if (isset($o['selection_ref_max'])) { self::scanSelected($job); return; }
+        if ($o['assets']) { self::scanSelected($job); return; }
         $kind=(int)$job['phase']===0?'vod':'art'; $pk=$kind==='vod'?'vid':'aid';
         $fields=array_map(static fn($f)=>explode('.',$f)[1],array_filter($o['fields'],static fn($f)=>str_starts_with($f,$kind.'.')));
         [$where,$args]=self::where($o,$kind,(int)$job['scan_cursor'],(int)$o['max_'.$kind]);
         $rows=$fields ? AttachmentSchema::sql('SELECT `'.$pk.'`,name,`'.implode('`,`',$fields).'` FROM '.AttachmentSchema::table($kind).' WHERE '.$where.' ORDER BY `'.$pk.'` LIMIT 100',$args)->fetchAll(\PDO::FETCH_ASSOC):[];
-        $selected=[];
-        if($o['assets']) {
-            $marks=implode(',',array_fill(0,count($o['assets']),'?'));
-            foreach(AttachmentSchema::sql('SELECT url FROM '.AttachmentSchema::table('attachments').' WHERE id IN ('.$marks.')',$o['assets'])->fetchAll(\PDO::FETCH_ASSOC) as $asset) $selected[$asset['url']]=true;
-        }
         $newItems=[];
         foreach($rows as $row) {
             foreach($fields as $field) {
                 $urls=$field==='content'?AttachmentService::images((string)$row[$field]):[(string)$row[$field]];
                 foreach($urls as $source) {
-                    if($source==='' || ($o['assets'] && !isset($selected[$source]))) continue;
+                    if($source==='') continue;
                     $newItems[]=['kind'=>$kind,'record_id'=>$row[$pk],'field'=>$field,'title'=>$row['name'],'source'=>$source];
                 }
             }
@@ -212,33 +205,41 @@ class AttachmentJobService
 
     private static function scanSelected(array $job): void
     {
-        $id=(int)$job['id']; $o=$job['options']; $cursor=(int)$job['scan_cursor'];
+        $id=(int)$job['id']; $o=$job['options'];
+        $kind=(int)$job['phase']===0?'vod':'art'; $pk=$kind==='vod'?'vid':'aid';
         $items=AttachmentSchema::table('attachment_items'); $assets=AttachmentSchema::table('attachments');
-        $marks=implode(',',array_fill(0,count($o['assets']),'?'));
-        $added=0;
-        $newItems=[];
-        if ($cursor===0 && $o['selection_unlinked']) {
-            $missing=implode(',',array_fill(0,count($o['selection_unlinked']),'?'));
-            foreach(AttachmentSchema::sql("SELECT id,url FROM $assets WHERE id IN ($missing)",$o['selection_unlinked'])->fetchAll(\PDO::FETCH_ASSOC) as $asset) $newItems[]=['kind'=>'asset','record_id'=>$asset['id'],'field'=>'url','title'=>'附件 #'.$asset['id'],'source'=>$asset['url'],'asset_id'=>$asset['id']];
-        }
-        $vod=AttachmentSchema::table('vod'); $art=AttachmentSchema::table('art');
-        $rows=AttachmentSchema::sql("SELECT i.id,i.kind,i.record_id,i.field,i.title,a.url AS source,COALESCE(saved.url,a.url) AS saved_url,i.asset_id,CASE WHEN i.kind='vod' THEN IF(i.field='pic_slide',v.pic_slide,v.pic) ELSE IF(i.field='content',r.content,r.pic) END AS current_value FROM $items i JOIN $assets a ON a.id=i.asset_id LEFT JOIN $assets saved ON a.backend='external' AND saved.id=a.stored_id LEFT JOIN $vod v ON i.kind='vod' AND v.vid=i.record_id LEFT JOIN $art r ON i.kind='art' AND r.aid=i.record_id WHERE (a.id IN ($marks) OR (a.backend='external' AND a.stored_id IN ($marks))) AND i.state IN ('done','reused') AND i.kind IN ('vod','art') AND i.id>? AND i.id<=? ORDER BY i.id LIMIT 100",array_merge($o['assets'],$o['assets'],[$cursor,$o['selection_ref_max']]))->fetchAll(\PDO::FETCH_ASSOC);
+        // IDs are normalized integers. Match exact URLs and their indexed original
+        // aliases, not historical task rows; keep each content batch bounded.
+        $ids=implode(',',array_map('intval',$o['assets']));
+        $selected="(id IN ($ids) OR (backend='external' AND stored_id IN ($ids)))";
+        $hashes="SELECT url_hash FROM $assets WHERE $selected";
+        $fields=$kind==='vod'?['pic','pic_slide']:['pic','content'];
+        $filter="SHA2(pic,256) IN ($hashes) OR ".($kind==='vod'?"SHA2(pic_slide,256) IN ($hashes)":"content<>''");
+        $rows=AttachmentSchema::sql('SELECT `'.$pk.'`,name,`'.implode('`,`',$fields).'` FROM '.AttachmentSchema::table($kind)." WHERE `$pk`>? AND `$pk`<=? AND ($filter) ORDER BY `$pk` LIMIT 100",[$job['scan_cursor'],$o['max_'.$kind]])->fetchAll(\PDO::FETCH_ASSOC);
+        $candidates=[]; $sourceHashes=[];
         foreach ($rows as $row) {
-            $current=$row['field']==='content'?AttachmentService::images((string)$row['current_value']):[(string)$row['current_value']];
-            foreach (array_unique([$row['source'],$row['saved_url']]) as $source) {
-                if(!in_array($source,$current,true)) continue;
-                $newItems[]=['kind'=>$row['kind'],'record_id'=>$row['record_id'],'field'=>$row['field'],'title'=>$row['title'],'source'=>$source,'asset_id'=>$row['asset_id']];
+            foreach ($fields as $field) {
+                $urls=$field==='content'?AttachmentService::images((string)$row[$field]):[(string)$row[$field]];
+                foreach ($urls as $source) {
+                    if($source==='') continue;
+                    $sourceHashes[hash('sha256',$source)]=true;
+                    $candidates[]=['kind'=>$kind,'record_id'=>$row[$pk],'field'=>$field,'title'=>$row['name'],'source'=>$source];
+                }
             }
         }
-        $added+=AttachmentProgress::insert($job,$newItems);
-        if(!$rows) {
-            // Saved scan history may now refer only to deleted/edited content.
-            // The selected file must still be processed even without a live content row.
-            $unlinked=AttachmentSchema::sql("SELECT a.id,a.url FROM $assets a WHERE a.id IN ($marks) AND NOT EXISTS (SELECT 1 FROM $items i WHERE i.job_id=? AND (i.source_hash=a.url_hash OR i.asset_id=a.id))",array_merge($o['assets'],[$id]))->fetchAll(\PDO::FETCH_ASSOC);
+        $matched=[];
+        foreach(array_chunk(array_keys($sourceHashes),200) as $batch) {
+            $marks=implode(',',array_fill(0,count($batch),'?'));
+            foreach(AttachmentSchema::sql("SELECT id,url FROM $assets WHERE $selected AND url_hash IN ($marks)",$batch)->fetchAll(\PDO::FETCH_ASSOC) as $asset) $matched[$asset['url']]=(int)$asset['id'];
+        }
+        $newItems=[];
+        foreach($candidates as $item) if(isset($matched[$item['source']])) $newItems[]=$item+['asset_id'=>$matched[$item['source']]];
+        $added=AttachmentProgress::insert($job,$newItems);
+        if(!$rows && $kind==='art') {
+            $unlinked=AttachmentSchema::sql("SELECT a.id,a.url FROM $assets a WHERE a.id IN ($ids) AND NOT EXISTS (SELECT 1 FROM $items i LEFT JOIN $assets original ON original.id=i.asset_id WHERE i.job_id=? AND (i.source_hash=a.url_hash OR i.asset_id=a.id OR (original.backend='external' AND original.stored_id=a.id)))",[$id])->fetchAll(\PDO::FETCH_ASSOC);
             $added+=AttachmentProgress::insert($job,array_map(static fn($a)=>['kind'=>'asset','record_id'=>$a['id'],'field'=>'url','title'=>'附件 #'.$a['id'],'source'=>$a['url'],'asset_id'=>$a['id']],$unlinked));
         }
-        $last=$rows ? (int)end($rows)['id'] : $cursor;
-        AttachmentSchema::sql('UPDATE '.AttachmentSchema::table('attachment_jobs').' SET phase=?,scan_cursor=?,scanned=scanned+?,updated=? WHERE id=?',[$rows?0:2,$last,$added,time(),$id]);
+        AttachmentSchema::sql('UPDATE '.AttachmentSchema::table('attachment_jobs').' SET phase=?,scan_cursor=?,scanned=scanned+?,updated=? WHERE id=?',[$rows?$job['phase']:(int)$job['phase']+1,$rows?(int)end($rows)[$pk]:0,$added,time(),$id]);
     }
 
     private static function apply(array $item,array $asset): bool
@@ -275,6 +276,13 @@ class AttachmentJobService
         return AttachmentSchema::lock('job:'.$id,static function() use($id) {
             $job=self::job($id);
             if($job['state']!=='running') return self::status($id);
+            if($job['options']['assets'] && empty($job['options']['selection_live'])) {
+                // Resume old selections against current content; unique item keys keep
+                // already saved results intact when the scan is replayed.
+                $job['options']=self::selectedBounds($job['options']);
+                $job['phase']=0; $job['scan_cursor']=0;
+                AttachmentSchema::sql('UPDATE '.AttachmentSchema::table('attachment_jobs').' SET options=?,phase=0,scan_cursor=0 WHERE id=?',[json_encode($job['options']),$id]);
+            }
             if((int)$job['phase']<2) { self::scan($job); return self::status($id); }
             $o=$job['options'];
             $c=json_decode((string)xn_decrypt($o['storage']),true);

@@ -130,6 +130,48 @@ class AttachmentStorage
         return self::imageInfo($file);
     }
 
+    private static function ftpOptions(array $c): array
+    {
+        $opts = [CURLOPT_USERNAME=>$c['user'], CURLOPT_PASSWORD=>$c['password'], CURLOPT_RETURNTRANSFER=>true, CURLOPT_CONNECTTIMEOUT=>10, CURLOPT_TIMEOUT=>$c['timeout'], CURLOPT_FOLLOWLOCATION=>false, CURLOPT_PROTOCOLS=>CURLPROTO_FTP, CURLOPT_SSL_VERIFYPEER=>true, CURLOPT_SSL_VERIFYHOST=>2, CURLOPT_FTP_SKIP_PASV_IP=>true];
+        if ($c['tls']) $opts[CURLOPT_USE_SSL] = CURLUSESSL_ALL;
+        if (!$c['passive']) $opts[CURLOPT_FTPPORT] = '-';
+        return $opts;
+    }
+
+    /** A 550 reply also means permission denied; only a successful listing proves absence. */
+    private static function ftpMissing(array $c, string $path): bool
+    {
+        $parts = array_values(array_filter(explode('/', trim($path, '/')), static fn($v)=>$v!==''));
+        $deadline = microtime(true) + $c['timeout'];
+        while ($parts && count($parts)<=32 && microtime(true)<$deadline) {
+            $name = array_pop($parts);
+            $directory = implode('/', array_map('rawurlencode', $parts));
+            $ch = curl_init('ftp://' . $c['host'] . ':' . $c['port'] . '/' . ($directory!==''?$directory.'/':''));
+            $listing = '';
+            $opts = self::ftpOptions($c);
+            $opts[CURLOPT_TIMEOUT_MS] = max(1, (int)(($deadline-microtime(true))*1000));
+            $opts[CURLOPT_DIRLISTONLY] = true;
+            $opts[CURLOPT_WRITEFUNCTION] = static function($ch, $chunk) use (&$listing) {
+                if (strlen($listing)+strlen($chunk)>2097152) return 0;
+                $listing .= $chunk;
+                return strlen($chunk);
+            };
+            curl_setopt_array($ch, $opts);
+            $ok = curl_exec($ch)!==false;
+            $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            if ($ok) {
+                foreach (explode("\n", $listing) as $entry) {
+                    if (strcasecmp(basename(rtrim($entry,"\r")), $name)===0) return false;
+                }
+                return true;
+            }
+            // An inaccessible directory is not evidence of a missing file. Check its
+            // parent instead; if the directory exists, preserve the deletion error.
+            if ($code!==550) return false;
+        }
+        return false;
+    }
+
     private static function ftp(array $c, string $path = '', ?string $file = null, bool $remove = false): void
     {
         self::requireFtp($c);
@@ -138,12 +180,10 @@ class AttachmentStorage
         $ch = curl_init('ftp://' . $c['host'] . ':' . $c['port'] . '/' . ($remove ? '' : $remote));
         $stream = null;
         try {
-            $opts = [CURLOPT_USERNAME=>$c['user'], CURLOPT_PASSWORD=>$c['password'], CURLOPT_RETURNTRANSFER=>true, CURLOPT_CONNECTTIMEOUT=>10, CURLOPT_TIMEOUT=>$c['timeout'], CURLOPT_FOLLOWLOCATION=>false, CURLOPT_PROTOCOLS=>CURLPROTO_FTP, CURLOPT_SSL_VERIFYPEER=>true, CURLOPT_SSL_VERIFYHOST=>2, CURLOPT_FTP_CREATE_MISSING_DIRS=>CURLFTP_CREATE_DIR_RETRY];
-            if ($c['tls']) $opts[CURLOPT_USE_SSL] = CURLUSESSL_ALL;
-            $opts[CURLOPT_FTP_SKIP_PASV_IP] = true;
-            if (!$c['passive']) $opts[CURLOPT_FTPPORT] = '-';
+            $opts = self::ftpOptions($c);
             // Restrict transport to the administrator's explicitly configured FTP server.
             if ($file !== null) {
+                $opts[CURLOPT_FTP_CREATE_MISSING_DIRS] = CURLFTP_CREATE_DIR_RETRY;
                 $stream = fopen($file, 'rb');
                 $opts[CURLOPT_UPLOAD] = true;
                 $opts[CURLOPT_INFILE] = $stream;
@@ -151,7 +191,11 @@ class AttachmentStorage
             } else $opts[CURLOPT_NOBODY] = true;
             if ($remove) $opts[CURLOPT_QUOTE] = ['DELE /' . rawurldecode($remote)];
             curl_setopt_array($ch, $opts);
-            if (curl_exec($ch) === false) throw new \RuntimeException('FTP 操作失败（错误 ' . curl_errno($ch) . '），请检查账号、目录及连接模式');
+            if (curl_exec($ch) === false) {
+                $error = curl_errno($ch);
+                if ($remove && $error===CURLE_FTP_QUOTE_ERROR && (int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE)===550 && self::ftpMissing($c,rawurldecode($remote))) return;
+                throw new \RuntimeException('FTP 操作失败（错误 ' . $error . '），请检查账号、目录权限及连接模式');
+            }
         } finally { if (is_resource($stream)) fclose($stream); }
     }
 
