@@ -99,6 +99,31 @@ if ($isStoreTok && !$isApiTok && !$isLegacy) {
 
 switch ($route) {
 
+    case 'images':
+        // Require the site's API credential in the header, in addition to the global guard above.
+        if (!$isApiTok || $hdrTok === '' || !hash_equals($apiTok, $hdrTok)) {
+            http_response_code(403);
+            exit('invalid token');
+        }
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Cache-Control: no-store');
+        try {
+            if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+            $job = \App\Service\System\AttachmentJobService::step((int)($_GET['job'] ?? 0));
+            if ($job['state'] === 'running') {
+                http_response_code(302);
+                header('Location: ?route=images&job=' . (int)$job['id']);
+            } elseif (in_array($job['state'], ['paused','stopped'], true)) http_response_code(409);
+            elseif ($job['state'] === 'finished' && $job['counts']['failed']) http_response_code(422);
+            $states = ['running'=>'处理中','paused'=>'已暂停，请在后台继续任务','stopped'=>'已停止','finished'=>'处理完成'];
+            echo '图片任务 #' . $job['id'] . '：' . $states[$job['state']] . '；已就绪 ' . ($job['counts']['reused']??0) . '，本次成功 ' . $job['counts']['done'] . '，失败 ' . $job['counts']['failed'] . "\n";
+        } catch (\Throwable $e) {
+            http_response_code(400);
+            echo '图片任务执行失败，请到后台附件管理查看详情' . "\n";
+            xn_log($e->getMessage(), 'attachment_error');
+        }
+        exit;
+
     // 宝塔 curl：每次处理一页，302 只指向本站当前入口，-L 自动续采。
     case 'collect':
         header('Content-Type: text/plain; charset=utf-8');

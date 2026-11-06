@@ -96,10 +96,7 @@ class ThumbnailService
      */
     private static function publicUrl(string $rel): string
     {
-        $conf = function_exists('_SERVER') ? _SERVER('conf') : null;
-        $base = is_array($conf) ? (string)($conf['upload_url'] ?? '/upload/') : '/upload/';
-        $path = ltrim($rel, '/');
-        if (str_starts_with($path, 'upload/')) $path = substr($path, 7);
-        return rtrim($base, '/') . '/' . $path;
+        // A generated thumbnail is local until explicitly migrated; FTP defaults must not repoint it.
+        return AttachmentStorage::localUrl($rel);
     }
 }

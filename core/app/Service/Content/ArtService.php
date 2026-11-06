@@ -264,6 +264,8 @@ class ArtService
         global $gid, $uid, $catelist;
         $conf = _SERVER('conf');
         if (empty($art)) return;
+        $art['pic'] = \App\Service\System\AttachmentService::resolve((string)($art['pic'] ?? ''));
+        if (isset($art['content'])) $art['content'] = \App\Service\System\AttachmentService::images($art['content'], [\App\Service\System\AttachmentService::class, 'resolve']);
         $art['create_date_fmt'] = humandate($art['create_date']);
         $art['create_date_fmt_ymd'] = date('Y-m-d', $art['create_date']);
 

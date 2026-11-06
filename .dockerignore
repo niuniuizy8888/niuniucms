@@ -9,6 +9,8 @@ data/install.lock
 **/*.md
 !docker/README.md
 nncms_bak
+.old
+.skills
 *.zip
 *.tar.gz
 .env

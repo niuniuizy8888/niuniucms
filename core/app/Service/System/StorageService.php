@@ -83,7 +83,7 @@ class StorageService
             }
         }
         $path = $dir . '/' . $name;
-        return array('path' => $path, 'url' => self::url($path));
+        return AttachmentService::uploaded($path);
     }
 
     /**
@@ -129,7 +129,7 @@ class StorageService
             return false;
         }
         $path = $dir . '/' . $name;
-        return array('path' => $path, 'url' => self::url($path));
+        return AttachmentService::uploaded($path);
     }
 
     /**
@@ -153,12 +153,6 @@ class StorageService
      */
     public static function url(string $path): string
     {
-        $conf = _SERVER('conf');
-        $base = (string)($conf['upload_url'] ?? 'upload/');
-        $path = ltrim($path, '/');
-        if (str_starts_with($path, 'upload/')) {
-            $path = substr($path, 7);
-        }
-        return rtrim($base, '/') . '/' . $path;
+        return AttachmentStorage::localUrl(ltrim($path, '/'));
     }
 }

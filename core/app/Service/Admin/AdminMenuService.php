@@ -120,6 +120,13 @@ class AdminMenuService
 
         $items[] = array('type' => 'label', 'label' => '数据管理', 'blank' => true);
 
+        $items[] = array(
+            'li_class' => 'slide ' . ($route === 'attachment' ? 'active' : ''),
+            'anchor_open' => '<a class="side-menu__item has-link ' . ($route === 'attachment' ? 'active' : '') . '" href="' . url('attachment-list', '', TRUE) . '" data-label="附件管理">',
+            'icon' => '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/></svg>',
+            'label' => '附件管理',
+        );
+
         // 用户管理
         $items[] = array(
             'comment' => '<!-- 用户管理 -->',

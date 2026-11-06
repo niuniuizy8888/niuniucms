@@ -17,6 +17,7 @@ trait VideoQueryTrait
      */
     private static function localizePic(string $pic): string
     {
+        if (class_exists('App\Service\System\AttachmentService')) $pic = \App\Service\System\AttachmentService::resolve($pic);
         if ($pic === '' || 0 !== stripos($pic, 'http')) return $pic;
         $cls = 'App\\Service\\System\\ThumbnailService';
         if (!class_exists($cls) && defined('APP_PATH')) {
@@ -249,6 +250,7 @@ trait VideoQueryTrait
         // R7-P09：海报本地缩略图就绪后原位替换 pic（本地无缩略图时返回原远程 URL，形状不变、
         // 不新增字段以免破坏按行结构断言的回归用例；渲染期不出网）。
         $video['pic'] = self::localizePic((string)($video['pic'] ?? ''));
+        if (class_exists('App\Service\System\AttachmentService')) $video['pic_slide'] = \App\Service\System\AttachmentService::resolve((string)($video['pic_slide'] ?? ''));
         $video['tag_fmt'] = $video['tag'] ? xn_json_decode($video['tag']) : array();
         if (!is_array($video['tag_fmt'])) $video['tag_fmt'] = array();
         $video['tag_url'] = array();

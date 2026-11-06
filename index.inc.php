@@ -355,6 +355,7 @@ if (isset($domain['site'][$hosts]) && is_array($domain['site'][$hosts])) {
 }
 // 队列仅由独立 CLI worker 或后台显式执行，普通网页请求不消费任务。
 \App\Service\Collection\ApiExecutionService::registerTaskHandlers();
+\App\Service\System\TaskQueueService::registerHandler('attachment_sync', array(\App\Service\System\AttachmentJobService::class, 'worker'));
 // ============================================================
 // 插件运行期引导（R3-1）：enabled 插件的 bootstrap.php 在路由分发前装载，
 // 插件经 App::listen 注册运行期事件监听；完成后触发 'addon.boot' 事件。

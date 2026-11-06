@@ -791,7 +791,22 @@ class ApiExecutionService
         foreach ($created as $item) {
             $vod_update = array();
             self::applyPosterAndTag($item['vid'], $item['cid'], $item['tags'], $vod_update, $item['arr'], $conf, $poster_prefetch);
-            !empty($vod_update) && FALSE === video_update($item['vid'], $vod_update) and message(-1, lang('update_thread_failed'));
+            if (!empty($vod_update)) {
+                try {
+                    $save = static fn()=>video_update($item['vid'], $vod_update);
+                    $saved = !empty($vod_update['pic']) ? \App\Service\System\AttachmentService::withUrlReference($vod_update['pic'], $save) : $save();
+                    if ($saved === false) message(-1, lang('update_thread_failed'));
+                } catch (\Throwable $e) {
+                    // Image cleanup by another task must never replace a working external URL with a missing file.
+                    xn_log('collection image reference deferred: '.$e->getMessage(), 'attachment_error');
+                    unset($vod_update['pic']);
+                    if ($vod_update) video_update($item['vid'], $vod_update);
+                }
+            }
+            if (!empty($vod_update['pic'])) {
+                try { \App\Service\System\AttachmentService::cleanupCollected($vod_update['pic']); }
+                catch (\Throwable $e) { xn_log('collection image cleanup deferred: '.$e->getMessage(), 'attachment_error'); }
+            }
         }
         return $ress;
     }
@@ -1033,101 +1048,17 @@ class ApiExecutionService
         return implode('#', $out);
     }
 
-    /**
-     * 新增视频的收尾补充（结果写进引用出参 $vod_update，由调用方 video_update 落库）：
-     * down_pic=1 时下载海报——目录日期规则 attach_dir_save_rule 过字符白名单且拒 `..`（防路径穿越）；
-     * 优先复用 $prefetch 预取字节（内容级 MIME 必须 image/*、8MB 上限，探测不可用即丢弃，fail-closed），
-     * 未命中则 http_download_to_file 流式下载 + 落盘后 finfo_file 复检（不合格 unlink）。
-     * 成功后 $vod_update['pic'] 指向本地 URL。标签走 TagFlowService::post，
-     * 超 120 字符截到最后一个逗号补 '}'，非空进 $vod_update['tag']。
-     * @param int $vid 视频 ID（RepositoryFactory::vod()->insert 返回值）
-     * @param int $cid 分类 ID（videoRowPayload 载荷的 cid，标签归属）
-     * @param string $tags 逗号分隔标签串（videoRowPayload 产出，已逐段转义）
-     * @param array $vod_update 引用出参：追加 pic/tag 待更新字段（可保持为空）
-     * @param array $arr videoRowPayload 的入库载荷（读 $arr['pic'] 原图 URL）
-     * @param array $conf 站点配置（down_pic/upload_path/upload_url/attach_dir_save_rule）
-     * @param array $prefetch 海报并发预取结果：URL => 响应字节串或 false（可空数组）
-     * @return void
-     */
+    /** Download new posters through the shared storage service; failures preserve the source URL. */
     private static function applyPosterAndTag($vid, $cid, $tags, array &$vod_update, array $arr, array $conf, array $prefetch = array()): void
     {
-        if (!empty($conf['down_pic']) && $conf['down_pic'] == 1) {
-            $attach_dir_save_rule = array_value($conf, 'attach_dir_save_rule', 'Ymd');
-            // 上线前安全审计加固：存目录规则白名单。该值直接作 date() 格式串，
-            // 字母为格式符、`/`、`-`、`_` 为字面量原样输出 ⇒ 若被写成 `../..` 形态即成路径穿越种子。
-            // 仅放行日期格式字符与目录分隔符，且显式拒绝 `..`（双重保险）。
-            if (!is_string($attach_dir_save_rule) || !preg_match('#^[a-zA-Z/_-]+$#', $attach_dir_save_rule) || false !== strpos($attach_dir_save_rule, '..')) {
-                $attach_dir_save_rule = 'Ymd';
-            }
-            $day = date($attach_dir_save_rule, time());
-            $save_path = $conf['upload_path'] . 'vod/' . $day . '/';
-            $img_url_base = $conf['upload_url'] . 'vod/' . $day . '/';
-            if (!is_dir($save_path)) {
-                mkdir($save_path, 0777, true);
-            }
-            $picPath = parse_url($arr['pic'], PHP_URL_PATH);
-            $ext = is_string($picPath) ? strtolower(pathinfo($picPath, PATHINFO_EXTENSION)) : '';
-            if (empty($ext) || !in_array(strtolower($ext), array('jpg', 'jpeg', 'png', 'gif', 'webp'))) {
-                $ext = 'jpg';
-            }
-            $filename = xn_rand(16) . '.' . $ext;
-            $destpath = $save_path . $filename;
-            $saved = FALSE;
-            // 命中并发预取则复用（省一次串行下载）；否则回退单发**流式下载**。
-            // 出网纪律（CLAUDE.md「开发约定·远程下载/出网」）：回退路径不再 https_request 整包入内存——
-            // http_download_to_file 自带逐跳 SSRF 校验 + 传输中 8MB 上限（超限即断流）
-            // + HTTP >= 400 判失败（错误页不再当图片）+ 临时文件 rename 原子落盘。
-            if (isset($prefetch[$arr['pic']]) && is_string($prefetch[$arr['pic']]) && '' !== $prefetch[$arr['pic']]) {
-                $imgdata = $prefetch[$arr['pic']];
-                // 上线前审计修复（VULN-L10）：落盘前做**内容级 MIME 硬校验 + 体积上限**。
-                // 原实现只按远端 URL 后缀定扩展名、把响应字节直接写盘，采集源可返回任意内容
-                // （HTML/SVG/PHP 文本）并保存为 .jpg。因 upload/ 全链禁 PHP 执行且静态服务按扩展名
-                // 给 image/* + nosniff，不构成 RCE/XSS，但会产生垃圾入库与无上限下载的磁盘/内存压力。
-                // fail-closed：内容非 image/* 或探测不可用一律丢弃（不降级放行）。
-                // （预取层 https_request_multi 已带 3MB/张 上限，此处 8MB 校验为双保险）
-                if (strlen($imgdata) > 8 * 1048576) {
-                    if (function_exists('xn_log')) xn_log('remote pic too large: ' . $arr['pic'], 'api_error');
-                    $imgdata = '';
-                } elseif (function_exists('finfo_open')) {
-                    $__fi = finfo_open(FILEINFO_MIME_TYPE);
-                    $__mime = $__fi ? (string)finfo_buffer($__fi, $imgdata) : '';
-                    $__fi and (PHP_VERSION_ID < 80500) and finfo_close($__fi);
-                    // ⚠ svg 拒收（审查修复，与 StorageService 的「拒 image/svg」口径对齐）：
-                    //   image/svg+xml 虽过 `image/` 前缀，但可携带脚本语义（foreignObject/事件），
-                    //   与「内容级 MIME 硬校验」意图不符，一律丢弃。
-                    if ('' === $__mime || 0 !== strpos($__mime, 'image/') || 0 === strpos($__mime, 'image/svg')) {
-                        if (function_exists('xn_log')) xn_log('remote pic content rejected: ' . $__mime . ' ' . $arr['pic'], 'api_error');
-                        $imgdata = '';
-                    }
-                } else {
-                    if (function_exists('xn_log')) xn_log('remote pic rejected: fileinfo unavailable', 'api_error');
-                    $imgdata = '';
-                }
-                $saved = ('' !== $imgdata) && (bool)file_put_contents($destpath, $imgdata);
-            } else {
-                $res = http_download_to_file($arr['pic'], $destpath, 8 * 1048576, 30);
-                if (!empty($res['ok'])) {
-                    // VULN-L10 同款内容级 MIME 硬校验（落盘后 finfo_file 版），fail-closed：
-                    // 探测不可用或内容非 image/* 一律删除不入库
-                    if (function_exists('finfo_file')) {
-                        $__mime = (string)@finfo_file($destpath, FILEINFO_MIME_TYPE);
-                        // 同上：image/ 前缀 + 拒 svg（与 StorageService 口径对齐）
-                        if ('' !== $__mime && 0 === strpos($__mime, 'image/') && 0 !== strpos($__mime, 'image/svg')) {
-                            $saved = TRUE;
-                        } else {
-                            if (function_exists('xn_log')) xn_log('remote pic content rejected: ' . $__mime . ' ' . $arr['pic'], 'api_error');
-                            @unlink($destpath);
-                        }
-                    } else {
-                        if (function_exists('xn_log')) xn_log('remote pic rejected: fileinfo unavailable', 'api_error');
-                        @unlink($destpath);
-                    }
-                } elseif (function_exists('xn_log')) {
-                    xn_log('remote pic download failed: ' . (string)($res['error'] ?? 'unknown') . ' ' . $arr['pic'], 'api_error');
-                }
-            }
-            if ($saved) {
-                $vod_update['pic'] = $img_url_base . $filename;
+        if (!empty($conf['down_pic']) && !empty($arr['pic'])) {
+            try {
+                $storage = \App\Service\System\AttachmentStorage::settings(true);
+                $bytes = $prefetch[$arr['pic']] ?? null;
+                $asset = \App\Service\System\AttachmentService::transfer($arr['pic'], $storage['backend'], $storage, is_string($bytes) ? $bytes : null);
+                $vod_update['pic'] = $asset['url'];
+            } catch (\Throwable $e) {
+                xn_log('collection image sync failed: ' . $e->getMessage(), 'attachment_error');
             }
         }
         $tag_json = \App\Service\Content\TagFlowService::post($vid, $cid, $tags);
@@ -1337,6 +1268,21 @@ class ApiExecutionService
                 cache_delete('catelist');
                 page_cache_bump();
                 \App\Service\Front\TypeService::bumpFacets();
+            }
+        }
+        if (!empty($conf['down_pic'])) {
+            foreach ($touched as $aid) {
+                $image = \App\Repository\RepositoryFactory::art()->findOne(['aid'=>$aid], [], ['pic']);
+                if (empty($image['pic']) || !preg_match('~^https?://~i', $image['pic'])) continue;
+                try {
+                    $storage = \App\Service\System\AttachmentStorage::settings(true);
+                    $asset = \App\Service\System\AttachmentService::transfer($image['pic'], $storage['backend'], $storage);
+                    if ($asset['url'] !== $image['pic']) {
+                        \App\Service\System\AttachmentService::withReference($asset, static fn()=>\App\Repository\RepositoryFactory::art()->update(['aid'=>$aid,'pic'=>$image['pic']], ['pic'=>$asset['url']]));
+                        content_cache_delete('art_', $aid);
+                    }
+                    if (!$storage['keep_local']) \App\Service\System\AttachmentService::cleanupLocal($asset);
+                } catch (\Throwable $e) { xn_log('article image sync failed: '.$e->getMessage(), 'attachment_error'); }
             }
         }
         return $ress;

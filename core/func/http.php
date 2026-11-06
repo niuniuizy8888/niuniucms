@@ -597,11 +597,12 @@ function https_request_multi(array $urls, $timeout = 10, $max_redirects = 5, $ma
  * @param int    $timeout       单请求超时（秒）
  * @param int    $maxRedirects  最大重定向跳数
  * @param string $expectPrefix  期望的响应体起始字节（如 'PK'）；不匹配即失败。'' = 不检查
+ * @param int    $totalTimeout  所有重定向共用的传输时间预算（秒）；0 保留逐请求超时
  * @return array{ok:bool,bytes:int,sha256:string,error:string,http_code:int}
  *         error 取值：ssrf / open_failed / http_error / empty / too_big / prefix_mismatch
- *                     / transfer_failed / write_failed / rename_failed / ok
+ *                     / transfer_failed / timeout / write_failed / rename_failed / ok
  */
-function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout = 60, $maxRedirects = 5, $expectPrefix = '')
+function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout = 60, $maxRedirects = 5, $expectPrefix = '', $totalTimeout = 0)
 {
     $fail = function ($error, $bytes = 0, $code = 0) {
         return array('ok' => FALSE, 'bytes' => (int)$bytes, 'sha256' => '', 'error' => $error, 'http_code' => (int)$code);
@@ -628,11 +629,17 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
     $current   = $url;
     $success   = FALSE;
     $storeSig  = '';
+    $errno = 0;
+    $deadline = $totalTimeout > 0 ? microtime(TRUE) + (int)$totalTimeout : 0;
 
     for ($hop = 0; $hop <= $maxRedirects; $hop++) {
+        $remaining = $deadline ? (int)ceil($deadline - microtime(TRUE)) : $timeout;
+        if ($remaining <= 0) { $errno = CURLE_OPERATION_TIMEDOUT; break; }
         $storeSig = '';
         $pinned = NULL;
         if (!outbound_url_safe($current, TRUE, $pinned)) break;
+        $remaining = $deadline ? (int)ceil($deadline - microtime(TRUE)) : $timeout;
+        if ($remaining <= 0) { $errno = CURLE_OPERATION_TIMEDOUT; break; }
 
         $ch = curl_init();
         if (FALSE === $ch) break;
@@ -644,8 +651,8 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
             CURLOPT_MAXREDIRS => 0,
             CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
-            CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
+            CURLOPT_TIMEOUT => min($timeout, $remaining),
+            CURLOPT_CONNECTTIMEOUT => min(10, $timeout, $remaining),
             CURLOPT_NOSIGNAL => TRUE,
             CURLOPT_USERAGENT => 'NiuNiuCms/1.0 (+package-download)',
             CURLOPT_WRITEFUNCTION => function ($ch2, $chunk) use (&$bytes, &$tooBig, &$writeFail, &$hashCtx, &$prefix, $fp, $maxBytes) {
@@ -724,7 +731,7 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
     }
     if (!$success) {
         @unlink($tmpPath);
-        return $fail($code >= 400 ? 'http_error' : 'transfer_failed', $bytes, $code);
+        return $fail($errno === CURLE_OPERATION_TIMEDOUT ? 'timeout' : ($code >= 400 ? 'http_error' : 'transfer_failed'), $bytes, $code);
     }
     if (0 === $bytes) {
         @unlink($tmpPath);

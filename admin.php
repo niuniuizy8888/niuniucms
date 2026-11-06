@@ -78,6 +78,7 @@ $route_map = array(
     'hot' => 'hot.php',
     'ad' => 'ad.php',
     'task' => 'task.php',
+    'attachment' => 'attachment.php',
     'recycle' => 'recycle.php',
     'addon' => 'addon.php',
 );
