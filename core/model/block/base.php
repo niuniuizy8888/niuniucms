@@ -24,7 +24,9 @@ function block_cache(string $key, int $ttl, callable $fn, $empty = null)
 {
     // hook model_block_base_block_cache_start.php
 
-
+    // 区块缓存包含完整图片地址，须与整页缓存使用相同的内容版本和站点隔离。
+    // 图片迁移推进版本后不再读取旧地址，各缓存层的旧键按 TTL 自然过期。
+    $key = page_cache_vkey($key);
     static $cache = array();
     if (array_key_exists($key, $cache)) return $cache[$key];
     global $g_multi_cache;
