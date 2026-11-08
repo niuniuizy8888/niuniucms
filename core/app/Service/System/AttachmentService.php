@@ -72,10 +72,10 @@ class AttachmentService
         return $ready;
     }
 
-    public static function transfer(string $source, string $target, array $settings, ?string $prefetched = null, bool $redownload = false): array
+    public static function transfer(string $source, string $target, array $settings, ?string $prefetched = null, bool $redownload = false, int $jobId = 0): array
     {
         AttachmentSchema::ensure();
-        return AttachmentSchema::lock('source:' . hash('sha256', $source), static function () use ($source,$target,$settings,$prefetched,$redownload) {
+        return AttachmentSchema::lock('source:' . hash('sha256', $source), static function () use ($source,$target,$settings,$prefetched,$redownload,$jobId) {
             $table = AttachmentSchema::table('attachments');
             $existing = AttachmentSchema::sql('SELECT ' . self::COLS . ',profile FROM ' . $table . ' WHERE url_hash=?', [hash('sha256', $source)])->fetch(\PDO::FETCH_ASSOC);
             $saved = !empty($existing['stored_id']) ? AttachmentSchema::sql('SELECT '.self::COLS.',profile FROM '.$table.' WHERE id=?',[$existing['stored_id']])->fetch(\PDO::FETCH_ASSOC) : false;
@@ -85,22 +85,47 @@ class AttachmentService
             $path = $existing['path'] ?? AttachmentStorage::localPath($source);
             $origin = $existing['origin'] ?? '';
             if ($path === '' && $saved) $path = $saved['path'];
-            if (!$redownload && $candidate && ($target !== 'ftp' || self::sameFtp($candidate,$settings))) {
+            $checkpoint=$target==='ftp'?AttachmentTransferState::read($jobId,$source):null;
+            $resumeInfo=null;
+            if ($checkpoint) {
+                $path=$checkpoint['path']; $origin=$checkpoint['origin'];
+                if ($checkpoint['uploaded']) {
+                    $remote=$checkpoint+['url'=>rtrim($settings['public_url'],'/').'/'.$path];
+                    // Only confirmed absence or different bytes require another STOR.
+                    // HTTP 503, access errors and timeouts leave this stage intact.
+                    $restored=AttachmentStorage::verify($remote,!empty($settings['keep_local']),true);
+                    if ($restored!==null) {
+                        AttachmentTransferState::verified($jobId,$source);
+                        if($restored) self::record('/'.$path,$origin,$path,'local',$checkpoint);
+                        return self::rememberSource($source,self::record($remote['url'],$origin,$path,'ftp',$checkpoint,$settings),$existing)+['reused'=>!$restored];
+                    }
+                }
+                $local=AttachmentStorage::absolute($path);clearstatcache(true,$local);
+                if(is_file($local)) {
+                    try {
+                        $info=AttachmentStorage::imageInfo($local);
+                        if(hash_equals($checkpoint['sha256'],$info['sha256'])) $resumeInfo=$info;
+                    } catch(\Throwable $e) { /* Recover a missing or damaged checkpoint from its origin. */ }
+                }
+                // A damaged checkpoint must not fall back to an older global result.
+                $redownload=true;
+            }
+            if (!$checkpoint && !$redownload && $candidate && ($target !== 'ftp' || self::sameFtp($candidate,$settings))) {
                 if ($target === 'ftp') {
                     $reused=self::reuseFtp($candidate,$settings);
                     if($reused) return self::rememberSource($source,$reused,$existing);
                 }
                 if (self::availableLocal([$candidate['url']])) return self::rememberSource($source,$candidate,$existing)+['reused'=>true];
             }
-            if (!$redownload && $existing && $existing['backend'] === 'ftp' && $target === 'ftp' && self::sameFtp($existing,$settings) && (!$candidate || $candidate['id']!==$existing['id'])) {
+            if (!$checkpoint && !$redownload && $existing && $existing['backend'] === 'ftp' && $target === 'ftp' && self::sameFtp($existing,$settings) && (!$candidate || $candidate['id']!==$existing['id'])) {
                 $reused=self::reuseFtp($existing,$settings);
                 if($reused) return $reused;
             }
             $tmp = null;
             try {
                 $local = $path !== '' ? AttachmentStorage::absolute($path) : '';
-                $info=null;
-                if (!$redownload && $local !== '' && is_file($local)) {
+                $info=$resumeInfo;
+                if ($info===null && !$redownload && $local !== '' && is_file($local)) {
                     try { $info = AttachmentStorage::imageInfo($local); } catch (\Throwable $e) { /* Recover invalid copies from their source. */ }
                 }
                 if ($info===null) {
@@ -126,8 +151,13 @@ class AttachmentService
                     $origin = $download;
                 }
                 if (!preg_match('~^(?:https?:)?//~i',$origin)) $origin = preg_match('~^(?:https?:)?//~i',$source) ? $source : '';
-                if ($target === 'ftp') self::rememberSource($source,self::record('/'.$path,$origin,$path,'local',$info),$existing);
-                $url = $target === 'ftp' ? AttachmentStorage::upload($settings, $path, $local) : '/' . $path;
+                if ($target === 'ftp') {
+                    self::rememberSource($source,self::record('/'.$path,$origin,$path,'local',$info),$existing);
+                    AttachmentTransferState::downloaded($jobId,$source,$path,$origin,$info);
+                    AttachmentTransferState::uploading($jobId,$source);
+                }
+                $url = $target === 'ftp' ? AttachmentStorage::upload($settings, $path, $local, static fn()=>AttachmentTransferState::uploaded($jobId,$source)) : '/' . $path;
+                if ($target === 'ftp') AttachmentTransferState::verified($jobId,$source);
                 // Even when FTP upload fails, the downloaded local original remains available.
                 return self::rememberSource($source,self::record($url, $origin, $path, $target, $info, $target === 'ftp' ? $settings : []),$existing)+['reused'=>$target==='local'&&$tmp===null];
             } finally { if ($tmp && is_file($tmp)) @unlink($tmp); }
@@ -267,7 +297,7 @@ class AttachmentService
     {
         if ($asset['backend'] !== 'ftp' || $asset['path'] === '') return false;
         return AttachmentSchema::lock('delete:' . $asset['path'], static function () use ($asset) {
-            if (self::referenced($asset, true)) return false;
+            if (self::referenced($asset, true) || AttachmentTransferState::needsLocal($asset['path'])) return false;
             $file = AttachmentStorage::absolute($asset['path']);
             return !is_file($file) || unlink($file);
         });
@@ -313,6 +343,9 @@ class AttachmentService
             $busy=AttachmentSchema::sql("SELECT j.id FROM $jobs j JOIN $items i ON i.job_id=j.id LEFT JOIN $table a ON a.id=i.asset_id WHERE j.state IN ('running','paused') AND i.state='pending' AND (i.source_hash=? OR i.asset_id=? OR (a.path<>'' AND a.path=?) OR a.stored_id=?) LIMIT 1",[hash('sha256',$asset['url']),$id,$asset['path'],$id])->fetchColumn();
             if(!$busy) {
                 $busy=AttachmentSchema::sql("SELECT id FROM $jobs WHERE state IN ('running','paused') AND phase<2 AND (JSON_CONTAINS(JSON_EXTRACT(options,'$.assets'),?) OR (state='running' AND COALESCE(JSON_LENGTH(JSON_EXTRACT(options,'$.assets')),0)=0)) LIMIT 1",[(string)$id])->fetchColumn();
+            }
+            if(!$busy && $asset['path']!=='') {
+                $busy=AttachmentSchema::sql('SELECT j.id FROM '.AttachmentSchema::table('attachment_transfers')." t JOIN $jobs j ON j.id=t.job_id WHERE t.path=? AND j.state IN ('running','paused') LIMIT 1",[$asset['path']])->fetchColumn();
             }
             if($busy) throw new \RuntimeException('图片任务 #'.$busy.' 正在使用这张图片或扫描范围，请先完成或停止该任务');
             if ($asset['backend'] === 'ftp') {

@@ -304,11 +304,11 @@ class AttachmentJobService
                         if($asset) $asset['reused']=true;
                         // One source may serve many contents. An explicit refresh downloads
                         // it once per job, including across pauses and separate HTTP requests.
-                        if(!$asset && !empty($o['redownload'])) {
+                        if(!$asset && !empty($o['redownload']) && $o['target']!=='ftp') {
                             $previous=AttachmentSchema::sql("SELECT result_url FROM $items WHERE job_id=? AND source_hash=? AND state IN ('done','reused','skipped') AND asset_id>0 AND result_url IS NOT NULL ORDER BY state,id LIMIT 1",[$id,hash('sha256',$item['source'])])->fetchColumn();
                             if($previous) $asset=AttachmentService::transfer($previous,$o['target'],$c);
                         }
-                        if(!$asset) $asset=AttachmentService::transfer($item['source'],$o['target'],$c,null,!empty($o['redownload']));
+                        if(!$asset) $asset=AttachmentService::transfer($item['source'],$o['target'],$c,null,!empty($o['redownload']),$id);
                         $ok=$item['kind']==='asset' || self::apply($item,$asset);
                     }
                     if($ok && $o['target']==='ftp' && !$o['keep_local']) AttachmentService::cleanupLocal($asset);

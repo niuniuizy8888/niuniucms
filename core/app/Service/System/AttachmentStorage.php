@@ -118,16 +118,24 @@ class AttachmentStorage
         return $file;
     }
 
-    public static function download(string $url, string $file): array
+    public static function download(string $url, string $file, bool $allowMissing = false): ?array
     {
         $url = html_entity_decode(trim($url), ENT_QUOTES | ENT_HTML5, 'UTF-8');
         if (str_starts_with($url, '//')) $url = 'https:' . $url;
         $r = http_download_to_file($url, $file, self::MAX_BYTES, 20, 5, '', 20);
         if (empty($r['ok'])) {
+            if ($allowMissing && ($r['error']??'')==='http_error' && in_array((int)($r['http_code']??0),[404,410],true)) return null;
+            if ($allowMissing && (int)($r['http_code']??0)===200 && in_array($r['error']??'',['empty','too_big'],true)) return null;
             $messages=['timeout'=>'图片下载超时（20 秒），已保留原链接，可稍后重试','http_error'=>'来源返回 HTTP '.(int)($r['http_code']??0).'，已保留原链接','too_big'=>'图片超过 8MB，已保留原链接','empty'=>'来源返回空文件，已保留原链接','write_failed'=>'图片写入失败，请检查目录权限或磁盘空间','open_failed'=>'无法创建下载文件，请检查目录权限或磁盘空间'];
             throw new \RuntimeException($messages[$r['error']??'']??'图片下载失败，请检查来源是否可访问；原链接已保留');
         }
-        return self::imageInfo($file);
+        try { return self::imageInfo($file); }
+        catch (\RuntimeException $e) {
+            // HTTP succeeded, but these bytes are not a usable image. A pending
+            // upload may be repaired from its verified local checkpoint.
+            if ($allowMissing) return null;
+            throw $e;
+        }
     }
 
     private static function ftpOptions(array $c): array
@@ -199,10 +207,12 @@ class AttachmentStorage
         } finally { if (is_resource($stream)) fclose($stream); }
     }
 
-    public static function upload(array $c, string $path, string $file): string
+    public static function upload(array $c, string $path, string $file, ?callable $onUploaded = null): string
     {
         self::ftp($c, $path, $file);
         $url = rtrim($c['public_url'], '/') . '/' . $path;
+        // Persist STOR completion before an HTTP timeout can hide that success.
+        if ($onUploaded) $onUploaded();
         $tmp = self::temporary();
         try {
             $remote = self::download($url, $tmp);
@@ -226,12 +236,16 @@ class AttachmentStorage
 
     public static function removeRemote(array $profile, string $path): void { self::ftp($profile, $path, null, true); }
 
-    public static function verify(array $asset, bool $restoreLocal = false): bool
+    public static function verify(array $asset, bool $restoreLocal = false, bool $allowRepair = false): ?bool
     {
         $tmp = self::temporary();
         try {
-            $info = self::download($asset['url'], $tmp);
-            if ($asset['sha256'] === '' || !hash_equals($asset['sha256'], $info['sha256'])) throw new \RuntimeException('已上传图片的访问校验失败，保留原引用和本地副本');
+            $info = self::download($asset['url'], $tmp, $allowRepair);
+            if ($info===null) return null;
+            if ($asset['sha256'] === '' || !hash_equals($asset['sha256'], $info['sha256'])) {
+                if ($allowRepair) return null;
+                throw new \RuntimeException('已上传图片的访问校验失败，保留原引用和本地副本');
+            }
             if($restoreLocal && $asset['path']!=='') {
                 return AttachmentSchema::lock('delete:'.$asset['path'],static function() use($asset,$tmp,$info) {
                     $file=self::absolute($asset['path']);clearstatcache(true,$file);
