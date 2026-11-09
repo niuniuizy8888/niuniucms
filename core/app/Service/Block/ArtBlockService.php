@@ -39,13 +39,15 @@ class ArtBlockService
      */
     public static function random($cid, int $n)
     {
-        $rows = \App\Repository\RepositoryFactory::artAid()->find(array(), array('aid' => -1), 1, max($n * 5, 100), 'aid', array('aid'));
+        $allowed = \App\Service\Content\ContentVisibilityService::categoryIds();
+        if (!$allowed || $n <= 0) return array('list' => array(), 'cate_name' => '');
+        $rows = \App\Repository\RepositoryFactory::artAid()->find(array('cid' => $allowed), array('aid' => -1), 1, max($n * 5, 100), 'aid', array('aid'));
         if (!$rows) return NULL;
         $aids = array_keys($rows);
         $total = min(count($aids), $n);
         shuffle($aids);
         $aidarr = array_slice($aids, 0, $total);
-        $items = \App\Service\Content\ArtService::findAsc($aidarr, $total);
+        $items = \App\Service\Content\ContentVisibilityService::filter((array)\App\Service\Content\ArtService::findAsc($aidarr, $total));
         if (!$items) return NULL;
         $cate = cate_read($cid);
         return array(

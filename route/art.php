@@ -12,6 +12,7 @@ $alias_cid = $alias_cid ?? 0;
 //   不同，两种形态必须各存一份；alias_cid 是有界整数（别名由后台维护）⇒ 不会像整条 URI 那样
 //   被 ?keyword=… 之类白名单参数放大成无限键空间（VULN-M02「键材料必须有界」口径）。
 $cacheKey = "page_art_" . md5($aid . '_u' . intval($uid) . '_g' . intval($gid) . '_a' . intval($alias_cid) . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
+$cacheKey .= '_access' . \App\Service\Content\ContentVisibilityService::fingerprint();
 $cacheRow = art_read($aid);
 // 权限检查先于缓存输出；拒绝时继续走下方原有的 403/404 分支，不开启缓存缓冲。
 $cacheReadable = !empty($cacheRow) && \App\Service\Content\CateService::accessUser(intval($cacheRow['cid'] ?? 0), intval($gid), 'allowread');

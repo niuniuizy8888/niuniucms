@@ -4,8 +4,8 @@ namespace App\Service\Front;
 class TagService
 {
     /**
-     * 装配标签云/标签列表页数据（route/tag.php 列表分支）。
-     * 总数 >0 才查询，否则 taglist 为 null（Content\TagService::find 空结果返回 NULL，非空数组）。
+     * 装配当前用户可读内容的标签云；标签名称、条数与分页均排除不可读分类。
+     * 没有可读标签时 taglist 为 null，保留模板的空列表约定。
      *
      * @param int   $page 页码（路由 intval(param(2,1)) 传入）
      * @param array $conf 站点配置（读 tagsize/listsize/route.tag）
@@ -13,9 +13,16 @@ class TagService
      */
     public static function buildList($page, $conf)
     {
-        $pagesize = $conf['tagsize'];
-        $count = \App\Service\Content\TagService::count();
-        $taglist = $count ? \App\Service\Content\TagService::find($page, $pagesize) : null;
+        $page = max(1, min(max(1, (int)($conf['listsize'] ?? 50)), (int)$page));
+        $pagesize = max(1, min(100, (int)$conf['tagsize']));
+        $visible = \App\Service\Content\ArticleTagService::visibleTags(max(1, (int)$page), $pagesize);
+        $count = $visible['count'];
+        $lastPage = max(1, (int)ceil($count / $pagesize));
+        if ($page > $lastPage) {
+            $page = $lastPage;
+            $visible = \App\Service\Content\ArticleTagService::visibleTags($page, $pagesize);
+        }
+        $taglist = $visible['rows'] ?: null;
         $page_url = url($conf['route']['tag'] . '-list-{page}', array());
         $num = $count > $pagesize * $conf['listsize'] ? $pagesize * $conf['listsize'] : $count;
 
@@ -32,8 +39,8 @@ class TagService
 
     /**
      * 装配标签详情页数据（route/tag.php 详情分支）：按 tagid 取标签（走缓存）后
-     * 经 RelationService::buildTagMixedList 组装该标签下的混合内容列表。
-     * 标签不存在时返回 found=FALSE 短路（**不返回可渲染数据**），由路由据此出 404/提示。
+     * 经 RelationService::buildTagMixedList 组装可读分类的混合内容列表。
+     * 标签不存在或没有可读内容时均返回 found=FALSE，由路由统一出 404。
      *
      * @param int   $tagid 标签主键（路由已 intval，页码由调用方钳制到 1..conf.listsize）
      * @param int   $page  页码
@@ -43,11 +50,13 @@ class TagService
      */
     public static function buildDetail($tagid, $page, $conf)
     {
-        $pagesize = $conf['pagesize'];
+        $pagesize = max(1, min(100, (int)$conf['pagesize']));
         $tags = \App\Service\Content\TagService::readByIdCache($tagid);
         if (empty($tags)) {
             return array('found' => false, 'reason' => 'tag_not_found');
         }
+        $tags['count'] = \App\Service\Content\ArticleTagService::visibleCount((int)$tagid);
+        if ($tags['count'] === 0) return array('found' => false, 'reason' => 'tag_not_found');
 
         $page_url = url($conf['route']['tag'] . '-' . $tagid . '-{page}', array());
         $num = $tags['count'] > $pagesize * $conf['listsize'] ? $pagesize * $conf['listsize'] : $tags['count'];

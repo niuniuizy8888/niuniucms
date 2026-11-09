@@ -12,7 +12,9 @@ class VodBlockService
      */
     public static function top($cid, int $n)
     {
-        $cond = empty($cid) ? array() : array('cid' => $cid);
+        $cids = \App\Service\Content\ContentVisibilityService::intersectCategories($cid);
+        if (!$cids || $n <= 0) return array();
+        $cond = array('cid' => $cids);
         // SQL 专项审计修复（R10 / P0-2）：原省略 col ⇒ SELECT * 拉全 40 列，
         // 含 vod.play_url（实测均值 5,398 字节 / 最大 171,527 字节）。本方法随后以
         // format(..., true) 轻量装配（不产 play_data）⇒ 大字段纯浪费。改为显式列。
@@ -24,6 +26,7 @@ class VodBlockService
             'vid',
             \App\Service\Content\VideoService::findColsLight()
         );
+        $rows = \App\Service\Content\ContentVisibilityService::filter((array)$rows);
         if ($rows) {
             $i = 0;
             foreach ($rows as &$video) {
@@ -194,12 +197,10 @@ class VodBlockService
      */
     public static function random($cid, int $n)
     {
+        $cids = \App\Service\Content\ContentVisibilityService::intersectCategories($cid);
+        if (!$cids || $n <= 0) return array();
         $pagesize = max($n * 5, 100);
-        if ($cid) {
-            $arrlist = \App\Repository\RepositoryFactory::vodVid()->find(array('cid' => $cid), array('vid' => -1), 1, $pagesize, 'vid', array('vid'));
-        } else {
-            $arrlist = \App\Repository\RepositoryFactory::vodVid()->find(array(), array('vid' => -1), 1, $pagesize, 'vid', array('vid'));
-        }
+        $arrlist = \App\Repository\RepositoryFactory::vodVid()->find(array('cid' => $cids), array('vid' => -1), 1, $pagesize, 'vid', array('vid'));
         if (!$arrlist) return NULL;
         $vids = array_keys($arrlist);
         $total = min(count($vids), $n > 20 ? 20 : $n);
@@ -222,6 +223,8 @@ class VodBlockService
      */
     public static function hitPeriod(string $type, int $n, $cid = NULL)
     {
+        $cid = \App\Service\Content\ContentVisibilityService::intersectCategories($cid);
+        if (!$cid || $n <= 0) return array();
         $hitType = self::periodType($type);
         $ranked = \App\Repository\RepositoryFactory::contentQuery()->hitRankIds('vod_top', 'vid', $cid, $hitType, 1, $n);
         if (empty($ranked['ids'])) return array();

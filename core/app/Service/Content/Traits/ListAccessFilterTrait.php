@@ -12,17 +12,15 @@ namespace App\Service\Content\Traits;
 trait ListAccessFilterTrait
 {
     /**
-     * 按分类访问权限过滤内容列表（accesson 开启的分类做 allowread 校验）
+     * 按实际阅读门禁过滤内容列表，同时检查全局 allowread 和分类独立权限。
      * @param array $list 引用传入的列表（cid 为键的条目集合）
      * @param int $gid 用户组 ID
      */
     public static function listAccessFilter(&$list, $gid)
     {
-        global $catelist;
         if (empty($list)) return NULL;
         foreach ($list as $id => $item) {
-            if (empty($catelist[$item['cid']]['accesson'])) continue;
-            if (!cate_access_user($item['cid'], $gid, 'allowread')) unset($list[$id]);
+            if (!\App\Service\Content\CateService::accessUser((int)($item['cid'] ?? 0), (int)$gid, 'allowread')) unset($list[$id]);
         }
     }
 }

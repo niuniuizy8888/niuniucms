@@ -130,20 +130,19 @@ class ArticleTagService
     {
         if (!Schema::ready()) return [];
         $ids = array_values(array_unique(array_filter(array_map('intval', $tagids), static fn($id) => $id > 0)));
-        if (!$ids) return [];
+        $cids = ContentVisibilityService::categoryIds();
+        if (!$ids || !$cids) return [];
         $size = max(1, min(100, $size)); $offset = (max(1, $page) - 1) * $size;
-        $rows = Schema::sql('SELECT DISTINCT aid FROM ' . Schema::table('tag_art') . ' WHERE tagid IN (' . implode(',', array_fill(0, count($ids), '?')) . ') AND aid<>? ORDER BY aid DESC LIMIT ' . $size . ' OFFSET ' . $offset, array_merge($ids, [$exclude]))->fetchAll(\PDO::FETCH_COLUMN);
-        return $rows ? (array)ArtService::find($rows, count($rows)) : [];
+        $rows = Schema::sql('SELECT DISTINCT r.aid FROM ' . Schema::table('tag_art') . ' r JOIN ' . Schema::table('art') . ' c ON c.aid=r.aid WHERE r.tagid IN (' . self::marks($ids) . ') AND c.cid IN (' . self::marks($cids) . ') AND r.aid<>? ORDER BY r.aid DESC LIMIT ' . $size . ' OFFSET ' . $offset, array_merge($ids, $cids, [$exclude]))->fetchAll(\PDO::FETCH_COLUMN);
+        return $rows ? ContentVisibilityService::filter((array)ArtService::find($rows, count($rows))) : [];
     }
 
     public static function mixedList(int $tagid, int $page, int $size): array
     {
         $size = max(1, min(100, $size)); $offset = (max(1, $page) - 1) * $size;
-        if (!Schema::ready()) {
-            $rows = (array)TagFlowService::videoFind($tagid, $page, $size);
-            return $rows ? array_values((array)VideoService::find(array_column($rows, 'vid'), $size, true, true)) : [];
-        }
-        $rows = Schema::sql('SELECT DISTINCT 0 AS kind,vid AS content_id FROM ' . Schema::table('tag_id') . ' WHERE tagid=? UNION ALL SELECT 1 AS kind,aid AS content_id FROM ' . Schema::table('tag_art') . ' WHERE tagid=? ORDER BY kind,content_id DESC LIMIT ' . $size . ' OFFSET ' . $offset, [$tagid, $tagid])->fetchAll(\PDO::FETCH_ASSOC);
+        [$query, $args] = self::visibleBindings([$tagid]);
+        if ($query === '') return [];
+        $rows = Schema::sql('SELECT DISTINCT kind,content_id FROM (' . $query . ') visible ORDER BY kind,content_id DESC LIMIT ' . $size . ' OFFSET ' . $offset, $args)->fetchAll(\PDO::FETCH_ASSOC);
         $vids = $aids = [];
         foreach ($rows as $row) {
             if ((int)$row['kind'] === 0) $vids[] = (int)$row['content_id'];
@@ -156,6 +155,76 @@ class ArticleTagService
             $content = (int)$row['kind'] === 0 ? ($videos[$row['content_id']] ?? null) : ($articles[$row['content_id']] ?? null);
             if ($content) $result[] = $content;
         }
-        return $result;
+        return array_values(ContentVisibilityService::filter($result));
+    }
+
+    private static function marks(array $values): string
+    {
+        return implode(',', array_fill(0, count($values), '?'));
+    }
+
+    private static function legacyVideoCondition(): string
+    {
+        // Before migration, an article ID may occupy this relation's vid. Only a video owning
+        // the same tag in its saved JSON may be returned. Do not migrate during frontend reads.
+        return Schema::ready() ? '' : " AND c.tag REGEXP CONCAT('\"',r.tagid,'\"[[:space:]]*:')";
+    }
+
+    /** Filter before pagination/counting, rather than leaving empty pages after removing denied rows. */
+    private static function visibleBindings(array $tagids, bool $videoOnly = false): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $tagids), static fn($id) => $id > 0)));
+        $cids = ContentVisibilityService::categoryIds();
+        if (!$ids || !$cids) return ['', []];
+        $where = 'r.tagid IN (' . self::marks($ids) . ') AND c.cid IN (' . self::marks($cids) . ')';
+        $query = 'SELECT DISTINCT r.tagid,0 AS kind,r.vid AS content_id FROM ' . Schema::table('tag_id') . ' r JOIN ' . Schema::table('vod') . ' c ON c.vid=r.vid WHERE ' . $where . self::legacyVideoCondition();
+        $args = array_merge($ids, $cids);
+        if (!$videoOnly && Schema::ready()) {
+            $query .= ' UNION ALL SELECT DISTINCT r.tagid,1 AS kind,r.aid AS content_id FROM ' . Schema::table('tag_art') . ' r JOIN ' . Schema::table('art') . ' c ON c.aid=r.aid WHERE ' . $where;
+            $args = array_merge($args, $ids, $cids);
+        }
+        return [$query, $args];
+    }
+
+    public static function visibleCount(int $tagid): int
+    {
+        [$query, $args] = self::visibleBindings([$tagid]);
+        return $query === '' ? 0 : (int)Schema::sql('SELECT COUNT(*) FROM (' . $query . ') visible', $args)->fetchColumn();
+    }
+
+    public static function relatedVideos(array $tagids, int $limit): array
+    {
+        [$query, $args] = self::visibleBindings($tagids, true);
+        if ($query === '') return [];
+        $limit = max(1, min(100, $limit));
+        $ids = Schema::sql('SELECT DISTINCT content_id FROM (' . $query . ') visible ORDER BY content_id DESC LIMIT ' . $limit, $args)->fetchAll(\PDO::FETCH_COLUMN);
+        return $ids ? ContentVisibilityService::filter((array)VideoService::findAsc($ids, count($ids), true)) : [];
+    }
+
+    /** Tag cloud counts and names are scoped to readable content, without changing stored global totals. */
+    public static function visibleTags(int $page, int $size): array
+    {
+        $cids = ContentVisibilityService::categoryIds();
+        if (!$cids) return ['count' => 0, 'rows' => []];
+        $size = max(1, min(100, $size)); $offset = (max(1, $page) - 1) * $size;
+        $where = 'EXISTS (SELECT 1 FROM ' . Schema::table('tag_id') . ' r JOIN ' . Schema::table('vod') . ' c ON c.vid=r.vid WHERE r.tagid=t.tagid AND c.cid IN (' . self::marks($cids) . ')' . self::legacyVideoCondition() . ')';
+        $args = $cids;
+        if (Schema::ready()) {
+            $where .= ' OR EXISTS (SELECT 1 FROM ' . Schema::table('tag_art') . ' r JOIN ' . Schema::table('art') . ' c ON c.aid=r.aid WHERE r.tagid=t.tagid AND c.cid IN (' . self::marks($cids) . '))';
+            $args = array_merge($args, $cids);
+        }
+        $count = (int)Schema::sql('SELECT COUNT(*) FROM ' . Schema::table('tag') . ' t WHERE ' . $where, $args)->fetchColumn();
+        $rows = $count ? Schema::sql('SELECT t.tagid,t.name,t.en,t.seo_title,t.seo_key,t.seo_des FROM ' . Schema::table('tag') . ' t WHERE ' . $where . ' ORDER BY t.tagid DESC LIMIT ' . $size . ' OFFSET ' . $offset, $args)->fetchAll(\PDO::FETCH_ASSOC) : [];
+        if ($rows) {
+            [$query, $countArgs] = self::visibleBindings(array_column($rows, 'tagid'));
+            $counts = Schema::sql('SELECT tagid,COUNT(*) AS total FROM (' . $query . ') visible GROUP BY tagid', $countArgs)->fetchAll(\PDO::FETCH_KEY_PAIR);
+            foreach ($rows as $i => &$row) {
+                $row['count'] = (int)($counts[$row['tagid']] ?? 0);
+                $row['i'] = $i + 1;
+                tag_format($row);
+            }
+            unset($row);
+        }
+        return ['count' => $count, 'rows' => array_column($rows, null, 'tagid')];
     }
 }

@@ -728,8 +728,28 @@ class ApiBatchService
      */
     public static function rollbackRaw($batch_id)
     {
+        try {
+            return CollectionBatchStateService::withLock((int)$batch_id, static function () use ($batch_id) {
+                \App\Service\System\ArticleTagSchema::ensureReady();
+                $db = _SERVER('db');
+                if ($db->inTransaction() || !$db->beginTransaction()) throw new \RuntimeException('无法开始回滚，请稍后重试');
+                try {
+                    $result = self::rollbackLocked((int)$batch_id);
+                    if ((int)$result['code'] !== 0) { $db->rollBack(); return $result; }
+                    if (!$db->commit()) throw new \RuntimeException('批次回滚保存失败，请重试');
+                    page_cache_bump();
+                    return $result;
+                } catch (\Throwable $e) { $db->rollBack(); throw $e; }
+            });
+        } catch (\RuntimeException $e) {
+            return ['code'=>-1, 'message'=>$e instanceof \PDOException ? '批次回滚失败，请检查数据库后重试' : $e->getMessage()];
+        }
+    }
+
+    private static function rollbackLocked(int $batch_id): array
+    {
         api_import_batch_require_tables();
-        $batch = api_import_batch_read($batch_id);
+        $batch = CollectionBatchStateService::batch($batch_id);
         if (empty($batch)) {
             return array('code' => -1, 'message' => '批次不存在');
         }
@@ -738,13 +758,18 @@ class ApiBatchService
         }
         $items = api_import_batch_item_find_by_batch($batch_id, 1, 100000);
         if (empty($items)) {
-            api_import_batch_update($batch_id, array(
+            $saved = api_import_batch_update($batch_id, array(
                 'status' => 2,
                 'rollback_date' => time(),
                 'rollback_num' => 0,
                 'note' => '批次无可回滚内容',
             ));
+            if (!$saved) throw new \RuntimeException('批次回滚状态保存失败');
             return array('code' => 0, 'message' => '批次无可回滚内容', 'rollback_num' => 0);
+        }
+        if (!api_import_batch_item_supports_field('action_type')
+            && (CollectionBatchStateService::read($batch_id)['items_version'] ?? 0) !== 1) {
+            return ['code'=>-1, 'message'=>'旧批次明细无法区分新增和更新，不能安全自动回滚；现有内容已保留，请先核对批次明细'];
         }
         $vids = array();
         foreach ($items as $item) {
@@ -771,13 +796,14 @@ class ApiBatchService
                 return array('code' => -1, 'message' => '回滚失败：内容未被删除（多为回收站快照写入失败），批次保持未回滚，请检查回收站表结构后重试');
             }
         }
-        api_import_batch_item__delete(array('batch_id' => $batch_id));
-        api_import_batch_update($batch_id, array(
+        if (api_import_batch_item__delete(array('batch_id' => $batch_id)) === false) throw new \RuntimeException('批次明细清理失败');
+        $saved = api_import_batch_update($batch_id, array(
             'status' => 2,
             'rollback_date' => time(),
             'rollback_num' => count($vids),
             'note' => '已回滚批次导入内容',
         ));
+        if (!$saved) throw new \RuntimeException('批次回滚状态保存失败');
         cate_list_cache_delete();
         return array('code' => 0, 'message' => '回滚成功', 'rollback_num' => count($vids));
     }

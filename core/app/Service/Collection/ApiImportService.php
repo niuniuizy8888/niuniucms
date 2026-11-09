@@ -47,6 +47,8 @@ class ApiImportService
     public static function prepare(string $code, int $limit, string $updateMode, string $updateScope, int $uid, bool $canCreateCategories = false): array
     {
         api_import_batch_require_tables();
+        if ($limit < 1 || $limit > 50000 || !in_array($updateMode, ['skip','update'], true)
+            || !array_key_exists($updateScope, self::fastDbUpdateScopeOptions())) throw new \InvalidArgumentException('快速采集策略无效');
         $categories = self::fastCat($code, $canCreateCategories);
         $sourceMeta = api_import_batch_source_meta($code);
         
@@ -54,15 +56,22 @@ class ApiImportService
             ? '快速采集批次已创建，策略：新增并更新差异字段，范围：' . (self::fastDbUpdateScopeOptions()[$updateScope] ?? $updateScope) 
             : '快速采集批次已创建，策略：仅新增';
             
-        $batchId = api_import_batch_create(array(
-            'source_code' => $code,
-            'source_name' => $sourceMeta['name'] ?? $code,
-            'uid' => $uid,
-            'status' => 0,
-            'limit_num' => $limit,
-            'create_date' => time(),
-            'note' => $note,
-        ));
+        $db = _SERVER('db');
+        if ($db->inTransaction() || !$db->beginTransaction()) throw new \RuntimeException('无法创建采集批次');
+        try {
+            $batchId = api_import_batch_create(array(
+                'source_code' => $code,
+                'source_name' => $sourceMeta['name'] ?? $code,
+                'uid' => $uid,
+                'status' => 0,
+                'limit_num' => $limit,
+                'create_date' => time(),
+                'note' => $note,
+            ));
+            if (!$batchId) throw new \RuntimeException('无法创建采集批次');
+            CollectionBatchStateService::save((int)$batchId, ['v'=>1, 'items_version'=>1, 'code'=>$code, 'limit'=>$limit, 'mode'=>$updateMode, 'scope'=>$updateScope]);
+            if (!$db->commit()) throw new \RuntimeException('采集批次保存失败');
+        } catch (\Throwable $e) { $db->rollBack(); throw $e; }
         
         admin_audit_log('api_fastdb_prepare', array(
             'code' => $code, 
@@ -94,12 +103,11 @@ class ApiImportService
     public static function import(string $code, int $page, int $limit, int $batchId, string $updateMode, string $updateScope): array
     {
         api_import_batch_require_tables();
-        $batch = api_import_batch_read($batchId);
-        if (empty($batch)) {
-            return ['error' => true, 'msg' => '采集批次不存在'];
+        try {
+            $result = self::fastDbRun($code, $page, $limit, $batchId, $updateMode, $updateScope);
+        } catch (\RuntimeException $e) {
+            return ['error'=>true, 'msg'=>$e instanceof \PDOException ? '批次保存失败，请重试当前页' : $e->getMessage()];
         }
-        
-        $result = self::fastDbRun($code, $page, $limit, $batchId, $updateMode, $updateScope);
         
         if (($result['status'] ?? '') === 'done') {
             $batch = api_import_batch_read($batchId);
@@ -120,8 +128,8 @@ class ApiImportService
             ];
         }
         
-        $nextp = $page + 1;
-        $resstr = '批次 #' . $batchId . ' 第' . $page . '页已处理，新增 ' . intval($result['inserted'] ?? 0) . ' 条，更新 ' . intval($result['updated'] ?? 0) . ' 条，跳过 ' . intval($result['duplicates'] ?? 0) . ' 条，即将开始第' . $nextp . '页';
+        $nextp = (int)$result['next_page'];
+        $resstr = '批次 #' . $batchId . ' 第' . (int)$result['page'] . '页已处理，新增 ' . intval($result['inserted'] ?? 0) . ' 条，更新 ' . intval($result['updated'] ?? 0) . ' 条，跳过 ' . intval($result['duplicates'] ?? 0) . ' 条，即将开始第' . $nextp . '页';
         
         return [
             'done' => false,

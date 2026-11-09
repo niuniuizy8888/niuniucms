@@ -652,12 +652,21 @@ class ApiExecutionService
      * 入库转义边界在 videoRowPayload（htmlspecialchars/xn_html_safe/xn_url_strip），结果行输出已转义。
      * @param array $data fetchJson/fetchVideoJson 的返回结构（须含 'data' 源数据行列表）
      * @param string $code 采集源编码
+     * @param array|null $fastOptions 内部快速入库策略；NULL 保持普通采集行为
+     * @param callable|null $onCommit 内部批次回执，必须与视频及版本来源在同一事务保存
      * @return array 每条一行的展示文本（序号 + 名称 + 着色结果描述），供拼接输出
      */
-    public static function importVideoData($data, $code)
+    public static function importVideoData($data, $code, ?array $fastOptions = null, ?callable $onCommit = null)
     {
         \App\Service\System\ArticleTagSchema::ensureReady();
         $conf = _SERVER('conf');
+        if ($fastOptions !== null) {
+            if (!in_array($fastOptions['mode'] ?? '', ['skip', 'update'], true)
+                || !array_key_exists($fastOptions['scope'] ?? '', ApiImportService::fastDbUpdateScopeOptions())) throw new \InvalidArgumentException('快速采集策略无效');
+            $data['data'] = self::normalizeFastVideoRows($data['data']);
+            // Fast imports keep their existing external-poster / lazy-tag behavior.
+            $conf['down_pic'] = 0;
+        }
         $matchRule = VideoMatchRuleService::settings($conf);
         $param = array('filter' => 0);
         $config = $conf['api_api']['vod'];
@@ -710,11 +719,12 @@ class ApiExecutionService
         $stmt = $pdo->prepare('SELECT GET_LOCK(?, 30)');
         $stmt->execute(array($lock));
         if ((int)$stmt->fetchColumn() !== 1) throw new \RuntimeException('其他视频采集正在入库，请稍后重试当前页');
-        $created = $categoryCounts = $touched = array();
+        $created = $categoryCounts = $touched = $movedCategories = $receipts = array();
         try {
             if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
             $apicate = CollectionCategoryService::validBindings((array)$conf['bind'][$code], 0);
-            $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule);
+            $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule,
+                $fastOptions !== null ? array_keys(ApiImportService::fastDbDiffLabels()) : []);
             $candidates = array();
             foreach ($existing_vods as $rows) foreach ($rows as $vid => $row) $candidates[$vid] = $row;
             $versionStates = VideoVersionService::load($candidates);
@@ -724,6 +734,7 @@ class ApiExecutionService
                 $des = '';
                 $msg = '';
                 $arr = array();
+                $receipt = ['vid'=>0, 'cid'=>0, 'vod_name'=>self::storedVodName($v['vod_name'] ?? ''), 'action_type'=>'skip', 'result_status'=>'unbound', 'diff_fields'=>[], 'diff_snapshot'=>[]];
                 if (!isset($apicate[$v['type_name']])) {
                     // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
                     // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
@@ -733,6 +744,7 @@ class ApiExecutionService
                 } else {
                     $payload = self::videoRowPayload($v, $apicate[$v['type_name']], $players, $param);
                     $arr = $payload['arr'];
+                    if ($fastOptions !== null) $arr['uptime'] = \App\Service\Content\VideoService::fitColumns(['uptime'=>(string)($v['vod_time'] ?? '')])['uptime'];
                     $cid = $arr['cid'];
                     $tags = $payload['tags'];
                     $cj_play_from_arr = $payload['cj_play_from'];
@@ -751,24 +763,53 @@ class ApiExecutionService
                         // 同一页后续条目必须看到刚插入的影片和最新播放组。
                         $existing_vods[$identity][$vid] = array_merge($arr, array('vid' => $vid));
                         $versionStates[$vid] = VideoVersionService::seed($arr, $owner);
-                        $created[] = array('vid' => $vid, 'cid' => $cid, 'tags' => $tags, 'arr' => $arr);
+                        $created[$vid] = array('vid' => $vid, 'cid' => $cid, 'tags' => $tags, 'arr' => $arr);
+                        $receipt['action_type'] = $receipt['result_status'] = 'create';
                     } else {
                         $vid = $info['vid'];
-                        $update = self::mergePlayUpdates($info, $cj_play_from_arr, $cj_play_url_arr, $cj_play_server_arr, $cj_play_note_arr, $config, $des, $color, $owner, $versionStates[$vid]);
-                        $update['create_date'] = time();
-                        if ($info['name'] !== $arr['name']) $update['name'] = $arr['name'];
-                        foreach (array('year', 'douban_id') as $field) {
-                            if (empty($info[$field]) && !empty($arr[$field])) $update[$field] = $arr[$field];
+                        if ($fastOptions !== null) {
+                            $nextState = $versionStates[$vid];
+                            $update = self::fastVideoUpdate($v, $payload, $info, $fastOptions['scope'], $config, $owner, $nextState);
+                            $receipt['diff_fields'] = ApiImportService::fastDbDiffFields($info, $update);
+                            $receipt['diff_snapshot'] = ApiImportService::fastDbDiffSnapshot($info, $update);
+                            $receipt['result_status'] = !$receipt['diff_fields'] ? 'unchanged' : ($fastOptions['mode'] === 'skip' ? 'skipped_update' : 'update');
+                            if ($fastOptions['mode'] === 'skip') $update = [];
+                            else $versionStates[$vid] = $nextState;
+                            if ($receipt['result_status'] === 'update') $receipt['action_type'] = 'update';
+                        } else {
+                            $update = self::mergePlayUpdates($info, $cj_play_from_arr, $cj_play_url_arr, $cj_play_server_arr, $cj_play_note_arr, $config, $des, $color, $owner, $versionStates[$vid]);
+                            $update['create_date'] = time();
+                            if ($info['name'] !== $arr['name']) $update['name'] = $arr['name'];
+                            foreach (array('year', 'douban_id') as $field) {
+                                if (empty($info[$field]) && !empty($arr[$field])) $update[$field] = $arr[$field];
+                            }
                         }
-                        if (FALSE === video_update($vid, $update)) throw new \RuntimeException('视频更新失败，本页已回滚，请重试');
+                        if ($update && FALSE === video_update($vid, $update)) throw new \RuntimeException('视频更新失败，本页已回滚，请重试');
+                        if (isset($update['cid']) && (int)$update['cid'] !== (int)$info['cid']) {
+                            if (isset($created[$vid])) {
+                                // A row created earlier in this page has no index yet: insert only its final category.
+                                $oldCid = (int)$created[$vid]['cid'];
+                                if (--$categoryCounts[$oldCid] === 0) unset($categoryCounts[$oldCid]);
+                                $categoryCounts[(int)$update['cid']] = ($categoryCounts[(int)$update['cid']] ?? 0) + 1;
+                                $created[$vid]['cid'] = (int)$update['cid'];
+                                $created[$vid]['arr']['cid'] = (int)$update['cid'];
+                            } else {
+                                if (\App\Repository\RepositoryFactory::vodVid()->replace(['vid'=>(int)$vid,'cid'=>(int)$update['cid']]) === false) throw new \RuntimeException('视频分类关联更新失败');
+                                if (\App\Repository\RepositoryFactory::table('vod_sticky', 'vid')->update(['vid'=>(int)$vid], ['cid'=>(int)$update['cid']]) === false) throw new \RuntimeException('视频推荐分类更新失败');
+                            }
+                            $movedCategories[(int)$info['cid']] = $movedCategories[(int)$update['cid']] = true;
+                        }
                         $existing_vods[$identity][$vid] = array_merge($info, $update);
                     }
+                    $receipt['vid'] = (int)$vid;
+                    $receipt['cid'] = (int)($existing_vods[$identity][$vid]['cid'] ?? $cid);
                     $touched[$vid] = $vid;
                     // 本站无对应播放器的来源整组被剔除：显式提示，避免「采集完成」却丢了播放地址
                     if (!empty($payload['dropped_from'])) {
                         $msg .= " <font color='orange'>（未配置播放器，已跳过来源：" . htmlspecialchars(implode(',', array_unique($payload['dropped_from'])), ENT_QUOTES, 'UTF-8') . '）</font>';
                     }
                 }
+                if ($fastOptions !== null) $receipts[] = $receipt;
                 $ress[] = ($k + 1) . '、' . htmlspecialchars($v['vod_name'], ENT_QUOTES, 'UTF-8') . " <font color='{$color}'>" . $des . '</font>' . $msg . '';
             }
             foreach (array_chunk($created, 500) as $chunk) {
@@ -780,11 +821,18 @@ class ApiExecutionService
             foreach ($categoryCounts as $cid => $count) {
                 if (!cate_update($cid, array('videos+' => $count))) throw new \RuntimeException('分类计数更新失败，本页已回滚，请重试');
             }
+            if ($movedCategories) {
+                $cateTable = $db->qi($db->tablepre . 'cate'); $indexTable = $db->qi($db->tablepre . 'vod_vid');
+                $ids = array_keys($movedCategories);
+                $countStmt = $pdo->prepare('UPDATE ' . $cateTable . ' c SET c.videos=(SELECT COUNT(*) FROM ' . $indexTable . ' v WHERE v.cid=c.cid) WHERE c.cid IN (' . implode(',', array_fill(0,count($ids),'?')) . ')');
+                if (!$countStmt || !$countStmt->execute($ids)) throw new \RuntimeException('分类计数更新失败');
+            }
             $changedStates = array();
             foreach ($versionStates as $vid => $state) {
                 if (isset($originalStates[$vid]) ? $state !== $originalStates[$vid] : !empty($state['groups'])) $changedStates[$vid] = $state;
             }
             VideoVersionService::save($changedStates);
+            if ($onCommit !== null) $onCommit($receipts);
             if (!$db->commit()) throw new \RuntimeException('采集提交失败，请重试当前页');
         } catch (\Throwable $e) {
             $db->rollBack();
@@ -797,6 +845,8 @@ class ApiExecutionService
         foreach ($touched as $vid) content_cache_delete('vod_', $vid);
         if ($touched) page_cache_bump();
         if ($created) \App\Service\Front\TypeService::bumpFacets();
+        if ($movedCategories) { cate_list_cache_delete(); \App\Service\Front\TypeService::bumpFacets(); }
+        if ($fastOptions !== null) return $ress;
         foreach ($created as $item) {
             $vod_update = array();
             self::applyPosterAndTag($item['vid'], $item['cid'], $item['tags'], $vod_update, $item['arr'], $conf, $poster_prefetch);
@@ -818,6 +868,68 @@ class ApiExecutionService
             }
         }
         return $ress;
+    }
+
+    private static function normalizeFastVideoRows(array $rows): array
+    {
+        $defaults = array_fill_keys(explode(',', 'type_name,vod_id,vod_name,vod_en,vod_sub,vod_letter,vod_status,vod_hits,vod_total,vod_serial,vod_actor,vod_director,vod_writer,vod_blurb,vod_remarks,vod_area,vod_lang,vod_year,vod_douban_id,vod_douban_score,vod_content,vod_pic,vod_play_from,vod_play_url,vod_play_server,vod_play_note'), '');
+        foreach ($rows as &$row) {
+            if (!is_array($row)) throw new \RuntimeException('快速入库数据格式错误');
+            $row += $defaults;
+        }
+        return $rows;
+    }
+
+    /** The same calculation is used by the fast preview and the locked importer. */
+    private static function fastVideoUpdate(array $source, array $payload, array $info, string $scope, array $config, string $owner, array &$state): array
+    {
+        $update = ApiImportService::fastDbFilterUpdateRowByScope(ApiImportService::fastDbBuildUpdateRow($source, $payload['arr']['cid']), $scope);
+        foreach (['play_from','play_url','play_server','play_note'] as $field) unset($update[$field]);
+        if (in_array($scope, ['all','play'], true)) {
+            // Choosing fast "update play" authorizes updates, while shared ownership still protects other HD entries.
+            $config['uprule'] = 'a'; $des = ''; $color = '';
+            $update += self::mergePlayUpdates($info, $payload['cj_play_from'], $payload['cj_play_url'], $payload['cj_play_server'], $payload['cj_play_note'], $config, $des, $color, $owner, $state);
+        }
+        foreach ($update as $field => $value) {
+            if (is_int($value) ? (int)($info[$field] ?? 0) === $value : (string)($info[$field] ?? '') === (string)$value) unset($update[$field]);
+        }
+        return $update;
+    }
+
+    /** Read-only fast preview, retaining every same-name candidate and the configured matching rule. */
+    public static function previewFastVideoData(array $items, string $code, string $scope): array
+    {
+        $conf = _SERVER('conf'); $rule = VideoMatchRuleService::settings($conf);
+        $bindings = CollectionCategoryService::validBindings((array)($conf['bind'][$code] ?? []), 0);
+        $items = self::normalizeFastVideoRows($items);
+        $candidates = self::findExistingVideos($items, $bindings, $rule, array_keys(ApiImportService::fastDbDiffLabels()));
+        $rows = []; foreach ($candidates as $bucket) foreach ($bucket as $vid => $row) $rows[$vid] = $row;
+        $states = VideoVersionService::load($rows); $result = []; $previewId = -1;
+        foreach ($items as $source) {
+            $cid = (int)($bindings[$source['type_name']] ?? 0);
+            $name = self::storedVodName($source['vod_name']);
+            $row = ['vod_name'=>(string)$source['vod_name'], 'type_name'=>$source['type_name'], 'vod_id'=>(int)$source['vod_id'], 'cid'=>$cid, 'vod_time'=>$source['vod_time'] ?? '', 'vid'=>0, 'diff_fields'=>[], 'diff_snapshot'=>[]];
+            if ($cid < 1 || $name === '') { $row['status']='unbound'; $result[]=$row; continue; }
+            $payload = self::videoRowPayload($source, $cid, $conf['vodplayer'] ?? [], ['filter'=>0]);
+            $identity = self::videoIdentity($name, $cid, $rule);
+            $info = self::matchingVideo($candidates[$identity] ?? [], $payload['arr'], $rule);
+            $owner = VideoVersionService::owner($code, (int)$source['vod_id']);
+            if ($info) {
+                $vid = (int)$info['vid'];
+                $update = self::fastVideoUpdate($source, $payload, $info, $scope, $conf['api_api']['vod'] ?? [], $owner, $states[$vid]);
+                $row['vid'] = max(0, $vid);
+                $row['diff_fields'] = ApiImportService::fastDbDiffFields($info, $update);
+                $row['diff_snapshot'] = ApiImportService::fastDbDiffSnapshot($info, $update);
+                $row['status'] = $row['diff_fields'] ? 'updatable' : 'unchanged';
+                $candidates[$identity][$vid] = array_merge($info, $update);
+            } else {
+                $row['status'] = 'importable'; $vid = $previewId--;
+                $candidates[$identity][$vid] = $payload['arr'] + ['vid'=>$vid];
+                $states[$vid] = VideoVersionService::seed($payload['arr'], $owner);
+            }
+            $result[] = $row;
+        }
+        return $result;
     }
 
     /** 片名已经过 storedVodName()；只有启用分类条件时才按本地 cid 分桶。 */
@@ -862,7 +974,7 @@ class ApiExecutionService
      * 对未命中的片名再兼容历史前后空格，避免升级后旧记录被当成新影片。
      * 保留同名候选，交 matchingVideo 核对作品信息，不在采集时删除用户已有内容。
      */
-    private static function findExistingVideos(array $items, array $bindings, ?array $rule = null): array
+    private static function findExistingVideos(array $items, array $bindings, ?array $rule = null, array $extraFields = []): array
     {
         $rule = $rule ?? VideoMatchRuleService::settings(_SERVER('conf'));
         $useCategory = VideoMatchRuleService::usesCategory($rule);
@@ -880,6 +992,7 @@ class ApiExecutionService
         }
         if (!$wanted) return $found;
         $fields = array('vid', 'cid', 'alias', 'name', 'year', 'douban_id', 'play_from', 'play_url', 'play_server', 'play_note');
+        $fields = array_values(array_unique(array_merge($fields, $extraFields)));
         if ($rule['mode'] === 'custom') $fields = array_values(array_unique(array_merge($fields, $rule['fields'])));
         $remember = static function (array $rows) use (&$found, $wanted, $rule) {
             foreach ($rows as $row) {
@@ -1282,22 +1395,68 @@ class ApiExecutionService
                 \App\Service\Front\TypeService::bumpFacets();
             }
         }
-        if (!empty($conf['down_pic'])) {
-            foreach ($touched as $aid) {
-                $image = \App\Repository\RepositoryFactory::art()->findOne(['aid'=>$aid], [], ['pic']);
-                if (empty($image['pic']) || !preg_match('~^https?://~i', $image['pic'])) continue;
-                try {
-                    $storage = \App\Service\System\AttachmentStorage::settings(true);
-                    $asset = \App\Service\System\AttachmentService::transfer($image['pic'], $storage['backend'], $storage);
-                    if ($asset['url'] !== $image['pic']) {
-                        \App\Service\System\AttachmentService::withReference($asset, static fn()=>\App\Repository\RepositoryFactory::art()->update(['aid'=>$aid,'pic'=>$image['pic']], ['pic'=>$asset['url']]));
-                        content_cache_delete('art_', $aid);
-                    }
-                    if (!$storage['keep_local']) \App\Service\System\AttachmentService::cleanupLocal($asset);
-                } catch (\Throwable $e) { xn_log('article image sync failed: '.$e->getMessage(), 'attachment_error'); }
+        if (!empty($conf['down_pic']) && $touched) self::syncArticlePosters($touched);
+        return $ress;
+    }
+
+    /** Bound source-image downloads for the whole page; deferred images keep their external URLs. */
+    private static function syncArticlePosters(array $touched): void
+    {
+        $deadline = microtime(true) + 20;
+        $images = array();
+        foreach (array_chunk(array_values($touched), 500) as $ids) {
+            $rows = \App\Repository\RepositoryFactory::art()->builder()->select(['aid','pic'])->whereIn('aid', $ids)->get();
+            if ($rows === false) { xn_log('article image candidates could not be read; external URLs are preserved', 'attachment_error'); return; }
+            foreach ($rows as $image) {
+                if (!empty($image['pic']) && preg_match('~^https?://~i', $image['pic'])) $images[$image['pic']][] = (int)$image['aid'];
             }
         }
-        return $ress;
+        if (!$images) return;
+        $prefetch = array();
+        try {
+            if (microtime(true) < $deadline && function_exists('https_request_multi')) {
+                // Keep the article image size allowance; total bytes, URL count and deadline are shared per page.
+                $prefetch = https_request_multi(array_keys($images), 10, 5, \App\Service\System\AttachmentStorage::MAX_BYTES);
+            }
+        } catch (\Throwable $e) { xn_log('article image prefetch failed: ' . $e->getMessage(), 'attachment_error'); }
+        $ready = count(array_filter($prefetch, static fn($bytes) => is_string($bytes) && $bytes !== ''));
+        if (count($images) > $ready) {
+            xn_log('article image prefetch deferred ' . (count($images) - $ready) . ' URL(s): request failed or batch limit reached '
+                . '(4 concurrent, 24 MiB total, 100 URLs, 20 seconds). External URLs are preserved; retry in attachment management.', 'attachment_error');
+        }
+        $processed = 0;
+        $referencesChanged = false;
+        foreach ($images as $source => $aids) {
+            $bytes = $prefetch[$source] ?? null;
+            // Empty/failed/missing entries must never trigger an unbounded single-image fallback.
+            if (!is_string($bytes) || $bytes === '') continue;
+            // FTP transfer/verification also share the page deadline. An in-flight transfer
+            // may finish under its own timeout, but it cannot start an unlimited series.
+            if ($processed >= 100 || microtime(true) >= $deadline) {
+                xn_log('article image storage deferred ' . ($ready - $processed) . ' prefetched URL(s): page time/count limit reached. '
+                    . 'External URLs are preserved; retry in attachment management.', 'attachment_error');
+                break;
+            }
+            $processed++;
+            try {
+                $storage = \App\Service\System\AttachmentStorage::settings(true);
+                $asset = \App\Service\System\AttachmentService::transfer($source, $storage['backend'], $storage, $bytes);
+            } catch (\Throwable $e) { xn_log('article image sync failed: ' . $e->getMessage(), 'attachment_error'); continue; }
+            foreach ($aids as $aid) {
+                if ($asset['url'] === $source) continue;
+                try {
+                    $updated = \App\Service\System\AttachmentService::withReference($asset, static fn()=>\App\Repository\RepositoryFactory::art()->update(['aid'=>$aid,'pic'=>$source], ['pic'=>$asset['url']]));
+                    if ($updated === false) throw new \RuntimeException('文章图片引用保存失败，已保留原链接');
+                    if ($updated) { content_cache_delete('art_', $aid); $referencesChanged = true; }
+                } catch (\Throwable $e) { xn_log('article image reference deferred: ' . $e->getMessage(), 'attachment_error'); }
+            }
+            if (!$storage['keep_local']) {
+                try { \App\Service\System\AttachmentService::cleanupLocal($asset); }
+                catch (\Throwable $e) { xn_log('article image cleanup deferred: ' . $e->getMessage(), 'attachment_error'); }
+            }
+        }
+        // Pages may have been rendered while posters were downloading after the content commit.
+        if ($referencesChanged) page_cache_bump();
     }
 
     /** 资讯采集补正文：已有文章只在正文确实为空时才补，避免把人工编辑内容覆盖掉。 */
