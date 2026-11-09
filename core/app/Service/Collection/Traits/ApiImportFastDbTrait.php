@@ -22,7 +22,7 @@ trait ApiImportFastDbTrait
         set_time_limit(0);
 
         $sample_limit = max(1, intval($sample_limit));
-        $apicate = isset($conf['bind'][$code]) ? $conf['bind'][$code] : array();
+        $apicate = \App\Service\Collection\CollectionCategoryService::validBindings((array)($conf['bind'][$code] ?? []), 0);
         $arrlist = self::fastDbLoadList($code);
         $names = array();
         foreach ($arrlist as $item) {
@@ -233,6 +233,7 @@ trait ApiImportFastDbTrait
      */
     private static function fastDbClassifySlice(array $slice, array $apicate, array $existing_rows_map, string $update_mode, string $update_scope, int $time): array
     {
+        $apicate = \App\Service\Collection\CollectionCategoryService::validBindings($apicate, 0);
         $vod_rows = array();
         $update_records = array();
         $duplicate_records = array();

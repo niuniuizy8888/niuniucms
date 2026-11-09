@@ -229,7 +229,7 @@ function art_read($aid)
 /**
  * @deprecated 兼容壳：转发 ArtService::delete($aid)（原注释「只删除文章和缓存」，实际链路比这句更宽）。
  * 软删口径：art__find 取回待删行 → 写回收站快照（含 art_aid 索引行）→ 物理删 art 主表 →
- * 同步清 art_aid 索引、tag_video 关联并按 tagid 做 count 批量递减（审计修复前只删主表、索引与标签留孤儿）→
+ * 同步清 art_aid 索引、文章专用 tag_art 关联并按视频/文章两张索引重算标签计数（审计修复前只删主表、索引与标签留孤儿）→
  * 清 art_<aid> 单行缓存（单 id 分支还清 runtime 计数键）。
  * ⚠ **本壳不判权限**，调用方必须自带后台权限位 + CSRF 门禁（§二.6）。
  * ⚠ 批量陷阱：传数组虽然能走通链路，但内部 art__delete 的签名是 int $aid，数组会抛 TypeError
@@ -251,7 +251,7 @@ function art_delete($aid)
  * 原注释「删除已经发布成功的主题，单独删除传 aid，批量删除传 aids 数组」：本支是**真批量**，
  * 数组 aid 在仓储层展开成 IN 一次删完（与 art_delete 的数组入参会抛 TypeError 相反）。
  * 链路：取回待删行（取不到 ⇒ 直接 FALSE）→ 落回收站快照 → 逐 aid 清单行缓存 →
- * 批量删 art 主表与 art_aid 索引 → 清 tag_video 关联并按 tagid 递减计数；开头 set_time_limit(0)
+ * 批量删 art 主表与 art_aid 索引 → 清 文章专用 tag_art 关联并重算共享标签计数；开头 set_time_limit(0)
  * 解除本请求时限（批量删慢）。与 art_delete 的差别是不回收 runtime 计数缓存键。
  * ⚠ 本壳与底层都不判权限：调用方负责后台权限位 + CSRF 门禁（§二.6）。
  * @param int|array $aid 文章 aid，或 aid 数组（批量）；空值返回 FALSE

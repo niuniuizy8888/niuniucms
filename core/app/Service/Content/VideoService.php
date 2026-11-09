@@ -330,6 +330,7 @@ class VideoService
     {
         \App\Service\Front\TypeService::bumpFacets(); // 筛选统计缓存失效
         if (empty($vid)) return FALSE;
+        \App\Service\System\ArticleTagSchema::ensureReady();
         set_time_limit(0);
         $n = is_array($vid) ? count($vid) : 1;
         $videolist = video__find(array('vid' => $vid), array('vid' => 1), 1, $n, 'vid');
@@ -405,6 +406,7 @@ class VideoService
     {
         \App\Service\Front\TypeService::bumpFacets(); // 筛选统计缓存失效
         if (empty($vid)) return FALSE;
+        \App\Service\System\ArticleTagSchema::ensureReady();
         // 软删：先写回收站快照再物理删除；快照失败 ⇒ 中止（审查修复轮 C1，fail-closed）
         $n = is_array($vid) ? count($vid) : 1;
         $videolist = video__find(array('vid' => $vid), array('vid' => 1), 1, $n, 'vid');

@@ -20,10 +20,11 @@ class RelationService
         // R7-P10：详情/播放页「相关推荐」片段缓存（用户无关，随 vid 稳定）。
         // 命中即跳过 TagService::videoFind + findAsc 多条查询；TTL 600s。键含 tag 指纹，
         // 后台改标签后自动换键失效（无需在共享 ContentQueryTrait::update 里加删除、避免影响 Art 侧断言）。
-        $relKey = 'video_related_' . intval($vid) . '_' . md5((string)($video['tag'] ?? ''));
+        $relKey = 'video_related_v2_' . intval($vid) . '_' . md5((string)($video['tag'] ?? ''))
+            . '_' . (function_exists('page_cache_version') ? page_cache_version() : '0');
         $cachedRelated = cache_get($relKey);
         if (is_array($cachedRelated)) return $cachedRelated;
-        if (empty($video['tag'])) {
+        if (empty($video['tag']) && \App\Service\System\ArticleTagSchema::ready()) {
             $tags = $video['area'] . ',' . $video['lang'] . ',' . $video['year'] . ',' . $video['cate_name'];
             $tag_json = \App\Service\Content\TagFlowService::post($vid, $cid, $tags);
             if (xn_strlen($tag_json) >= 120) {
@@ -45,7 +46,6 @@ class RelationService
         if (!empty($video['tag']) && !empty($video['tag_fmt']) && is_array($video['tag_fmt'])) {
             $tagids = array_keys($video['tag_fmt']);
             $arrlist = TagService::videoFind($tagids, 1, 100);
-            !$arrlist and $arrlist = tag_video__find(array(), array('id' => 1), 1, 100);
             if ($arrlist) {
                 $count = count($arrlist);
                 $total = $count > $limit ? $limit : $count;
@@ -61,35 +61,19 @@ class RelationService
 
     /**
      * 文章详情页「相关推荐」装配（调用点 Front/ArtService）。
-     * 现存疑点（仅记录不改动）：$tagids 来自文章 tag_fmt，但查询走 TagService::videoFind
-     * （tag_video 表，返回**视频 vid 键**），再把这些 id 喂给 ArtService::findAsc——
-     * 关联表与回表不同域，疑似复制视频侧逻辑所致，正确性存疑（详见批次汇报）。
-     * 其余同 ensureVideoTagsAndRelated 的降级/随机取数形态（本函数无缓存、不改引用参数）。
+     * 只从文章专用标签关系取 aid，不再把视频 vid 当作文章 ID。
      * @param array $art 文章行（需含 tag/tag_fmt，tag_fmt 以 tagid 为键）
      * @param int $limit 推荐条数上限（默认 12）
      * @return array 推荐文章列表（ArtService::findAsc 产物；无 tag/查空时为空数组）
      */
     public static function buildArtRelated(array $art, $limit = 12)
     {
-        $likelist = array();
-        if (!empty($art['tag'])) {
-            $tagids = is_array($art['tag_fmt']) ? array_keys($art['tag_fmt']) : array();
-            $arrlist = TagService::videoFind($tagids, 1, 100);
-            !$arrlist and $arrlist = tag_video__find(array(), array('id' => 1), 1, 100);
-            if ($arrlist) {
-                $count = count($arrlist);
-                $total = $count > $limit ? $limit : $count;
-                $tidarr = $count > 20 ? array_rand($arrlist, $total) : array_keys($arrlist);
-                $likelist = ArtService::findAsc($tidarr, $total);
-            }
-        }
-        return $likelist ?: array();
+        $tags = ArticleTagService::map((string)($art['tag'] ?? ''));
+        return $tags ? ArticleTagService::find(array_keys($tags), 1, $limit, (int)($art['aid'] ?? 0)) : array();
     }
 
     /**
-     * 标签页混合内容列表（调用点 Front/TagService）：先按 tagid 取关联视频分页
-     * （TagService::videoFind，**查空直接返回 NULL——即使该标签下只有文章也会被整体判空**），
-     * 再 videolist(light 查询) + ArtService::findByKeyword(标签名) 简单 merge。
+     * 标签页先对视频/文章关联联合分页，再分别回表；总数与两类真实绑定计数一致。
      * @param int $tagid 标签 id
      * @param string $tagName 标签名（文章侧按关键词匹配用）
      * @param int $page 页码
@@ -98,16 +82,6 @@ class RelationService
      */
     public static function buildTagMixedList($tagid, $tagName, $page, $pagesize)
     {
-        $arr = TagService::videoFind($tagid, $page, $pagesize);
-        if (empty($arr)) {
-            return null;
-        }
-
-        $vidarr = arrlist_values($arr, 'vid');
-        $videolist = VideoService::find($vidarr, $pagesize, true, true);
-        $artlist = ArtService::findByKeyword($tagName);
-        $videolist = is_array($videolist) ? $videolist : array();
-        $artlist = is_array($artlist) ? $artlist : array();
-        return array_merge($videolist, $artlist);
+        return ArticleTagService::mixedList((int)$tagid, (int)$page, (int)$pagesize);
     }
 }

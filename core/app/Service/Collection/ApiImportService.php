@@ -228,7 +228,7 @@ class ApiImportService
             if ($mid == 2) return 1;
             return NULL;
         }, $canCreateCategories);
-        $catelist = \App\Service\Content\CateService::findFmt();
+        $catelist = CollectionCategoryService::targets(0);
         $arrlista = arrlist_key_values($catelist, 'name', 'cid');
         $catelistarr = array();
         $skipped = 0;
@@ -268,23 +268,27 @@ class ApiImportService
         if (!$canCreateCategories) return;
         // 分类名入库转义（红线「输出到 HTML 的内容必须转义」入库侧落点，前台导航裸 echo 依赖此）；
         // 为兼容存量未转义的特殊字符分类，查重时原名/转义名双查，两查皆无才以转义名新建，避免重复分类
-        $resolve_cate = function ($raw) {
+        $resolve_cate = function ($raw) use (&$typearr) {
             $esc = htmlspecialchars((string)$raw, ENT_QUOTES, 'UTF-8');
-            $hit = \App\Repository\RepositoryFactory::cate()->findOne(array('name' => $esc));
+            $find = static function ($name) use (&$typearr) {
+                return \App\Repository\RepositoryFactory::cate()->builder()->select(['cid', 'name', 'model', 'category'])
+                    ->where('name', '=', $name)->where('model', '=', (int)$typearr['model'])->where('category', '<>', 2)->lock()->first();
+            };
+            $hit = $find($esc);
             if (empty($hit) && (string)$raw !== $esc) {
-                $hit = \App\Repository\RepositoryFactory::cate()->findOne(array('name' => (string)$raw));
+                $hit = $find((string)$raw);
             }
             return array($esc, $hit);
         };
         foreach (($r[0] ?? array()) as $value) {
+            if ($modelResolver) {
+                $m = call_user_func($modelResolver, $value);
+                $m !== NULL and $typearr['model'] = $m;
+            }
             $tname = $resolve_cate($value['type_name']);
             $escName = $tname[0];
             $typeData = $tname[1];
             if (isset($r[$value['type_id']])) {
-                if ($modelResolver) {
-                    $m = call_user_func($modelResolver, $value);
-                    $m !== NULL and $typearr['model'] = $m;
-                }
                 if (!empty($typeData)) {
                     $parentId = $typeData['cid'];
                     $subCategories = $r[$value['type_id']];

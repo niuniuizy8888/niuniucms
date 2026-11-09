@@ -17,14 +17,18 @@ class ApiBindService
         if (empty($code) || empty($name)) {
             return ['success' => false, 'msg' => '参数不完整'];
         }
-        if (empty($localId)) {
-            return ['success' => false, 'msg' => '绑定ID不能为空'];
+        if ($localId <= 0) {
+            return ['success' => false, 'msg' => '请选择有效的本地分类'];
         }
         // 发布前检查修复（A-3）：code 字符集白名单（ApiSourceService 写入侧同口径）——
         // 绑定键会进 kv 'bind' 数组键与后台属性位输出，纵深防键逃逸
         if (1 !== preg_match('#^[A-Za-z0-9_.-]{1,32}$#', $code)) {
             return ['success' => false, 'msg' => 'code invalid'];
         }
+        if (empty($conf['api'][$code]['api'])) return ['success' => false, 'msg' => '采集源不存在，请刷新列表'];
+        // Legacy mixed sources have no model flag; each importer still checks its own model.
+        $targets = CollectionCategoryService::targets(CollectionCategoryService::sourceModel($code, $conf), [$localId]);
+        if (!isset($targets[$localId])) return ['success' => false, 'msg' => '所选分类已删除、类型不符或不能用于采集，请重新绑定'];
         
         $conf['bind'][$code][$name] = $localId; 
         kv_set('bind', $conf['bind']);
@@ -82,6 +86,8 @@ class ApiBindService
         if (empty($code) || empty($api)) {
             return ['success' => false, 'msg' => '参数不完整'];
         }
+        $model = CollectionCategoryService::sourceModel($code, $conf);
+        if ($model !== null && $model !== 0) return ['success' => false, 'msg' => '采集源类型不符，请在文章采集中绑定分类'];
         
         // 新商店对接修复：取源分类统一走 ApiExecutionService::sourceClassList()
         // （缓存键 api_cls_ 前缀保留；真凶是商店**明文** URL 被 core_decrypt 判死 ⇒ class 恒空；
@@ -93,7 +99,7 @@ class ApiBindService
             return ['success' => false, 'msg' => '未取到采集源分类（源站不可达或接口无 class 字段），已保留原有绑定'];
         }
 
-        $catelist = cate_list_cache(); //本地分类
+        $catelist = CollectionCategoryService::targets(0);
         $arrlista = arrlist_key_values($catelist, 'name', 'cid');
         
         $catelistarr = array();

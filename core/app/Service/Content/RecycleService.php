@@ -124,6 +124,7 @@ class RecycleService
      */
     public static function restore(int $id): array
     {
+        \App\Service\System\ArticleTagSchema::ensureReady();
         $row = self::repo()->read($id, 'id');
         if (!$row || empty($row['data'])) {
             return array('code' => -1, 'msg' => '回收站记录不存在');
@@ -191,8 +192,8 @@ class RecycleService
         $ok = (bool)\App\Repository\RepositoryFactory::art()->insert($row);
         if ($ok) {
             \App\Repository\RepositoryFactory::artAid()->replace(array('aid' => $aid, 'cid' => intval($row['cid'] ?? 0)));
-            // 重建标签绑定 + 计数（rebindTags：只对仍存在、且绑定行已不存在的标签补插并 count+1）
-            self::rebindTags($aid, (string)($row['tag'] ?? ''));
+            // 重建文章专用绑定及共享标签计数，不改动同号视频的标签。
+            ArticleTagService::sync($aid, ArticleTagService::map((string)($row['tag'] ?? '')));
             content_cache_delete('art_', $aid);
             cache_delete('runtime'); // 计数缓存失效（键错配修复）
         }
@@ -200,20 +201,10 @@ class RecycleService
     }
 
     /**
-     * 恢复内容的标签绑定重建（restoreVod/restoreArt 共用）：
-     * 删除链已把该内容的 tag_id 绑定行删掉，这里按快照 tag JSON（tagid=>name）重建，
-     * 并只对「真正新增绑定」的标签 count+1。
-     * ⚠ 历史缺陷（审计修复）：原实现只对 tag.count 批量 +1、不重建绑定行 ⇒ 恢复的内容在
-     *   标签页/标签列表不可见（列表走 tag_id），且 count 相对真实绑定行数虚高，
-     *   与删除链刚修掉的漂移方向相反。
-     * 口径与 TagFlowService::process() 一致：
-     *   ① 只处理仍存在的标签（内容待在回收站期间标签可能已被删除）；
-     *   ② 先查本内容现存绑定（历史部分清理场景），已绑定的跳过、不重复计数；
-     *   ③ 写入走 tag_video_big_insert（INSERT IGNORE，撞唯一键只跳过该行，兜并发/存量重复）；
-     *   ④ 计数走 tag_update()（会失效 web_tag_{tagid} 缓存；原 bigUpdate 不清该缓存）。
-     * @param int    $id      内容主键（vid/aid，写入 tag_id 的 vid 列）
-     * @param string $tagJson 快照里的 tag JSON（tagid=>name）
-     * @return void 失败不阻断主流程（内容已恢复，标签面按「少绑」收敛，缓存 TTL 后自愈）
+     * 只恢复视频 tag_id 绑定；文章恢复单独走 ArticleTagService::sync。
+     * 缺失的字典项按快照补建，已有绑定不重复插入，完成后重算跨模型总数。
+     * @param int $id 视频 ID
+     * @param string $tagJson 快照标签映射
      */
     private static function rebindTags(int $id, string $tagJson): void
     {
@@ -221,7 +212,9 @@ class RecycleService
         if (!is_array($tagarr) || !$tagarr) return;
         $tagids = array_values(array_filter(array_map('intval', array_keys($tagarr))));
         if (!$tagids) return;
-        // 只处理仍存在的标签（待恢复期间可能已被删除）
+        // 恢复旧版本已删除的标签字典项，保持快照中的标签链接可用。
+        ArticleTagService::ensureNames(ArticleTagService::map($tagJson));
+        // 取恢复后的标签集合。
         $existing = array();
         $rows = tag_find_by_tagids($tagids, 1, count($tagids));
         foreach ((array)$rows as $r) {
@@ -240,7 +233,7 @@ class RecycleService
             $inc[] = $tid;
         }
         !empty($videoarr) and tag_video_big_insert($videoarr);
-        !empty($inc) and tag_update($inc, array('count+' => 1));
+        ArticleTagService::recount($tagids);
     }
 
     /**
@@ -262,7 +255,7 @@ class RecycleService
         $ok = (bool)\App\Repository\RepositoryFactory::vod()->insert($row); \App\Service\Front\TypeService::bumpFacets();
         if ($ok) {
             \App\Repository\RepositoryFactory::vodVid()->replace(array('vid' => $vid, 'cid' => intval($row['cid'] ?? 0)));
-            // 重建标签绑定 + 计数（rebindTags：只对仍存在、且绑定行已不存在的标签补插并 count+1）
+            // 重建视频绑定，再按视频和文章索引重算共享标签计数。
             self::rebindTags($vid, (string)($row['tag'] ?? ''));
             content_cache_delete('vod_', $vid);
             cache_delete('sticky_video_list');

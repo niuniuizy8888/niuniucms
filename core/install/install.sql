@@ -273,6 +273,16 @@ KEY `vid` (`vid`),
 KEY `tagid_id` (`tagid`,`id`),
 UNIQUE KEY `uk_tagid_vid` (`tagid`,`vid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='标签数据表';
+# 文章标签单独关联，文章 aid 与视频 vid 不共享命名空间。
+DROP TABLE IF EXISTS `niuniucms_tag_art`;
+CREATE TABLE `niuniucms_tag_art` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `tagid` int(11) unsigned NOT NULL,
+  `aid` int(11) unsigned NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `tagid_aid` (`tagid`,`aid`),
+  KEY `aid` (`aid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文章标签关联表';
 DROP TABLE IF EXISTS `niuniucms_link`;
 CREATE TABLE `niuniucms_link` (
    `id` int(11) unsigned NOT NULL AUTO_INCREMENT,

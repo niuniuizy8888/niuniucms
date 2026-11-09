@@ -27,6 +27,7 @@ class ApiArtService
         $conf['api'][$code] = [
             'api' => $api,
             'code' => $code,
+            'model' => 1,
         ];
         
         kv_set('api', $conf['api']);
@@ -75,6 +76,8 @@ class ApiArtService
         if (empty($code) || empty($api)) {
             return ['success' => false, 'msg' => '参数不完整'];
         }
+        $model = CollectionCategoryService::sourceModel($code, $conf);
+        if ($model !== null && $model !== 1) return ['success' => false, 'msg' => '采集源类型不符，请在视频采集中绑定分类'];
         
         // 新商店对接修复：与 ApiBindService::autoBindAll 同口径（明文直通 + 空结果不缓存），
         // 并 fail-closed —— 取不到源分类绝不整条替换 kv('bind')（旧实现会静默清空绑定）。
@@ -83,7 +86,7 @@ class ApiArtService
             return ['success' => false, 'msg' => '未取到采集源分类（源站不可达或接口无 class 字段），已保留原有绑定'];
         }
 
-        $catelist = cate_list_cache(); //本地分类
+        $catelist = CollectionCategoryService::targets(1);
         $arrlista = arrlist_key_values($catelist, 'name', 'cid');
         
         $catelistarr = array();

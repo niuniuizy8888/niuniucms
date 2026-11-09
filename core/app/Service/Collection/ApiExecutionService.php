@@ -647,7 +647,7 @@ class ApiExecutionService
      * 持站点级采集锁，在主库事务中重新查重并写入，避免不同源或异步请求并发重复插入。
      * 新条目 videoRowPayload 组装载荷 → RepositoryFactory::vod()->insert → video_vid_create
      * → 分类计数 +1 → applyPosterAndTag（海报/标签补充更新）。down_pic=1 且函数可用时先
-     * https_request_multi 并发预取新增条目海报（失败静默，落盘侧回退单发流式下载）。
+     * https_request_multi 限量预取新增条目海报；失败或超限保留外链，后续可在附件管理补同步。
      * ⚠ 未绑定分类（conf['bind'][$code] 缺失）直接 exit(lang('api_no_set'))，不是返回值失败。
      * 入库转义边界在 videoRowPayload（htmlspecialchars/xn_html_safe/xn_url_strip），结果行输出已转义。
      * @param array $data fetchJson/fetchVideoJson 的返回结构（须含 'data' 源数据行列表）
@@ -656,6 +656,7 @@ class ApiExecutionService
      */
     public static function importVideoData($data, $code)
     {
+        \App\Service\System\ArticleTagSchema::ensureReady();
         $conf = _SERVER('conf');
         $matchRule = VideoMatchRuleService::settings($conf);
         $param = array('filter' => 0);
@@ -664,7 +665,7 @@ class ApiExecutionService
         if (!isset($conf['bind'][$code])) {
             exit(lang('api_no_set'));
         }
-        $apicate = $conf['bind'][$code];
+        $apicate = CollectionCategoryService::validBindings((array)$conf['bind'][$code], 0);
         $ress = array();
 
         // 海报预取只使用提示快照；真正入库在持锁后从主库重新查重。
@@ -673,7 +674,7 @@ class ApiExecutionService
 
         // 采集性能专项：并发预取新增条目的海报，替代逐张串行下载（curl_multi，SSRF 逐跳校验）。
         // 条件与 applyPosterAndTag 一致（down_pic 开启）、仅新增条目（已存在的走 mergePlayUpdates 不下载）、
-        // 键与 videoRowPayload 的 $arr['pic'] 同口径（preg_match + xn_url_strip）；失败不影响主流程，届时回退单发。
+        // 键与 videoRowPayload 的 $arr['pic'] 同口径；失败/超限保留外链，禁止单发回退绕过整批预算。
         $poster_prefetch = array();
         if (!empty($conf['down_pic']) && $conf['down_pic'] == 1 && function_exists('https_request_multi')) {
             $prefetch_urls = array();
@@ -690,6 +691,13 @@ class ApiExecutionService
                     $poster_prefetch = https_request_multi(array_values($prefetch_urls), 10, 5, 3145728);
                 } catch (\Throwable $e) {
                     $poster_prefetch = array();
+                    xn_log('collection image prefetch failed: ' . $e->getMessage(), 'attachment_error');
+                }
+                $ready = count(array_filter($poster_prefetch, static fn($bytes) => is_string($bytes) && $bytes !== ''));
+                $deferred = count($prefetch_urls) - $ready;
+                if ($deferred > 0) {
+                    xn_log('collection image prefetch deferred ' . $deferred . ' URL(s): request failed or batch limit reached '
+                        . '(4 concurrent, 24 MiB total, 100 URLs, 20 seconds). External URLs are preserved; retry in attachment management.', 'attachment_error');
                 }
             }
         }
@@ -705,6 +713,7 @@ class ApiExecutionService
         $created = $categoryCounts = $touched = array();
         try {
             if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
+            $apicate = CollectionCategoryService::validBindings((array)$conf['bind'][$code], 0);
             $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule);
             $candidates = array();
             foreach ($existing_vods as $rows) foreach ($rows as $vid => $row) $candidates[$vid] = $row;
@@ -1051,11 +1060,12 @@ class ApiExecutionService
     /** Download new posters through the shared storage service; failures preserve the source URL. */
     private static function applyPosterAndTag($vid, $cid, $tags, array &$vod_update, array $arr, array $conf, array $prefetch = array()): void
     {
-        if (!empty($conf['down_pic']) && !empty($arr['pic'])) {
+        $bytes = !empty($arr['pic']) ? ($prefetch[$arr['pic']] ?? null) : null;
+        // Only consume successful bounded prefetches; null/false/empty would trigger another network download.
+        if (!empty($conf['down_pic']) && is_string($bytes) && $bytes !== '') {
             try {
                 $storage = \App\Service\System\AttachmentStorage::settings(true);
-                $bytes = $prefetch[$arr['pic']] ?? null;
-                $asset = \App\Service\System\AttachmentService::transfer($arr['pic'], $storage['backend'], $storage, is_string($bytes) ? $bytes : null);
+                $asset = \App\Service\System\AttachmentService::transfer($arr['pic'], $storage['backend'], $storage, $bytes);
                 $vod_update['pic'] = $asset['url'];
             } catch (\Throwable $e) {
                 xn_log('collection image sync failed: ' . $e->getMessage(), 'attachment_error');
@@ -1151,7 +1161,7 @@ class ApiExecutionService
      * 名称 htmlspecialchars(ENT_QUOTES)、pic 仅认 http(s) 且 html_entity_decode 后过 xn_url_strip、
      * content html_entity_decode + mac://→https:// 替换后过 xn_html_safe（富文本入库白名单，红线 §二.4）；
      * 按名查重不存在 → RepositoryFactory::art()->insert → art_aid_create → 分类计数+1 →
-     * 标签（同视频口径：TagFlowService::post + 120 字符截断）经 art_update 补写；已存在则跳过。
+     * 文章专用标签（ArticleTagService::post + 120 字符截断）经 art_update 补写；已存在则跳过。
      * 定时采集使用 strict 模式：文章、分类关联与计数按页提交，数据库失败抛异常供任务重试。
      * @param array $apidate fetchJson/fetchArtJson 的返回结构（须含 'data' 源数据行列表）
      * @param string $code 采集源编码
@@ -1159,12 +1169,13 @@ class ApiExecutionService
      */
     public static function importArtData($apidate, $code, bool $strict = false)
     {
+        \App\Service\System\ArticleTagSchema::ensureReady();
         $conf = _SERVER('conf');
         if (!isset($conf['bind'][$code])) {
             if ($strict) throw new \RuntimeException(lang('api_no_set'));
             exit(lang('api_no_set'));
         }
-        $apicate = $conf['bind'][$code];
+        $apicate = [];
         $ress = array();
         $db = _SERVER('db');
         $touched = $tagCache = array();
@@ -1172,6 +1183,7 @@ class ApiExecutionService
             throw new \RuntimeException('无法开始文章采集事务，请重试');
         }
         try {
+            $apicate = CollectionCategoryService::validBindings((array)$conf['bind'][$code], 1);
             foreach ($apidate['data'] as $k => $v) {
                 $color = 'red';
                 $des = '';
@@ -1215,7 +1227,7 @@ class ApiExecutionService
                             $des = lang('api_db_err');
                         }
                         $vod_update = array();
-                        $tag_json = \App\Service\Content\TagFlowService::post($aid, $cid, $tags);
+                        $tag_json = \App\Service\Content\ArticleTagService::post($aid, $cid, $tags);
                         $tagCache += (array)json_decode($tag_json, true);
                         if (xn_strlen($tag_json) >= 120) {
                             $s = xn_substr($tag_json, -1, NULL);

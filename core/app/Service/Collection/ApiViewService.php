@@ -85,10 +85,7 @@ class ApiViewService
         }
 
         $api_type = self::apiClass($code, $conf);
-        $typelist = cate_list_cache();
-        if (NULL !== $model) {
-            $typelist = arrlist_cond_orderby($typelist, array('model' => $model), array(), 1, 1000);
-        }
+        $typelist = CollectionCategoryService::targets(CollectionCategoryService::sourceModel($code, $conf) ?? $model);
         $cate = arrlist_key_values($typelist, 'name', 'cid');
 
         bull_token_set($uid, 'admin_api_newcreate');

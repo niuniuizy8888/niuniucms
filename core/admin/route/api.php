@@ -57,7 +57,8 @@ switch ($action) {
                 $name = (string)($s['name'] ?? $code);
                 $play = trim((string)($s['player'] ?? ''));
                 if ('' === $code || '' === $api) continue;
-                $r = \App\Service\Collection\ApiSourceService::set($code, $api, $name, $play);
+                $model = in_array($s['model'] ?? null, [0, 1, '0', '1'], true) ? (int)$s['model'] : null;
+                $r = \App\Service\Collection\ApiSourceService::set($code, $api, $name, $play, $model);
                 if (!empty($r['success'])) $n++;
             }
             admin_audit_log('api_import_sources', array('total' => count($list), 'imported' => $n));
@@ -343,7 +344,7 @@ switch ($action) {
             $code = param('code');
             $name = param('name');
             $play = param('play');
-            $result = \App\Service\Collection\ApiSourceService::set($code, $api, $name, $play);
+            $result = \App\Service\Collection\ApiSourceService::set($code, $api, $name, $play, 0);
             if (!$result['success']) {
                 message(1, $result['msg']);
             }

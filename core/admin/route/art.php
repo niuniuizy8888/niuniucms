@@ -4,6 +4,10 @@
 // hook admin_art_start.php
 FALSE === group_access($gid, 'manageart') and message(1, lang('user_group_insufficient_privilege'));
 $action = param(1, 'list');
+if ('GET' === $method && in_array($action, array('list', 'search'), true)) {
+    try { \App\Service\System\ArticleTagSchema::ensureReady(); }
+    catch (\RuntimeException $e) { message(-1, htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8')); }
+}
 switch ($action) {
     case 'list':
         if ('GET' == $method) {

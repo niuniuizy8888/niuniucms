@@ -94,7 +94,7 @@ class ArtService
      * 删除文章（软删口径：先写回收站快照，再物理删主表）
      *
      * 链路：art__find 取回待删行 → snapshotArt() 落回收站（含 art_aid 索引行）→ art__delete 删主表 →
-     * 同步清 art_aid 索引、tag_video 关联并对命中的 tagid 做 count- 批量递减（审计修复：此前只删主表，
+     * 同步清 art_aid 索引、文章专用 tag_art 关联并重算命中标签在两类内容中的总数（审计修复：此前只删主表，
      * 索引与标签留孤儿）→ 逐 aid 清 'art_<aid>' 单行缓存；单 id 分支额外清 'runtime' 计数缓存键。
      * 全程不校验权限，调用方须自行完成后台权限位 + CSRF 门禁（见 core/admin/route/art.php）。
      *
@@ -107,6 +107,7 @@ class ArtService
     public static function delete($aid)
     {
         if (empty($aid)) return FALSE;
+        \App\Service\System\ArticleTagSchema::ensureReady();
         // 软删：先写回收站快照再物理删除；快照失败 ⇒ 中止（审查修复轮 C1，fail-closed）
         $n = is_array($aid) ? count($aid) : 1;
         $artlist = art__find(array('aid' => $aid), array('aid' => 1), 1, $n, 'aid');
@@ -122,39 +123,11 @@ class ArtService
                 ? \App\Repository\RepositoryFactory::art()->delete(array('aid' => $aids))
                 : art__delete($aids[0]));
         if (FALSE === $r) return FALSE;
-        // 同步清理索引与标签关联（与视频侧对齐；此前只删主表，art_aid/tag_id 孤儿残留，审计修复）
+        // 同步清理索引与标签关联（与视频侧对齐；此前只删主表，art_aid/tag_art 孤儿残留，审计修复）
         if ($aids) {
             \App\Repository\RepositoryFactory::artAid()->delete(array('aid' => $aids));
         }
-        $tagarr = array();
-        $tagvids = array();
-        foreach ($artlist as $art) {
-            if (!empty($art['tag'])) {
-                $tagvids[] = $art['aid'];
-                $_tagarr = xn_json_decode($art['tag']);
-                foreach ((array)$_tagarr as $_tagid => $tagname) {
-                    isset($tagarr[$_tagid]) ? $tagarr[$_tagid] += 1 : $tagarr[$_tagid] = 1;
-                }
-            }
-        }
-        $relRowsByTag = array();
-        if (!empty($tagvids)) {
-            $arlist = \App\Service\Content\TagFlowService::videoFindByVidAll($tagvids); // 分页取尽（旧 pagesize 启发式上限清理不净）
-            if ($arlist) {
-                $ids = array();
-                foreach ($arlist as $val) {
-                    $ids[] = $val['id'];
-                    $_t = intval($val['tagid']);
-                    isset($relRowsByTag[$_t]) or $relRowsByTag[$_t] = 0;
-                    ++$relRowsByTag[$_t];
-                }
-                \App\Repository\RepositoryFactory::tagVideo()->delete(array('id' => $ids));
-            }
-        }
-        // 计数回补按**实际删掉的绑定行数**（存量库同一 (tagid,vid) 可能有多行，按内容标签数恒减 1 会虚高）；
-        // 走 TagFlowService::decrementTagCounts()：同 delta 合并一条 UPDATE 且会失效 web_tag_{tagid} 缓存
-        // （原 bigUpdate 不清该缓存，前台标签页会读到旧计数）。查不到行时退回 $tagarr 的期望值。
-        !empty($tagarr) && \App\Service\Content\TagFlowService::decrementTagCounts($relRowsByTag, $tagarr);
+        ArticleTagService::delete($aids);
         foreach ($aids as $_aid) content_cache_delete('art_', $_aid);
         // ⚠ 口径统一：原实现只在「单 id」分支清 runtime 计数缓存，批量删（含后台批量回收）不清 ⇒
         //   分类/站点内容计数最长滞后一个缓存 TTL。删除必然影响计数，与 id 个数无关，故移出分支恒清。
@@ -168,7 +141,7 @@ class ArtService
      *
      * 链路：art__find 取回待删行（取不到 ⇒ FALSE）→ snapshotArt() 落回收站快照 → 逐 aid 清 'art_<aid>'
      * 缓存 → RepositoryFactory::art()/artAid() 批量删主表与索引（数组 aid 经 applyCond 转 IN，支持真批量）→
-     * 清 tag_video 关联并按 tagid 做 count- 批量递减。开头 set_time_limit(0) 解除本请求时限（批量删耗时）。
+     * 清 文章专用 tag_art 关联并重算命中标签在两类内容中的总数。开头 set_time_limit(0) 解除本请求时限（批量删耗时）。
      * 同 delete()：函数本身不含权限判定，调用方负责后台权限位 + CSRF 门禁。
      *
      * @param int|array $aid 文章 aid 或 aid 数组；空值返回 FALSE
@@ -178,6 +151,7 @@ class ArtService
     public static function deleteAll($aid)
     {
         if (empty($aid)) return FALSE;
+        \App\Service\System\ArticleTagSchema::ensureReady();
         set_time_limit(0);
         $n = is_array($aid) ? count($aid) : 1;
         $artlist = art__find(array('aid' => $aid), array('aid' => 1), 1, $n, 'aid');
@@ -194,34 +168,7 @@ class ArtService
             }
             \App\Repository\RepositoryFactory::art()->delete(array('aid' => $aids));
             \App\Repository\RepositoryFactory::artAid()->delete(array('aid' => $aids));
-            // 标签计数与 tag_id 清理（与视频侧对齐，审计修复）
-            $tagarr = array();
-            $tagvids = array();
-            foreach ($artlist as $art) {
-                if (!empty($art['tag'])) {
-                    $tagvids[] = $art['aid'];
-                    $_tagarr = xn_json_decode($art['tag']);
-                    foreach ((array)$_tagarr as $_tagid => $tagname) {
-                        isset($tagarr[$_tagid]) ? $tagarr[$_tagid] += 1 : $tagarr[$_tagid] = 1;
-                    }
-                }
-            }
-            $relRowsByTag = array();
-            if (!empty($tagvids)) {
-                $arlist = \App\Service\Content\TagFlowService::videoFindByVidAll($tagvids); // 分页取尽（旧 pagesize 启发式上限清理不净）
-                if ($arlist) {
-                    $ids = array();
-                    foreach ($arlist as $val) {
-                        $ids[] = $val['id'];
-                        $_t = intval($val['tagid']);
-                        isset($relRowsByTag[$_t]) or $relRowsByTag[$_t] = 0;
-                        ++$relRowsByTag[$_t];
-                    }
-                    \App\Repository\RepositoryFactory::tagVideo()->delete(array('id' => $ids));
-                }
-            }
-            // 与 delete() 同口径：按实际删掉的绑定行数回补，并失效 web_tag_{tagid} 缓存
-            !empty($tagarr) && \App\Service\Content\TagFlowService::decrementTagCounts($relRowsByTag, $tagarr);
+            ArticleTagService::delete($aids);
             // 与 delete() 同口径：彻底删除同样影响内容计数，需清 runtime 计数缓存
             cache_delete('runtime');
         }

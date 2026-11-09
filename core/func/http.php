@@ -402,15 +402,18 @@ function http_url_resolve($base, $relative)
  * 并发 HTTP(S) 请求（采集性能专项）：curl_multi 并行下载多个 URL。
  * SSRF 语义与 https_request 完全一致——初始与**每个重定向跳**均经 outbound_url_safe 校验，
  * 并以 CURLOPT_RESOLVE 固定已校验 IP（消除 DNS 重绑定窗口）；禁自动跟随重定向。
- * 用途：采集导入时并发预取海报，替代逐张串行（每批数十张，网络 RTT 线性叠加 → 并发收敛）。
+ * 用途：采集导入时限量预取海报；未完成项保持 false，调用者不得绕过预算逐张重试。
  *
  * @param string[] $urls
  * @param int $timeout       单请求超时（秒）
  * @param int $max_redirects 最大重定向跳数
  * @param int $max_bytes     单响应体上限（超出即中止并记为失败，防内存膨胀）
+ * @param int $concurrency   同时运行的请求数
+ * @param int $max_total_bytes 整批响应体累计上限，包含失败和重定向响应已接收的字节
+ * @param int $max_requests  整批最多处理的原始 URL 数；整批时间限制为 timeout + 10 秒
  * @return array<string,string|false> 原始 URL => 响应体；被拒/失败为 false
  */
-function https_request_multi(array $urls, $timeout = 10, $max_redirects = 5, $max_bytes = 3145728)
+function https_request_multi(array $urls, $timeout = 10, $max_redirects = 5, $max_bytes = 3145728, $concurrency = 4, $max_total_bytes = 25165824, $max_requests = 100)
 {
     $result = array();
     $urls = array_values(array_unique(array_filter(array_map('strval', $urls), function ($u) {
@@ -424,81 +427,102 @@ function https_request_multi(array $urls, $timeout = 10, $max_redirects = 5, $ma
 
     $timeout   = max(1, intval($timeout));
     $max_bytes = max(1024, intval($max_bytes));
+    $concurrency = max(1, min(8, intval($concurrency)));
+    $max_total_bytes = max(1024, intval($max_total_bytes));
+    $max_requests = max(1, intval($max_requests));
+    $max_redirects = max(0, intval($max_redirects));
+    $queue = array_slice($urls, 0, $max_requests);
+    $cursor = 0;
+    $received_total = 0;
+    $budget_exhausted = false;
+    $deadline = microtime(true) + $timeout + 10;
     $keyOf = function ($ch) { return is_object($ch) ? spl_object_id($ch) : (int)$ch; };
-    // key => ['orig','url','redirects','body','too_big']
     $meta = array();
 
-    $spawn = function ($orig, $url, $redirects) use ($mh, &$meta, $timeout, $max_bytes, $keyOf) {
+    $spawn = function ($orig, $url, $redirects) use ($mh, &$meta, $timeout, $max_bytes, $max_total_bytes, &$received_total, &$budget_exhausted, $deadline, $keyOf) {
         $pinned = NULL;
         if (!outbound_url_safe($url, TRUE, $pinned)) return;
         $ch = _curl_setup($url);
         if (FALSE === $ch) return;
+        $k = $keyOf($ch);
+        // Track the handle before configuring it so exceptions also release it in finally.
+        $meta[$k] = array('handle' => $ch, 'orig' => $orig, 'url' => $url, 'redirects' => (int)$redirects, 'body' => '', 'too_big' => false);
         if (!empty($pinned)) curl_setopt($ch, CURLOPT_RESOLVE, $pinned);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         curl_setopt($ch, CURLOPT_MAXREDIRS, 0);
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_TIMEOUT, max(1, min($timeout, (int)ceil($deadline - microtime(true)))));
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, min(5, $timeout));
         curl_setopt($ch, CURLOPT_USERAGENT, _SERVER('HTTP_USER_AGENT'));
-        $k = $keyOf($ch);
-        $meta[$k] = array('orig' => $orig, 'url' => $url, 'redirects' => (int)$redirects, 'body' => '', 'too_big' => false);
-        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch2, $chunk) use (&$meta, $keyOf, $max_bytes) {
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch2, $chunk) use (&$meta, $keyOf, $max_bytes, $max_total_bytes, &$received_total, &$budget_exhausted) {
             $k2 = $keyOf($ch2);
             if (!isset($meta[$k2])) return 0;
-            if (strlen($meta[$k2]['body']) + strlen($chunk) > $max_bytes) {
+            $length = strlen($chunk);
+            if ($budget_exhausted || $length > $max_total_bytes - $received_total) {
+                $budget_exhausted = true;
+                return -1;
+            }
+            // Count discarded response bodies too: failed/redirected requests cannot reset the budget.
+            $received_total += $length;
+            if ($received_total >= $max_total_bytes) $budget_exhausted = true;
+            if (strlen($meta[$k2]['body']) + $length > $max_bytes) {
                 $meta[$k2]['too_big'] = true;
-                return -1; // 中止该请求
+                return -1;
             }
             $meta[$k2]['body'] .= $chunk;
-            return strlen($chunk);
+            return $length;
         });
         curl_multi_add_handle($mh, $ch);
     };
-    foreach ($urls as $u) $spawn($u, $u, 0);
-
-    $deadline = microtime(true) + $timeout + 10;
-    do {
-        curl_multi_exec($mh, $active);
-        if ($active) curl_multi_select($mh, 0.5);
-        while (FALSE !== ($info = curl_multi_info_read($mh))) {
-            $ch = $info['handle'];
-            $k  = $keyOf($ch);
-            if (!isset($meta[$k])) { curl_multi_remove_handle($mh, $ch); continue; }
-            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $next = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
-            $isRedirect = in_array($code, array(301, 302, 303, 307, 308), true) && !empty($next);
-            if ($isRedirect && $meta[$k]['redirects'] < $max_redirects) {
-                if (!preg_match('#^https?://#i', $next)) $next = http_url_resolve($meta[$k]['url'], $next);
-                $pinned = NULL;
-                if (!outbound_url_safe($next, TRUE, $pinned)) {
-                    $result[$meta[$k]['orig']] = false;
-                    curl_multi_remove_handle($mh, $ch);
-                    unset($meta[$k]);
-                    continue;
+    try {
+        while (microtime(true) < $deadline && !$budget_exhausted) {
+            while (count($meta) < $concurrency && $cursor < count($queue) && microtime(true) < $deadline) {
+                $url = $queue[$cursor++];
+                $spawn($url, $url, 0);
+            }
+            if (!$meta) break;
+            if (curl_multi_exec($mh, $active) !== CURLM_OK) break;
+            while (FALSE !== ($info = curl_multi_info_read($mh))) {
+                $ch = $info['handle'];
+                $k  = $keyOf($ch);
+                if (!isset($meta[$k])) { curl_multi_remove_handle($mh, $ch); if (is_resource($ch)) curl_close($ch); continue; }
+                $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $next = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+                $isRedirect = in_array($code, array(301, 302, 303, 307, 308), true);
+                if (0 === $info['result'] && !$meta[$k]['too_big'] && $isRedirect && !empty($next)
+                    && $meta[$k]['redirects'] < $max_redirects && !$budget_exhausted && microtime(true) < $deadline) {
+                    if (!preg_match('#^https?://#i', $next)) $next = http_url_resolve($meta[$k]['url'], $next);
+                    $pinned = NULL;
+                    if (outbound_url_safe($next, TRUE, $pinned)) {
+                        curl_multi_remove_handle($mh, $ch);
+                        $meta[$k]['url'] = $next;
+                        $meta[$k]['redirects']++;
+                        $meta[$k]['body'] = '';
+                        if (!empty($pinned)) curl_setopt($ch, CURLOPT_RESOLVE, $pinned);
+                        curl_setopt($ch, CURLOPT_URL, $next);
+                        curl_setopt($ch, CURLOPT_TIMEOUT, max(1, min($timeout, (int)ceil($deadline - microtime(true)))));
+                        curl_multi_add_handle($mh, $ch);
+                        continue;
+                    }
                 }
-                // 复用同一 handle 跟随下一跳：重置 body、重新固定 IP
+                if (0 === $info['result'] && !$meta[$k]['too_big'] && $code >= 200 && $code < 300) {
+                    $result[$meta[$k]['orig']] = $meta[$k]['body'];
+                }
                 curl_multi_remove_handle($mh, $ch);
-                $meta[$k]['url']       = $next;
-                $meta[$k]['redirects']++;
-                $meta[$k]['body']      = '';
-                $meta[$k]['too_big']   = false;
-                if (!empty($pinned)) curl_setopt($ch, CURLOPT_RESOLVE, $pinned);
-                curl_setopt($ch, CURLOPT_URL, $next);
-                curl_multi_add_handle($mh, $ch);
-                continue;
+                if (is_resource($ch)) curl_close($ch);
+                unset($meta[$k]);
             }
-            // 仅 CURLE_OK 且未超限、HTTP<400 视为成功；超时/传输错误/超限/4xx+ 一律 false（与单发语义区分明确）
-            if (0 === $info['result'] && !$meta[$k]['too_big'] && $code > 0 && $code < 400) {
-                $result[$meta[$k]['orig']] = $meta[$k]['body'];
-            } else {
-                $result[$meta[$k]['orig']] = false;
-            }
-            curl_multi_remove_handle($mh, $ch);
-            unset($meta[$k]);
+            if (!$meta && $cursor >= count($queue)) break;
+            if ($meta && !$budget_exhausted && microtime(true) < $deadline) curl_multi_select($mh, 0.25);
         }
-        if (microtime(true) > $deadline) break;
-    } while ($active || !empty($meta));
-
-    curl_multi_close($mh);
+    } finally {
+        // Deadline, byte budget, curl errors and exceptions all release unfinished transfers.
+        foreach ($meta as $entry) {
+            curl_multi_remove_handle($mh, $entry['handle']);
+            if (is_resource($entry['handle'])) curl_close($entry['handle']);
+        }
+        $meta = array();
+        curl_multi_close($mh);
+    }
     return $result;
 }
 

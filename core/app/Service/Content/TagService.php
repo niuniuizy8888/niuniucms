@@ -62,7 +62,7 @@ class TagService
     }
 
     /**
-     * 标签分页列表（后台管理用）：tag__find 全列查询、按 tagid 排序分页，逐行补顺序号 i 并 tag_format()。
+     * 仍有内容的标签分页列表：tag__find 全列查询、按 tagid 排序分页，逐行补顺序号 i 并 tag_format()。
      * @param int  $page     页码（签名已声明）
      * @param int  $pagesize 每页条数（签名已声明）
      * @param bool $desc     true=tagid 降序（新标签在前），false=升序
@@ -71,7 +71,7 @@ class TagService
     public static function find(int $page, int $pagesize, bool $desc = TRUE)
     {
         $orderby = $desc ? -1 : 1;
-        $arrlist = tag__find(array(), array('tagid' => $orderby), $page, $pagesize);
+        $arrlist = tag__find(array('count' => array('>' => 0)), array('tagid' => $orderby), $page, $pagesize);
         if (empty($arrlist)) return NULL;
         $i = 0;
         foreach ($arrlist as &$val) {
@@ -103,12 +103,12 @@ class TagService
     }
 
     /**
-     * 标签总数：转发 tag__count()（→ RepositoryFactory::tag()->count()）。
+     * 仍有内容的标签总数：转发 tag__count()（→ RepositoryFactory::tag()->count()）。
      * @return int 命中行数（转发目标声明 int）
      */
     public static function count()
     {
-        return tag__count();
+        return tag__count(array('count' => array('>' => 0)));
     }
 
     /**
@@ -164,15 +164,16 @@ class TagService
     public static function readByIdCache($tagid)
     {
         $key = 'web_tag_' . $tagid;
+        $memoKey = $key . '_' . ArticleTagService::revision();
         static $cache = array();
-        if (isset($cache[$key])) return $cache[$key];
+        if (isset($cache[$memoKey])) return $cache[$memoKey];
         $row = cache_get($key);
         if (NULL === $row) {
             $row = self::readById($tagid);
             $row and cache_set($key, $row, 1800);
         }
-        $cache[$key] = $row ? $row : NULL;
-        return $cache[$key];
+        $cache[$memoKey] = $row ? $row : NULL;
+        return $cache[$memoKey];
     }
 
     }

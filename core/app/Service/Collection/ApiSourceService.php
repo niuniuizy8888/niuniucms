@@ -29,9 +29,10 @@ class ApiSourceService
      * @param string $api API地址
      * @param string $name 名称
      * @param string $play 播放器解析地址
+     * @param int|null $model 0 视频、1 文章；未指定时保留已有类型，旧混合源保持未标记
      * @return array ['success' => bool, 'msg' => string]
      */
-    public static function set(string $code, string $api, string $name, string $play): array
+    public static function set(string $code, string $api, string $name, string $play, ?int $model = null): array
     {
         $conf = _SERVER('conf');
 
@@ -53,10 +54,13 @@ class ApiSourceService
             }
         }
         
+        $model = $model ?? CollectionCategoryService::sourceModel($code, $conf);
+        if ($model !== null && !in_array($model, [0, 1], true)) return ['success' => false, 'msg' => '采集类型无效'];
         $conf['api'][$code] = [
             'api' => $api,
             'code' => $code,
         ];
+        if ($model !== null) $conf['api'][$code]['model'] = $model;
         
         if (isset($conf['vodplayer'])) {
             unset($conf['vodplayer'][$code]);
