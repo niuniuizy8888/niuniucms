@@ -41,12 +41,13 @@ class ApiImportService
      * @param string $updateMode 更新模式
      * @param string $updateScope 更新范围
      * @param int $uid 操作用户ID
+     * @param bool $canCreateCategories 调用方按当前用户权限取得；未授权时只绑定已有分类
      * @return array 包含准备信息的数组
      */
-    public static function prepare(string $code, int $limit, string $updateMode, string $updateScope, int $uid): array
+    public static function prepare(string $code, int $limit, string $updateMode, string $updateScope, int $uid, bool $canCreateCategories = false): array
     {
         api_import_batch_require_tables();
-        self::fastCat($code);
+        $categories = self::fastCat($code, $canCreateCategories);
         $sourceMeta = api_import_batch_source_meta($code);
         
         $note = $updateMode === 'update' 
@@ -73,7 +74,9 @@ class ApiImportService
         
         return [
             'batch_id' => $batchId,
-            'resstr' => '分类已导入，准备开始第1页数据入库',
+            'resstr' => $canCreateCategories
+                ? '分类已导入，准备开始第1页数据入库'
+                : '已绑定 ' . $categories['bound'] . ' 个现有分类；无创建分类权限，已跳过 ' . $categories['skipped'] . ' 个缺失分类，其内容不会导入。准备开始第1页数据入库',
         ];
     }
 
@@ -133,11 +136,12 @@ class ApiImportService
      * 动作：把商店 cloudPayload 里该源的 api/player 条目写入运行时配置——其中 vodplayer 的 parse
      * 有**站内播放器保护闸**（现值为 inline/same 时保留站长本地配置，只接受第三方完整地址形态，注释在案）；
      * 分类取数三级回落 fast_type → fast_down → 源站 api(ac=list)，全落空则 message(-1) 明确报错（不再静默建 0 类）。
-     * 分类名经 buildCategoryTree 转义入库，随后按原名/转义名双查生成 $conf['bind'][$code]（分类名=>cid）并 kv_set。
-     * 无返回值（产出全在 KV：api/vodplayer/bind 三键）。
+     * 仅授权创建时调用 buildCategoryTree；否则只匹配已有分类。按原名/转义名双查生成 $conf['bind'][$code] 并 kv_set。
      * @param string $code 采集源编码（调用点已限 [a-zA-Z0-9_-]）
+     * @param bool $canCreateCategories 调用方取得的创建分类权限，默认不授权
+     * @return array{bound:int, skipped:int} 已绑定与未绑定的源分类数量
      */
-    public static function fastCat(string $code)
+    public static function fastCat(string $code, bool $canCreateCategories = false): array
     {
         global $conf;
         // 修复：统一走 cloudPayload()（商店不加密 / legacy 解密自适应）
@@ -223,10 +227,11 @@ class ApiImportService
             if ($mid == 1) return 0;
             if ($mid == 2) return 1;
             return NULL;
-        });
+        }, $canCreateCategories);
         $catelist = \App\Service\Content\CateService::findFmt();
         $arrlista = arrlist_key_values($catelist, 'name', 'cid');
         $catelistarr = array();
+        $skipped = 0;
         foreach ($apiarr as $value) {
             $sitetype = $value['type_name'];
             // 分类名现按转义值入库（buildCategoryTree），但存量分类可能仍是原始名，故原名/转义名双查取其一
@@ -237,6 +242,8 @@ class ApiImportService
                     'cid' => $match_cid,
                     'name' => $sitetype,
                 );
+            } else {
+                $skipped++;
             }
         }
         $catelistarr = arrlist_key_values($catelistarr, 'name', 'cid');
@@ -245,6 +252,7 @@ class ApiImportService
         $apiconf[$code] = $catelistarr;
         $conf['bind'] = $apiconf;
         kv_set('bind', $conf['bind']);
+        return array('bound' => count($catelistarr), 'skipped' => $skipped);
     }
 
     /**
@@ -253,9 +261,11 @@ class ApiImportService
      * @param array $r 分类结构
      * @param array $typearr 分类基础字段（引用传递：model 覆盖会跨分类累积生效，保持原 fastCat 语义）
      * @param callable|null $modelResolver 可选：输入顶层分类 value，返回 model 覆盖值或 NULL 不覆盖
+     * @param bool $canCreateCategories 创建分类能力；调用方未显式授权时不写分类
      */
-    public static function buildCategoryTree($r, array &$typearr, $modelResolver = NULL): void
+    public static function buildCategoryTree($r, array &$typearr, $modelResolver = NULL, bool $canCreateCategories = false): void
     {
+        if (!$canCreateCategories) return;
         // 分类名入库转义（红线「输出到 HTML 的内容必须转义」入库侧落点，前台导航裸 echo 依赖此）；
         // 为兼容存量未转义的特殊字符分类，查重时原名/转义名双查，两查皆无才以转义名新建，避免重复分类
         $resolve_cate = function ($raw) {

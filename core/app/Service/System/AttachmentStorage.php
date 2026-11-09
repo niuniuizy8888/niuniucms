@@ -34,7 +34,7 @@ class AttachmentStorage
         foreach (['local_url','public_url'] as $k) {
             $c[$k] = rtrim($c[$k], '/');
             if (strlen($c[$k]) > 400) throw new \InvalidArgumentException('图片访问地址过长');
-            if ($c[$k] !== '' && (!preg_match('~^https?://~i', $c[$k]) || !filter_var($c[$k], FILTER_VALIDATE_URL) || parse_url($c[$k], PHP_URL_USER) || parse_url($c[$k], PHP_URL_QUERY) || parse_url($c[$k], PHP_URL_FRAGMENT))) throw new \InvalidArgumentException('图片访问地址应为完整 HTTP(S) 地址，不带参数');
+            if ($c[$k] !== '' && !self::validPublicBase($c[$k])) throw new \InvalidArgumentException('图片访问地址应为完整 HTTP(S) 地址，不带参数或 HTML 特殊字符');
         }
         if ($c['host'] !== '' && (!preg_match('/^[a-z0-9.-]+$/iD', $c['host']) || strlen($c['host']) > 253)) throw new \InvalidArgumentException('FTP 主机请填写域名或 IPv4 地址，不带协议和目录');
         if (preg_match('~[\x00-\x1f\\\\]|(?:^|/)\.\.(?:/|$)~', $c['directory'])) throw new \InvalidArgumentException('FTP 上传目录无效');
@@ -66,8 +66,29 @@ class AttachmentStorage
     {
         $c = self::settings();
         $base = $c['local_url'] ?: (string)(_SERVER('conf')['upload_url'] ?? '/upload/');
+        // Old settings must be safe too, including when a custom theme renders a raw URL.
+        $relative = preg_match('~^/(?:[a-zA-Z0-9_-][a-zA-Z0-9_.%-]*/?)*$~D', $base) && !str_contains($base, '..');
+        if (!self::validPublicBase($base) && !$relative) $base = '/upload';
         $path = ltrim($path, '/');
         return rtrim($base, '/') . '/' . (str_starts_with($path,'upload/') ? substr($path,7) : $path);
+    }
+
+    private static function validPublicBase(string $url): bool
+    {
+        return strlen($url) <= 400 && !preg_match('/[\x00-\x20\x7f<>\x22\x27`\\\\]/', html_entity_decode($url, ENT_QUOTES | ENT_HTML5, 'UTF-8'))
+            && preg_match('~^https?://~i', $url) && filter_var($url, FILTER_VALIDATE_URL)
+            && parse_url($url, PHP_URL_USER) === null && parse_url($url, PHP_URL_PASS) === null
+            && parse_url($url, PHP_URL_QUERY) === null && parse_url($url, PHP_URL_FRAGMENT) === null;
+    }
+
+    /** File operations are limited to ordinary image names, never upload control files. */
+    public static function requireImagePath(string $path): void
+    {
+        if (self::localPath('/' . $path) !== $path
+            || !preg_match('~^upload/(?:[a-zA-Z0-9_-][a-zA-Z0-9_.-]*/)*[a-zA-Z0-9_-][a-zA-Z0-9_.-]*\.(?:jpe?g|png|gif|webp)$~iD', $path)
+            || preg_match('~\.(?:php\d*|phtml|phar|pht|phps|cgi|pl|py|sh|asp|aspx|jsp|shtml)(?:\.|/|$)~i', $path)) {
+            throw new \InvalidArgumentException('仅允许处理上传目录中的图片文件，不能操作隐藏文件、脚本或控制文件');
+        }
     }
 
     public static function localPath(string $url): string
@@ -91,7 +112,7 @@ class AttachmentStorage
 
     public static function absolute(string $path): string
     {
-        if (self::localPath('/' . $path) !== $path) throw new \InvalidArgumentException('图片路径无效');
+        self::requireImagePath($path);
         $root = realpath(APP_PATH . 'upload');
         $probe = APP_PATH . $path;
         while (!file_exists($probe) && dirname($probe) !== $probe) $probe = dirname($probe);
@@ -182,6 +203,7 @@ class AttachmentStorage
 
     private static function ftp(array $c, string $path = '', ?string $file = null, bool $remove = false): void
     {
+        if ($path !== '') self::requireImagePath($path);
         self::requireFtp($c);
         $remote = trim($c['directory'], '/') . ($path !== '' ? '/' . $path : '/');
         $remote = implode('/', array_map('rawurlencode', explode('/', ltrim($remote, '/'))));

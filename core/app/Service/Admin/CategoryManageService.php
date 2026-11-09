@@ -193,14 +193,15 @@ class CategoryManageService
     }
 
     /**
-     * 采集向导「新建分类」AJAX 分支（route/api.php case 'newcreate'：POST + admin_require_bull_token('admin_api_newcreate') + 组权限位 manageapi）。
+     * 采集向导「新建分类」AJAX 分支（route/api.php case 'newcreate'：POST + admin_require_bull_token('admin_api_newcreate') + manageapi/managecate）。
      * 名称经 filter_all_html 判空后，按原名/转义名双查 cate_list_cache() 查重（兼容存量未转义名），
      * 不存在才 createCategory 落库。$payload 各键由路由层从请求参数装配。
      * @param array $payload type_name/seo_des/model/category/fup/display 等建类字段
      * @return array{success:bool, msg:string} success=false 表示分类名已存在（lang key cate_not_exist 的文案即「分类已存在」）
      */
-    public static function createAjax(array $payload): array
+    public static function createAjax(array $payload, bool $canCreateCategories = false): array
     {
+        if (!$canCreateCategories) return array('success' => false, 'msg' => lang('user_group_insufficient_privilege'));
         $name = filter_all_html($payload['type_name'] ?? '');
         empty($name) and message(1, lang('data_empty_to_last_step'));
 
@@ -217,13 +218,14 @@ class CategoryManageService
     }
 
     /**
-     * 视频采集「建分类并自动绑定」（route/api.php case 'create'：POST + token 场景 admin_api_create + manageapi）。
+     * 视频采集「建分类并自动绑定」（route/api.php case 'create'：POST + token 场景 admin_api_create + manageapi/managecate）。
      * createCategory 建类后，ApiBindService::autoBindAll 把源站 type_name 批量映射到本地分类。
      * @param array $payload name/api/code 及建类字段（路由层装配）
      * @return array{success:bool, msg:string}
      */
-    public static function createVideo(array $payload): array
+    public static function createVideo(array $payload, bool $canCreateCategories = false): array
     {
+        if (!$canCreateCategories) return array('success' => false, 'msg' => lang('user_group_insufficient_privilege'));
         $name = filter_all_html($payload['name'] ?? '');
         empty($name) and message(1, lang('data_empty_to_last_step'));
         self::createCategory($payload, $name);
@@ -233,13 +235,14 @@ class CategoryManageService
     }
 
     /**
-     * 文章采集「建分类并自动绑定」（route/api.php case 'art_create'：POST + token 场景 admin_api_art_create + manageapi）。
+     * 文章采集「建分类并自动绑定」（route/api.php case 'art_create'：POST + token 场景 admin_api_art_create + manageapi/managecate）。
      * 与 createVideo 同构，自动绑定改走 ApiArtService::autoBindAll。
      * @param array $payload name/api/code 及建类字段（路由层装配；注意本分支路由用 param() 取原始值）
      * @return array{success:bool, msg:string}
      */
-    public static function createArt(array $payload): array
+    public static function createArt(array $payload, bool $canCreateCategories = false): array
     {
+        if (!$canCreateCategories) return array('success' => false, 'msg' => lang('user_group_insufficient_privilege'));
         $name = filter_all_html($payload['name'] ?? '');
         empty($name) and message(1, lang('data_empty_to_last_step'));
         // 文章采集建类固定写入文章模型，避免前端漏传/误传时落到视频模型。

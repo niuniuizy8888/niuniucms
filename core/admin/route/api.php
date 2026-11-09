@@ -4,6 +4,10 @@
 // hook admin_api_start.php
 FALSE === group_access($gid, 'manageapi') and message(1, lang('user_group_insufficient_privilege'));
 $action = param(1, 'list');
+$canManageCategories = (bool)group_access($gid, 'managecate');
+if (!$canManageCategories && in_array($action, array('newcreate', 'create', 'art_create', 'intov', 'intox', 'into_av', 'into_art', 'del'), TRUE)) {
+    message(1, lang('user_group_insufficient_privilege'));
+}
 $header['title'] = lang('api_page');
 switch ($action) {
     case 'async_action':
@@ -213,7 +217,7 @@ switch ($action) {
                 extract(\App\Service\Collection\ApiViewService::fastDbStage('preview', $code, $update_scope, intval($uid)), EXTR_SKIP);
                 include _include(ADMIN_PATH . 'html/api_fast_preview.html');
             } elseif ('prepare' === $stage) {
-                extract(\App\Service\Collection\ApiViewService::fastDbStage('prepare', $code, $update_scope, intval($uid), $limit, $update_mode), EXTR_SKIP);
+                extract(\App\Service\Collection\ApiViewService::fastDbStage('prepare', $code, $update_scope, intval($uid), $limit, $update_mode, $page, $batch_id, $canManageCategories), EXTR_SKIP);
                 include _include(ADMIN_PATH . 'html/api_fast_res.html');
             } elseif ('import' === $stage) {
                 $importData = \App\Service\Collection\ApiViewService::fastDbStage('import', $code, $update_scope, intval($uid), $limit, $update_mode, $page, $batch_id);
@@ -309,7 +313,7 @@ switch ($action) {
                 'category' => param('category', 0),
                 'fup' => _POST('fup', 0),
                 'display' => param('display', 0),
-            ));
+            ), $canManageCategories);
             admin_json_out($result);
         }
         break;
@@ -328,7 +332,7 @@ switch ($action) {
                 'category' => param('category', 0),
                 'fup' => _POST('fup', 0),
                 'display' => param('display', 0),
-            ));
+            ), $canManageCategories);
             message(0, jump('分类创建成功', url('api-list', array(), TRUE), 3));
         }
         break;
@@ -375,7 +379,7 @@ switch ($action) {
         // 破坏性操作（TRUNCATE 全站栏目表）：必须带 force=1（前端明示破坏范围并二次确认后才会发），
         // 且服务层执行前会自动备份栏目表——误点致前台大面积 404/500 的加固
         $force = admin_param_int('force', 0, 0, 1);
-        $result = \App\Service\Collection\ApiMiscService::truncateCategory($code, $force);
+        $result = \App\Service\Collection\ApiMiscService::truncateCategory($code, $force, $canManageCategories);
         empty($result['success']) and message(1, $result['msg']);
         message(0, jump($result['msg'], url('api-list', array(), TRUE), 3));
         break;
@@ -391,7 +395,7 @@ switch ($action) {
             $type = str_replace('into', '', $action);
         }
         
-        $result = \App\Service\Collection\ApiMiscService::importDefaultCategory($type);
+        $result = \App\Service\Collection\ApiMiscService::importDefaultCategory($type, $canManageCategories);
         empty($result['success']) and message(1, $result['msg']);
         message(0, jump($result['msg'], url($result['url'], array(), TRUE), 3));
         break;
@@ -422,7 +426,7 @@ switch ($action) {
                 'category' => param('category', 0),
                 'fup' => _POST('fup', 0),
                 'display' => param('display', 0),
-            ));
+            ), $canManageCategories);
             message(0, jump('分类创建成功', url('api-art_list', array(), TRUE), 3));
         }
         break;

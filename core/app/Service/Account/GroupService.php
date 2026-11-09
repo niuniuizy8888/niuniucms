@@ -150,13 +150,15 @@ class GroupService
     }
 
     /**
-     * 失效 grouplist 缓存键（组增删改后必须调用，否则权限视图滞后）。
+     * 失效组列表及页面缓存（组增删改会改变阅读权限，不能继续回放旧权限页面）。
      *
      * @return mixed 底层 cache_delete 的结果（缓存未装载时可能为 NULL）
      */
     public static function listCacheDelete()
     {
-        return cache_delete('grouplist');
+        $result = cache_delete('grouplist');
+        if (function_exists('page_cache_bump')) page_cache_bump();
+        return $result;
     }
 
     /**

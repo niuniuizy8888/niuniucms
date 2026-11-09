@@ -25,10 +25,12 @@ class ApiMiscService
      *
      * @param string $code  采集接口标识（仅审计用）
      * @param int    $force 1=调用方已向用户明示破坏范围并完成二次确认
+     * @param bool $canManageCategories 当前账号的分类管理权限，默认不授权
      * @return array ['success' => bool, 'msg' => string]
      */
-    public static function truncateCategory(string $code, int $force = 0): array
+    public static function truncateCategory(string $code, int $force = 0, bool $canManageCategories = false): array
     {
+        if (!$canManageCategories) return array('success' => FALSE, 'msg' => lang('user_group_insufficient_privilege'));
         $rows = \App\Repository\RepositoryFactory::cate()->find(array(), array('cid' => 1), 1, 100000);
         $total = is_array($rows) ? count($rows) : 0;
         if (0 === $total) {
@@ -148,12 +150,14 @@ class ApiMiscService
      * 导入默认分类
      * 
      * @param string $type 分类类型 (v, x, av, art)
+     * @param bool $canManageCategories 当前账号的分类管理权限，默认不授权
      * @return array ['success' => bool, 'msg' => string, 'url' => string]
      */
-    public static function importDefaultCategory(string $type): array
+    public static function importDefaultCategory(string $type, bool $canManageCategories = false): array
     {
+        if (!$canManageCategories) return array('success' => FALSE, 'msg' => lang('user_group_insufficient_privilege'), 'url' => 'api-list');
         admin_audit_log('api_import', ['type' => 'into_' . $type]);
-        $result = self::autoInto($type);
+        $result = self::autoInto($type, $canManageCategories);
         
         $msgMap = [
             'v' => '导入影视分类成功',
@@ -229,8 +233,9 @@ class ApiMiscService
      * @param string $cate 分类模板键（v/x/av/art）
      * @return array ['success' => bool, 'msg' => string]
      */
-    public static function autoInto(string $cate): array
+    public static function autoInto(string $cate, bool $canManageCategories = false): array
     {
+        if (!$canManageCategories) return array('success' => FALSE, 'msg' => lang('user_group_insufficient_privilege'));
         $r = self::remoteCategoryTree($cate);
         if (empty($r)) {
             return array(
@@ -251,7 +256,7 @@ class ApiMiscService
             'create_date' => time(),
             'alias' => '',
         );
-        \App\Service\Collection\ApiImportService::buildCategoryTree($r, $typearr);
+        \App\Service\Collection\ApiImportService::buildCategoryTree($r, $typearr, NULL, $canManageCategories);
         return array('success' => TRUE, 'msg' => '');
     }
 }

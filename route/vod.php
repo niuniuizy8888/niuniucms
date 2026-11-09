@@ -8,13 +8,13 @@ $alias_cid = $alias_cid ?? 0;
 // 整页缓存 1800s（审查修复轮 D：内容页接入；同 art.php 口径——uid/gid 按人隔离、
 // 403/404 早退不落缓存、内容版本令牌自动失效；alias_cid 入键区分别名/规范 URL 的 canonical 输出）
 $cacheKey = "page_vod_" . md5($vid . '_u' . intval($uid) . '_g' . intval($gid) . '_a' . intval($alias_cid) . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
-if (page_cache_start($cacheKey)) {
+$cacheRow = video_read($vid);
+// 读取整页缓存前复核当前阅读权限；旧缓存即使尚未失效，也不能绕过撤权。
+$cacheReadable = !empty($cacheRow) && \App\Service\Content\CateService::accessUser(intval($cacheRow['cid'] ?? 0), intval($gid), 'allowread');
+if ($cacheReadable && page_cache_start($cacheKey)) {
     // 同 art.php：命中缓存也补记浏览量/榜单（video_read 自带分布式缓存，命中时零查询）
-    $hitRow = video_read($vid);
-    if (!empty($hitRow)) {
-        \App\Service\Content\VideoService::incViews($vid);
-        \App\Service\Content\VideoService::recordTopView($vid, intval($hitRow['cid'] ?? 0));
-    }
+    \App\Service\Content\VideoService::incViews($vid);
+    \App\Service\Content\VideoService::recordTopView($vid, intval($cacheRow['cid'] ?? 0));
     return;
 }
 $data = \App\Service\Front\VodService::build($vid, intval($uid), intval($gid), $conf, $catelist, $cate_nav, intval($alias_cid));

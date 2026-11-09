@@ -21,7 +21,7 @@
     <div class="video-card relative w-full aspect-[530/726] group my-2 rounded-lg overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-500">
         {if:!empty($v['remarks'])}<div class="badge-quality">{h:$v.remarks}</div>{/if}
         <a class="absolute inset-0 flex rounded-lg group-hover:z-10" href="{$v.url}">
-            <img decoding="async" alt="{h:$v.name}" loading="lazy" class="rounded-lg w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" src="{$v.pic}">
+            <img decoding="async" alt="{h:$v.name}" loading="lazy" class="rounded-lg w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" src="{h:$v.pic}">
             <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             <div class="absolute inset-0 flex flex-col justify-between opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 <div class="flex justify-end p-2">

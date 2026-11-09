@@ -25,7 +25,7 @@
                             <div id="videoInfo" class="space-y-4 style_vodMetaContainer__TFb8U">
                                 <div class="flex flex-row space-x-4">
                                     <div class="relative hidden lg:flex rounded-xl">
-                                    <img width="230" height="300" class="rounded-xl" loading="lazy" src="{$video.pic}" alt="{h:$video.name}" style="max-width: 100%; height: auto;"></div>
+                                    <img width="230" height="300" class="rounded-xl" loading="lazy" src="{h:$video.pic}" alt="{h:$video.name}" style="max-width: 100%; height: auto;"></div>
                                     <div class="flex flex-col lg:w-2/3 allow-select">
                                         <div class="flex flex-row"><h1 class="text-lg pr-5 line-clamp-2">{h:$video.name}</h1>
                                              
@@ -109,7 +109,7 @@
                                 {block:vod_rand n="6"}
                                 {loop:$data $v}
                                 <a href="{$v.url}" class="flex items-center gap-3 group">
-                                    <img src="{$v.pic}" alt="{h:$v.name}" loading="lazy" class="w-10 h-14 rounded object-cover flex-shrink-0">
+                                    <img src="{h:$v.pic}" alt="{h:$v.name}" loading="lazy" class="w-10 h-14 rounded object-cover flex-shrink-0">
                                     <div class="flex-1 min-w-0">
                                         <span class="text-sm text-[var(--text-secondary)] group-hover:text-[var(--color-primary)] transition-colors line-clamp-1">{h:$v.name}</span>
                                         <span class="text-xs text-[var(--text-tertiary)]">{h:$v.year} {if:!empty($v['area'])}{h:$v.area}{/if}</span>

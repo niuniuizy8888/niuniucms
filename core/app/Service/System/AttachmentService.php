@@ -40,11 +40,19 @@ class AttachmentService
     {
         AttachmentSchema::ensure();
         $existing = AttachmentSchema::sql('SELECT ' . self::COLS . ' FROM ' . AttachmentSchema::table('attachments') . ' WHERE url_hash=?', [hash('sha256',$source)])->fetch(\PDO::FETCH_ASSOC);
-        if ($existing) return $existing;
+        if ($existing) {
+            if ($existing['path'] !== '') {
+                $file = AttachmentStorage::absolute($existing['path']);
+                if ($existing['backend'] === 'local' && file_exists($file)) AttachmentStorage::imageInfo($file);
+            }
+            return $existing;
+        }
         $path = AttachmentStorage::localPath($source);
         $info = [];
         if ($path !== '') {
-            try { $info = AttachmentStorage::imageInfo(AttachmentStorage::absolute($path)); } catch (\Throwable $e) {}
+            $file = AttachmentStorage::absolute($path);
+            // Missing pictures remain recoverable; existing non-images never become managed files.
+            if (file_exists($file)) $info = AttachmentStorage::imageInfo($file);
         }
         return self::record($source, $path === '' ? $source : '', $path, $path === '' ? 'external' : 'local', $info);
     }
@@ -299,7 +307,9 @@ class AttachmentService
         return AttachmentSchema::lock('delete:' . $asset['path'], static function () use ($asset) {
             if (self::referenced($asset, true) || AttachmentTransferState::needsLocal($asset['path'])) return false;
             $file = AttachmentStorage::absolute($asset['path']);
-            return !is_file($file) || unlink($file);
+            if (!is_file($file)) return true;
+            AttachmentStorage::imageInfo($file);
+            return unlink($file);
         });
     }
 
@@ -348,6 +358,9 @@ class AttachmentService
                 $busy=AttachmentSchema::sql('SELECT j.id FROM '.AttachmentSchema::table('attachment_transfers')." t JOIN $jobs j ON j.id=t.job_id WHERE t.path=? AND j.state IN ('running','paused') LIMIT 1",[$asset['path']])->fetchColumn();
             }
             if($busy) throw new \RuntimeException('图片任务 #'.$busy.' 正在使用这张图片或扫描范围，请先完成或停止该任务');
+            // Check old index rows again before either local or remote deletion.
+            $file = $asset['path'] !== '' ? AttachmentStorage::absolute($asset['path']) : '';
+            if ($file !== '' && file_exists($file)) AttachmentStorage::imageInfo($file);
             if ($asset['backend'] === 'ftp') {
                 $profile = json_decode((string)xn_decrypt($asset['profile']), true);
                 if (!is_array($profile)) throw new \RuntimeException('FTP 配置无法解密，请检查站点密钥');
@@ -355,7 +368,6 @@ class AttachmentService
             }
             $keepLocal=$asset['backend']==='ftp' && (self::referenced($asset,true) || AttachmentSchema::sql("SELECT id FROM $table WHERE id<>? AND backend='local' AND path=? LIMIT 1",[$id,$asset['path']])->fetchColumn());
             if ($asset['path'] !== '' && !$keepLocal) {
-                $file = AttachmentStorage::absolute($asset['path']);
                 if (is_file($file) && !unlink($file)) throw new \RuntimeException('本地图片删除失败');
             }
             AttachmentSchema::sql('DELETE FROM ' . $table . ' WHERE id=?',[$id]);

@@ -348,7 +348,8 @@ class AttachmentJobService
         }
         foreach($assets as &$asset) {
             $asset['display_url']=AttachmentService::resolve($asset['url']);
-            $asset['local_exists']=$asset['path']!=='' && is_file(AttachmentStorage::absolute($asset['path']));
+            try { $asset['local_exists']=$asset['path']!=='' && is_file(AttachmentStorage::absolute($asset['path'])); }
+            catch (\InvalidArgumentException | \RuntimeException $e) { $asset['local_exists']=false; }
             $asset['source_url']=$originals[$asset['id']]['source_url']??$asset['origin'];
             $asset['source_count']=(int)($originals[$asset['id']]['source_count']??0);
         } unset($asset);

@@ -158,10 +158,11 @@ class ApiViewService
      * fastdb 三阶段视图装配（preview/prepare/import）
      * 路由层只负责 include 对应模板；本方法统一生成模板变量与跳转参数
      * @param string $stage preview|prepare|import
+     * @param bool $canCreateCategories 当前账号的创建分类权限，由路由提供，不能从表单读取
      * @return array preview/prepare 返回可直接 extract 的模板变量；
      *               import 返回 array('error','msg','done','view')，view 为模板变量
      */
-    public static function fastDbStage($stage, $code, $update_scope = 'all', $uid = 0, $limit = 5000, $update_mode = 'skip', $page = 1, $batch_id = 0)
+    public static function fastDbStage($stage, $code, $update_scope = 'all', $uid = 0, $limit = 5000, $update_mode = 'skip', $page = 1, $batch_id = 0, bool $canCreateCategories = false)
     {
         $post_params = array(
             'safe_token' => bull_token_set($uid, 'admin_api_fastdb'),
@@ -185,7 +186,7 @@ class ApiViewService
             );
         }
         if ('prepare' === $stage) {
-            $prepareData = \App\Service\Collection\ApiImportService::prepare($code, $limit, $update_mode, $update_scope, intval($uid));
+            $prepareData = \App\Service\Collection\ApiImportService::prepare($code, $limit, $update_mode, $update_scope, intval($uid), $canCreateCategories);
             $post_params['batch_id'] = $prepareData['batch_id'];
             $batch_link = url('api-batch', array('batch_id' => $prepareData['batch_id']), TRUE);
             return array(

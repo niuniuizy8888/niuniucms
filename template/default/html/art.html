@@ -8,7 +8,7 @@
   "@type": "Article",
   "headline": "{$art.name}",
   "description": "{if:isset($seo['d']) && !empty($seo['d'])}{$seo.d}{/if}",
-  "image": "{$art.pic}",
+  "image": {$art_pic_json},
   {if:isset($cate) && !empty($cate['name'])}"articleSection": "{h:$cate.name}",{/if}
   {if:isset($seo['url']) && !empty($seo['url'])}"url": "{$seo.url}",{/if}
   {if:isset($art['create_date']) && !empty($art['create_date'])}"datePublished": "{if:isset($art['create_date_fmt'])}{$art.create_date_fmt}{/if}",{/if}
