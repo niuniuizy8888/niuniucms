@@ -58,9 +58,8 @@ class ElasticService
      * `outbound_url_safe` 的活跃出站面（采集/商店/云端均已过闸）。
      *
      * 现全部出站改经本方法：走统一网关（scheme + 全记录 DNS + 内网保留段拦截 +
-     * `CURLOPT_RESOLVE` 固定已校验 IP 消除 DNS 重绑定窗口）；并对**配置的 ES 主机**做
-     * 与 cloud_api 同款的**精确主机豁免**（见 `outbound_trusted_hosts()`）——ES 常部署在
-     * 内网/本机（如 127.0.0.1:9200），豁免只按主机名精确匹配，其余内网段仍拦。
+     * `CURLOPT_RESOLVE` 固定已校验 IP 消除 DNS 重绑定窗口）。ES 不使用商店上下文，
+     * 不因与 cloud_api 同主机而获得内网访问例外。
      *
      * @return resource|\CurlHandle|false false=被闸拒绝或 curl 不可用
      */

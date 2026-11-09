@@ -1560,7 +1560,7 @@ class AddonService
             $plugins = array();
             return $plugins;
         }
-        $body = (string)https_request($base . 'api.php', '', '', 30, 0, 8 * 1048576);
+        $body = (string)https_request($base . 'api.php', '', '', 30, 0, 8 * 1048576, 'cloud');
         $arr = xn_json_decode($body);
         // 结构合法才认（`plugins` 键存在且为数组；空数组=商店确实没有插件，允许缓存）
         if (!is_array($arr) || !isset($arr['plugins']) || !is_array($arr['plugins'])) {
@@ -1647,7 +1647,7 @@ class AddonService
 
         $storeHost = strtolower((string)parse_url(self::storeBase(), PHP_URL_HOST));
         $uHost = strtolower((string)parse_url($url, PHP_URL_HOST));
-        if ('' !== $storeHost && $uHost === $storeHost && 0 === strpos(strtolower($url), 'http://')) {
+        if ('https' === strtolower((string)parse_url(self::storeBase(), PHP_URL_SCHEME)) && '' !== $storeHost && $uHost === $storeHost && 0 === strpos(strtolower($url), 'http://')) {
             $url = 'https://' . substr($url, 7);
         }
         return $url;
@@ -1694,7 +1694,7 @@ class AddonService
         $tmp = _SERVER('conf')['cache_path'] . 'store_' . $dir . '_' . mt_rand(100000, 999999) . '.zip';
         // 代码审查 #1 修复：流式下载（原 https_request 整包入内存；插件包可达数 MB~数十 MB，
         // 并发安装会顶 memory_limit）。http_download_to_file 直接落盘并在传输中校验 PK 前缀。
-        $dl = http_download_to_file($url, $tmp, 200 * 1048576, 60, 5, 'PK');
+        $dl = http_download_to_file($url, $tmp, 200 * 1048576, 60, 5, 'PK', 0, 'cloud');
         if (!$dl['ok']) {
             if (is_file($tmp)) @unlink($tmp);
             return self::fail('下载失败：' . $dl['error']);

@@ -14,7 +14,7 @@
  *        算出的 `count` 是全量页数 ⇒ 「总页数/剩余页」按全量显示、每页却只拉 24h 窗口
  *        （实测 wsym3u8 全量 6288 页 vs 24h 仅 7 页），任务必然长期空跑且剩余页失真。
  *        现改为**空值即空值**（老 worker 显式传 h=24 时行为不变）。
- *   2. **本地地址替换执行器**：GET/POST api.php?route=replace&token={api_token}
+ *   2. **本地地址替换执行器**：GET/POST api.php?route=replace，使用 replace 专用令牌
  *        &old_domain=old.com&new_domain=new.com&type=play|pic&timeout=300
  *      把本站 `play_url`（type=play）或 `pic`（type=pic）里的老域名就地替换为新域名，
  *      回 JSON `{code:0,updated:N,…}`。**这是"替换"的唯一执行口径**：后台「设置→地址替换」
@@ -25,14 +25,10 @@
  *        每请求处理一页，curl -L 跟随本站跳转续采；完成返回任务编号，失败返回 HTTP 错误。
  *        旧 route=cron 仍仅登记任务并响应 "ok"，可用 format=json 查看登记结果。
  *
- * 安全（token 派生化）：{api_token} = api_wire_token('api')
- *   = md5( auth_key . '|nncms-api-token|' . 'api' )（派生式见 core/func/security.php::api_wire_token，
- *   auth_key 为空时该函数返回 ''，本入口随即不放行 ⇒ 未配 auth_key 的站点机器通道整体不可用）。
- * 校验是**两路或**（api.php 内 `$pass = ... || ...`），两路各自 hash_equals 恒时比较，但比较对象不同：
- *   ① 主路：把来路 token 与**派生值** api_wire_token('api') 比（auth_key 本体不上网络）；
- *   ② legacy 路：把来路 token 与 **auth_key 本体**比——仅当 conf['api_legacy_token'] 显式 === 1 才启用
- *     （上线前终检 N-03：出厂为 0；曾有的形态是「键缺失即放行」，与 fail-closed 口径相反，已改）。
- * auth_key 本体不得出现在任何 URL/access_log/对端存储；两路都不匹配一律 403。
+ * 凭据按用途分离：api_wire_token('collect' / 'images' / 'replace' / 'store_push')。
+ * 旧 api 令牌只兼容采集与健康检测，不能用于图片任务或直接地址替换。
+ * 商店凭据用于健康检测、rsync 和带签名的推送；替换凭据只应交给超级管理员。
+ * 入口与限流共用 api_wire_token_allows，恒时比较、空密钥拒绝，图片任务仅接受请求头。
  */
 define('SKIP_ROUTE', TRUE); // 复用 index.php 框架引导链，跳过前台路由分发（admin.php 同模式）
 !defined('DEBUG') AND define('DEBUG', 0);
@@ -50,31 +46,17 @@ include __DIR__ . '/index.php';
 // index.php 引导完成后 $conf 全局可用；兼容 _SERVER('conf') 门面
 $conf = isset($conf) && is_array($conf) ? $conf : (_SERVER('conf') ?: array());
 
-// ---- token 校验（恒时比较；派生化：主放行 api_wire_token，legacy auth_key 可关兼容） ----
-$authKey = isset($conf['auth_key']) ? (string)$conf['auth_key'] : '';
+// ---- 按用途校验机器凭据；旧采集命令不能获得其他用途权限 ----
 // N-02（上线前审计）：商店替换推送 worker（rsync_task pushOne）把 token 放 POST body，
 // 此前仅读 $_GET 导致 store_push 恒 403（fail-closed 死路）——GET/POST 双通道兼容读取，恒时比较逻辑不变。
 // L-4（R4）：token 读取优先级 —— ① 请求头 X-NNCMS-Token（推荐，不进 access_log/URL）② POST body
 //            ③ ?token=（**已弃用**，仅为老 cron/老 worker 兼容；会进 access_log，升级后请改 header 形态）。
-$hdrTok = isset($_SERVER['HTTP_X_NNCMS_TOKEN']) ? (string)$_SERVER['HTTP_X_NNCMS_TOKEN'] : '';
+$hdrTok = is_string($_SERVER['HTTP_X_NNCMS_TOKEN'] ?? NULL) ? $_SERVER['HTTP_X_NNCMS_TOKEN'] : '';
 $token  = '' !== $hdrTok ? $hdrTok
-    : (isset($_POST['token']) ? (string)$_POST['token']
-    : (isset($_GET['token']) ? (string)$_GET['token'] : ''));
-$tokFromGet = ('' === $hdrTok) && !(isset($_POST['token']) && '' !== (string)$_POST['token']) && isset($_GET['token']) && '' !== (string)$_GET['token'];
-$apiTok = api_wire_token('api');
-// M-2 part2：专用商店令牌（store_report_token，与 auth_key 解耦）亦放行——商店 worker 的
-// rsync 回调 / push-replacements 回带的正是安装上报登记的这枚令牌；缺省态该键为空 ⇒
-// store_wire_token() 退化为 api_wire_token，与改造前逐字一致（恒时比较，fail-closed）。
-$storeTok = function_exists('store_wire_token') ? (string)store_wire_token() : '';
-// 上线前终检修复（N-03，Medium）：原判定 `!isset(...) || === 1` ⇒ **未配置=开启 legacy**，
-// 而出厂 config.default.php 里根本没有该键（安装器原样 copy）⇒ 新装站默认接受**原始 auth_key** 当 token，
-// 与「fail-closed / auth_key 不出现在任何 URL」的口径相反。现改为**显式开启才放行**。
-$legacyOk = isset($conf['api_legacy_token']) && intval($conf['api_legacy_token']) === 1;
-$isApiTok = ('' !== $apiTok && hash_equals($apiTok, $token));
-$isStoreTok = ('' !== $storeTok && hash_equals($storeTok, $token));
-$isLegacy = ($legacyOk && '' !== $authKey && hash_equals($authKey, $token));
-$pass = $isApiTok || $isStoreTok || $isLegacy;
-if (!$pass) {
+    : ($_POST['token'] ?? ($_GET['token'] ?? ''));
+$route = $_GET['route'] ?? 'api';
+$tokFromGet = $hdrTok === '' && !isset($_POST['token']) && isset($_GET['token']);
+if (!api_wire_token_allows($token, $route, $hdrTok !== '')) {
     http_response_code(403);
     exit('invalid token');
 }
@@ -87,24 +69,10 @@ if ($tokFromGet && function_exists('xn_log')) {
     }
 }
 
-$route = isset($_GET['route']) ? (string)$_GET['route'] : 'api';
-
-// R3-4：商店令牌（store_report_token）只放行健康检测与 rsync；replace / cron / store_push 需站点 api 令牌（store_push 另需开关+签名）。
-if ($isStoreTok && !$isApiTok && !$isLegacy) {
-    if (!in_array($route, array('api', 'rsync'), TRUE)) {
-        http_response_code(403);
-        exit('store token not allowed for this route');
-    }
-}
-
 switch ($route) {
 
     case 'images':
-        // Require the site's API credential in the header, in addition to the global guard above.
-        if (!$isApiTok || $hdrTok === '' || !hash_equals($apiTok, $hdrTok)) {
-            http_response_code(403);
-            exit('invalid token');
-        }
+        // 上方统一鉴权已要求 images 专用凭据及 X-NNCMS-Token 请求头。
         header('Content-Type: text/plain; charset=utf-8');
         header('Cache-Control: no-store');
         try {

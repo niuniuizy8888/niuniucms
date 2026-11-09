@@ -117,7 +117,7 @@ class UserManageService
 
     /**
      * 后台编辑用户（POST 写路径）：admin_update_user token + manageupdateuser 权限位 +
-     * 越权闸（目标 gid 高于操作者组即拒，见体内注释，fail-closed 经 message 中断）→
+     * 越权闸（目标原组及分配组的权限均须为操作者权限子集）→
      * userPayload(FALSE,$gid,$targetUid) 采集校验 → 与库内旧行逐值 diff 后仅写变更字段。
      * 改密走 userPayload 的 password_hash_custom 分支；user_update 内部负责会话/查询缓存失效。
      * @param int $targetUid 被编辑用户 uid
@@ -132,9 +132,8 @@ class UserManageService
 
         $old = user_read($targetUid);
         empty($old) and message('username', lang('uid_not_exists'));
-        // 越权修复：目标当前 gid 高于（数值小于）操作者所属组时禁止编辑——
-        // 此前 userPayload 只比对提交值 _gid、从不读目标现状，gid=2 账号可重置/降级超管密码实现接管
-        if ($gid > 1 && intval($old['gid']) < $gid) {
+        // 先检查目标当前权限，不能通过提交一个低权限组来重置高权限账号。
+        if (!self::canManageGroup($gid, intval($old['gid']))) {
             message(1, lang('user_group_insufficient_privilege'));
         }
 
@@ -163,8 +162,7 @@ class UserManageService
         $user = user_read($targetUid);
         empty($user) and message(-1, lang('user_not_exists'));
         (1 == intval($user['gid'])) and message(-1, lang('user_admin_cant_be_deleted'));
-        // 越权修复：同 update 口径，非超管不得删除权限高于本组的账号
-        if ($gid > 1 && intval($user['gid']) < $gid) {
+        if (!self::canManageGroup($gid, intval($user['gid']))) {
             message(1, lang('user_group_insufficient_privilege'));
         }
         FALSE === user_delete($targetUid) and message(-1, lang('delete_failed'));
@@ -390,7 +388,7 @@ class UserManageService
     /**
      * 从 POST 采集并校验用户表单载荷（create/update 共用），任一校验不过即 message 终止：
      *  - email 必填 + is_email、username 选填 + is_username（param 默认已 htmlspecialchars）；
-     *  - 提权防护：提交的目标组 $_gid>0 且数值小于操作者组（=权限更高）即拒绝；
+     *  - 提权防护：分配组的实际权限须为操作者权限子集，不按组编号推断权限；
      *  - email/username 唯一性查重（编辑态排除 $excludeUid 自身）；
      *  - 仅当 password 非空才装配散列：password_hash_custom(bcrypt) + salt 置空，
      *    编辑态留空=不改密；创建态空密码即拒。
@@ -414,8 +412,7 @@ class UserManageService
         }
         // 审查修复轮 C11：缺省组从 0（游客组）改 2（普通会员），与表单预选一致；显式提交 0 仍
         // 允许（管理员明确选择游客组时），不做隐性兜底。
-        // 提权防护：目标组 gid 不得高于操作者自身组（gid 越小权限越高；审计修复）
-        ($_gid > 0 && $_gid < $operatorGid) and message('_gid', lang('user_group_insufficient_privilege'));
+        !self::canManageGroup($operatorGid, $_gid) and message('_gid', lang('user_group_insufficient_privilege'));
 
         empty($email) and message('email', lang('please_input_email'));
         $email && !is_email($email, $err) and message('email', $err);
@@ -448,6 +445,31 @@ class UserManageService
         }
 
         return $arr;
+    }
+
+    /** 自定义组编号不代表权限高低；只允许管理同等或更少权限的账号。 */
+    private static function canManageGroup(int $operatorGid, int $targetGid): bool
+    {
+        if ($operatorGid === 1) return true;
+        if ($targetGid === 1) return false;
+        $groups = $GLOBALS['grouplist'] ?? array();
+        $operator = $groups[$operatorGid] ?? null;
+        $target = $groups[$targetGid] ?? null;
+        if (!is_array($operator) || !is_array($target)) return false;
+
+        foreach (array_merge(self::GROUP_PERM_KEYS, array('intoadmin', 'allowread')) as $permission) {
+            if (!empty($target[$permission]) && empty($operator[$permission])) return false;
+        }
+        // 全局阅读权限相同的组仍可能有不同的分类访问范围。
+        foreach (($GLOBALS['catelist'] ?? array()) as $category) {
+            if (empty($category['accesson'])) continue;
+            $targetCanRead = (!isset($target['allowread']) || $target['allowread'])
+                && !empty($category['accesslist'][$targetGid]['allowread']);
+            $operatorCanRead = (!isset($operator['allowread']) || $operator['allowread'])
+                && !empty($category['accesslist'][$operatorGid]['allowread']);
+            if ($targetCanRead && !$operatorCanRead) return false;
+        }
+        return true;
     }
 
     /**

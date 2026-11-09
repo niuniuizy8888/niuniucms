@@ -151,7 +151,7 @@ return array(
   'search_on' => 1, // 1=开启搜索 0=关闭
   'search_use_fulltext' => 0, // P-4（2026-10-10）：搜索走 MySQL ngram 全文索引（1=启用）。启用前必须先建索引：ALTER TABLE nncms_vod ADD FULLTEXT INDEX ft_name (name) WITH PARSER ngram;（MySQL 5.7.6+/8.x；MariaDB 无 ngram 请勿开启）。0=维持 LIKE '%kw%'（兼容 PG/SQLite）
   'ssl_verify' => 1, // curl HTTPS 证书校验：1=启用(安全默认，防 MITM 篡改升级包/模板下载)，0=禁用(仅自签名源兼容需求时开启)
-  'outbound_block_private' => 1, // 出站内网/保留段拦截（SSRF 闸）：1=拦截（**默认**）。上线前审计 INFRA-02：单独写 0 无效，须同时 outbound_allow_private_override=1 才放行内网（危险，勿在常规后台暴露）。cloud_api 商店主机仍豁免，见 outbound_trusted_hosts。scheme/DNS fail-closed/CURLOPT_RESOLVE 始终生效
+  'outbound_block_private' => 1, // 出站内网/保留段拦截（SSRF 闸）：1=拦截（**默认**）。上线前审计 INFRA-02：单独写 0 无效，须同时 outbound_allow_private_override=1 才放行内网（危险，勿在常规后台暴露）。仅显式商店请求的 cloud_api 精确来源可豁免，见 outbound_request_context。scheme/DNS fail-closed/CURLOPT_RESOLVE 始终生效
   'outbound_allow_private_override' => 0, // 危险开关：1 时才允许 outbound_block_private=0 生效；默认 0。不进常规后台表单
   'sitemap_play' => 1,
   'sitemap_tag' => 1,

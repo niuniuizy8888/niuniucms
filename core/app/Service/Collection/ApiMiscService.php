@@ -213,7 +213,7 @@ class ApiMiscService
         $base = is_array($conf) && isset($conf['cloud_api']) ? rtrim(trim((string)$conf['cloud_api']), '/') : '';
         if ('' === $base) return array();
 
-        $raw = https_request($base . '/index.php?api=cate&cate=' . rawurlencode($cate), '', '', 15, 0, 2 * 1048576);
+        $raw = https_request($base . '/index.php?api=cate&cate=' . rawurlencode($cate), '', '', 15, 0, 2 * 1048576, 'cloud');
         $json = xn_json_decode((string)$raw);
         $list = is_array($json) && isset($json['data']['list']) && is_array($json['data']['list']) ? $json['data']['list'] : array();
         return is_array($list) ? $list : array();

@@ -6,29 +6,14 @@
  * 注：https_request() 仍在 core/func/misc.php（经 _curl_setup 过同一道闸），save_image()/http_post()/
  * https_get()/http_multi_get() 本仓不存在，勿再按旧清单去找。
  */
-function http_get($url, $cookie = '', $timeout = 30, $times = 3)
+function http_get($url, $cookie = '', $timeout = 30, $times = 3, $context = '')
 {
-    if (extension_loaded('curl')) return https_post($url, '', $cookie, $timeout, 'GET');
-    // 仅允许 http/https 协议 + SSRF 内网拦截
-    if (!outbound_url_safe($url)) return FALSE;
-    $arr = array(
-        'http' => array(
-            'method' => 'GET',
-            'timeout' => $timeout,
-            // SSRF 加固：流上下文默认跟随 302 且无逐跳复查（可被重定向进内网），禁跟随
-            'follow_location' => 0,
-            'max_redirects' => 1,
-        )
-    );
-    $stream = stream_context_create($arr);
-    while ($times-- > 0) {
-        $s = @file_get_contents($url, FALSE, $stream, 0, 4096000);
-        if (FALSE !== $s) return $s;
-    }
-    return FALSE;
+    // Streams resolve the hostname again after validation; require IP-pinned cURL.
+    if (!extension_loaded('curl')) return FALSE;
+    return https_post($url, '', $cookie, $timeout, 'GET', $context);
 }
 /**
- * HTTP POST请求（自动选择curl或file_get_contents）
+ * HTTP 请求依赖 cURL，以固定校验后的 IP；缺失扩展时失败关闭。
  * @param string $url 请求地址
  * @param string|array $post POST数据
  * @param string $cookie Cookie字符串
@@ -41,10 +26,10 @@ function http_get($url, $cookie = '', $timeout = 30, $times = 3)
  * Shared cURL setup: initializes handle with common options.
  * Callers should set HEADER, USERAGENT, method-specific options, and execute.
  */
-function _curl_setup($url) {
+function _curl_setup($url, $context = '') {
     // SSRF 防护：出站 URL 统一校验（scheme + DNS 解析 + 内网 IP 拦截），失败返回 FALSE
     $pinned = NULL;
-    if (!outbound_url_safe($url, TRUE, $pinned)) return FALSE;
+    if (!extension_loaded('curl') || !outbound_url_safe($url, TRUE, $pinned, $context)) return FALSE;
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     if (!empty($pinned)) curl_setopt($ch, CURLOPT_RESOLVE, $pinned);
@@ -76,85 +61,28 @@ function _curl_setup($url) {
  * @param int $times 重试次数
  * @return string|false 响应内容
  */
-function https_post($url, $post = '', $cookie = '', $timeout = 30, $method = 'POST')
+function https_post($url, $post = '', $cookie = '', $timeout = 30, $method = 'POST', $context = '')
 {
-    // SSRF 加固：原「gethostbyname + FILTER_FLAG」预检对字面 IP 短路（host===ip 时整体跳过），
-    // 且不查 AAAA 记录。改用统一入口（全记录解析 + v4/v6 内网拦截 + 字面 IP 直查），无 curl 回退分支同样受控
-    if (!outbound_url_safe($url)) {
-        return xn_error(-1, 'SSRF blocked: outbound URL not allowed');
-    }
-    $base_url = $url; // 相对 Location 解析基准
-
-    $allow_url_fopen = strtolower(ini_get('allow_url_fopen'));
-    $allow_url_fopen = (empty($allow_url_fopen) || 'off' == $allow_url_fopen) ? 0 : 1;
-    $allow_get_contents = $allow_url_fopen && strtolower(ini_get('user_agent'));
-    $allow_curl = extension_loaded('curl');
-    if (!$allow_curl && !$allow_get_contents) return xn_error(-1, 'CURL and OpenSSL are not installed on the server.');
+    if (!extension_loaded('curl')) return FALSE;
+    $context = outbound_request_context($url, $context);
+    $ch = _curl_setup($url, $context);
+    if (FALSE === $ch) return FALSE;
     is_array($post) and $post = http_build_query($post);
     is_array($cookie) and $cookie = http_build_query($cookie);
-    //$w = stream_get_wrappers(); //  && in_array('https', $w)
-    if (!$allow_curl) {
-        if ('https://' == substr($url, 0, 8) && !extension_loaded('openssl')) return xn_error(-1, 'CURL and OpenSSL are not installed on the server.');
-        // follow_location=0：流上下文默认跟随 302 无逐跳复查，禁用以堵住重定向内网跳板
-        $stream = stream_context_create(array('http' => array('header' => "Content-type: application/x-www-form-urlencoded\r\nx-requested-with: XMLHttpRequest\r\nCookie: $cookie\r\n", 'method' => $method, 'content' => $post, 'timeout' => $timeout, 'follow_location' => 0, 'max_redirects' => 1)));
-        $s = file_get_contents($url, NULL, $stream, 0, 4096000);
-        return $s;
-    }
-    $ch = _curl_setup($url);
-    if (FALSE === $ch) return xn_error(-1, 'SSRF blocked: outbound URL not allowed');
-    curl_setopt($ch, CURLOPT_HEADER, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, _SERVER('HTTP_USER_AGENT'));
-    if ('POST' == $method) {
+    curl_setopt($ch, CURLOPT_HEADER, false);
+    curl_setopt($ch, CURLOPT_USERAGENT, (string)_SERVER('HTTP_USER_AGENT'));
+    if ('POST' === $method) {
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_AUTOREFERER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
     }
     $header = array('Content-type: application/x-www-form-urlencoded', 'X-Requested-With: XMLHttpRequest');
     $cookie and $header[] = "Cookie: $cookie";
     curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
-    // SSRF 防护：禁 curl 自动跟随，改手动逐跳校验（每跳 outbound_url_safe）
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 0);
-    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-    $data = curl_exec($ch);
-    if (curl_errno($ch)) {
-        return xn_error(-1, 'Errno' . curl_error($ch));
-    }
-    if (!$data) {
-        return '';
-    }
-    list($header, $data) = explode("\r\n\r\n", $data, 2);
-    // 处理 HTTP 100 Continue 中间响应
-    if (str_contains($header, '100 Continue')) {
-        $parts = explode("\r\n\r\n", $data, 2);
-        if (count($parts) >= 2) {
-            $header = $parts[0];
-            $data = $parts[1];
-        }
-    }
+    $data = outbound_curl_exec($ch, $url, $timeout, 5, FALSE, 8 * 1048576, $context);
+    if (FALSE === $data) return FALSE;
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    if (301 == $http_code || 302 == $http_code || 303 == $http_code || 307 == $http_code || 308 == $http_code) {
-        // 手动跟随（最多 4 跳），每跳 SSRF 校验
-        $matches = array();
-        preg_match('/Location:(.*?)\n/i', $header, $matches);
-        $url = trim(array_pop($matches));
-        if (!preg_match('#^https?://#i', $url)) {
-            $url = http_url_resolve($base_url, $url);
-        }
-        curl_setopt($ch, CURLOPT_HEADER, false);
-        $final = outbound_curl_exec($ch, $url, $timeout, 4);
-        if (FALSE === $final) {
-            return xn_error(-1, 'SSRF blocked: redirect target not allowed');
-        }
-        $data = $final;
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    }
-    
-    // 统一状态码处理，拦截 4xx 和 5xx 错误
-    if ($http_code >= 400) {
-        return xn_error(-1, "HTTP Error: {$http_code}");
-    }
-    
+    if ($http_code >= 400) return xn_error(-1, "HTTP Error: {$http_code}");
     return $data;
 }
 // 来源说明（收尾轮结案，原为 NOTICE.md §2 登记依据，署名现归口 .skills/开发规范.md 末节）：
@@ -303,7 +231,7 @@ function outbound_host_ips($host)
  *
  * 取值来源（任一命中即生效）：conf['outbound_block_private']（config.php / config.default.php）。
  *   · 1（config.default 出厂默认 / 新安装写入）⇒ 内网/回环/链路本地/保留段拒绝（见 outbound_ipv4_safe/
- *     outbound_ipv6_safe）；商店主机（cloud_api）经 outbound_trusted_hosts 豁免，商店推送/更新不受影响。
+ *     outbound_ipv6_safe）；显式商店请求经 outbound_request_context 精确来源校验后豁免，商店推送/更新不受影响。
  *   · 0 ⇒ 一律放行（内网 ES、内网采集源等需要时由管理员显式配置）。
  * **不随开关变化的硬约束**：scheme 只允许 http/https、必须含 host、DNS 解析失败 fail-closed、
  * 重定向逐跳复查、CURLOPT_RESOLVE 固定已校验 IP；所有出站仍必须经 outbound_url_safe() 统一入口
@@ -324,34 +252,29 @@ function outbound_block_private()
     return true;
 }
 
-/**
- * 出站可信主机（商店服务端对接）：管理员在 conf['cloud_api'] 显式配置的商店主机。
- * 信任模型与 rsyncBase 域名白名单（M-A3）同款——商店允许部署在内网/局域网（如 http://192.0.2.3:2651/），
- * 该名单内主机豁免内网保留段拦截；scheme 闸、DNS 解析 fail-closed、CURLOPT_RESOLVE IP 固定、
- * 重定向逐跳复查全部保持（商店 302 到非可信内网地址仍被拒），采集源等其它用户可配 URL 不在豁免范围。
- * 说明：`outbound_block_private`=1（出厂默认）时本名单决定"哪个内网主机仍然可达"；为 0 时本来就不拦，豁免无实际作用。
- * @return string[] 小写主机名列表（不含端口/方括号）
- */
-function outbound_trusted_hosts()
+/** Canonical origin used only for explicitly trusted service requests. */
+function outbound_origin($url)
 {
-    static $hosts = NULL;
-    if (NULL !== $hosts) return $hosts;
-    $hosts = array();
+    $p = is_string($url) ? @parse_url($url) : FALSE;
+    if (!$p || empty($p['host']) || isset($p['user']) || isset($p['pass'])) return '';
+    $scheme = strtolower((string)($p['scheme'] ?? ''));
+    if (!in_array($scheme, array('http', 'https'), TRUE)) return '';
+    $port = isset($p['port']) ? (int)$p['port'] : ('https' === $scheme ? 443 : 80);
+    return $scheme . '://' . strtolower(trim($p['host'], '[]')) . ':' . $port;
+}
+
+/**
+ * Only cloud-specific call sites may request this context. Exact scheme, host and
+ * port must match cloud_api. Ordinary collection/image requests pass no context.
+ * Callers keep the returned value across redirects: once lost, it stays lost.
+ */
+function outbound_request_context($url, $context = '')
+{
+    if ('cloud' !== $context) return '';
     $conf = function_exists('_SERVER') ? _SERVER('conf') : NULL;
-    if (is_array($conf) && isset($conf['cloud_api'])) {
-        $u = trim((string)$conf['cloud_api']);
-        if ('' !== $u) {
-            $h = strtolower((string)parse_url($u, PHP_URL_HOST));
-            if ('' !== $h) $hosts[] = trim($h, '[]');
-        }
-    }
-    // 上线前审计（VULN-H03 / INFRA-02）**刻意不**把 es.host 加入本豁免名单。
-    // 理由：cloud_api 是本系统自有的固定部署目标（内网商店为既定架构），而 es.host 是
-    // 后台可写的自由字段；若把它列为可信主机，等于让该字段自己声明「我可访问内网」。
-    // ES 出站一律过 outbound_url_safe（见 ElasticService::esCurlInit）。
-    // 内网 ES：勿把 outbound_block_private 设为 0（将被忽略）；应设
-    // outbound_allow_private_override=1，或把 ES 主机放到可达的非保留网段 / 经可信代理。
-    return $hosts;
+    $origin = outbound_origin($url);
+    $cloud = is_array($conf) ? outbound_origin($conf['cloud_api'] ?? '') : '';
+    return '' !== $origin && $origin === $cloud ? 'cloud' : '';
 }
 
 /**
@@ -362,7 +285,7 @@ function outbound_trusted_hosts()
  * @param bool $resolve_dns 是否解析 DNS 校验 IP（默认 true）
  * @return bool true=安全放行；false=拒绝（scheme 非法/host 缺失/解析失败/开关开启时命中内网保留地址且非可信主机）
  */
-function outbound_url_safe($url, $resolve_dns = TRUE, &$resolved = NULL)
+function outbound_url_safe($url, $resolve_dns = TRUE, &$resolved = NULL, $context = '')
 {
     if (!is_string($url) || $url === '') return FALSE;
     $parsed = @parse_url($url);
@@ -375,9 +298,9 @@ function outbound_url_safe($url, $resolve_dns = TRUE, &$resolved = NULL)
     $port = isset($parsed['port']) ? intval($parsed['port']) : ('https' === strtolower($parsed['scheme']) ? 443 : 80);
     $hostname = trim($parsed['host'], '[]');
     // 内网段拦截开关：关闭时不校验网段（$trusted 恒真⇒整段跳过），
-    // 开启时才走原口径——cloud_api 可信主机豁免 + 其余内网/保留段 fail-closed（见 outbound_trusted_hosts）
+    // Only explicitly authorized, exact-origin cloud requests receive a private-network exception.
     $block_private = outbound_block_private();
-    $trusted = $block_private ? in_array(strtolower($hostname), outbound_trusted_hosts(), TRUE) : TRUE;
+    $trusted = !$block_private || 'cloud' === outbound_request_context($url, $context);
     $resolved = array();
     $v4 = array();
     $v6 = array();
@@ -420,31 +343,41 @@ function outbound_url_safe($url, $resolve_dns = TRUE, &$resolved = NULL)
  *                     此时本函数不再写 CURLOPT_TIMEOUT（复核修正：旧实现无条件写秒级超时，会把
  *                     调用方的毫秒设置覆盖掉——`core/install/index.php` 传 `$ms=1` 意图 500ms，
  *                     实际最坏每跳 500s，共 5 跳可挂住 FPM worker 40 分钟）。
- * @return string|false 响应体；校验失败返回 false
+ * @param int $maxBytes 解压后的单响应体上限；0 使用 8MB 默认值
+ * @param string $context 仅显式商店调用传 cloud；离开商店来源后不可恢复
+ * @return string|false 响应体；校验失败或超过限制返回 false
  */
-function outbound_curl_exec(&$ch, &$url, $timeout, $max_redirects = 5, $msMode = FALSE)
+function outbound_curl_exec(&$ch, &$url, $timeout, $max_redirects = 5, $msMode = FALSE, $maxBytes = 8388608, $context = '')
 {
-    $output = '';
+    // cURL passes decompressed chunks to WRITEFUNCTION; progress counters measure
+    // compressed transfer bytes and cannot enforce a memory limit.
+    $maxBytes = (int)$maxBytes > 0 ? (int)$maxBytes : 8 * 1048576;
+    $context = outbound_request_context($url, $context);
+    $body = '';
+    curl_setopt($ch, CURLOPT_WRITEFUNCTION, static function ($handle, $chunk) use (&$body, $maxBytes) {
+        $length = strlen($chunk);
+        if ($length > $maxBytes - strlen($body)) return 0;
+        $body .= $chunk;
+        return $length;
+    });
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
     for ($i = 0; $i <= $max_redirects; $i++) {
+        $context = outbound_request_context($url, $context);
         $pinned = NULL;
-        if (!outbound_url_safe($url, TRUE, $pinned)) return FALSE; // 每跳入口校验（含初始）+ IP 固定
+        if (!outbound_url_safe($url, TRUE, $pinned, $context)) return FALSE;
         if (!empty($pinned)) curl_setopt($ch, CURLOPT_RESOLVE, $pinned);
         curl_setopt($ch, CURLOPT_URL, $url);
-        if (empty($msMode)) {
-            curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-        }
-        $output = curl_exec($ch);
-        if (FALSE === $output) return FALSE;
+        if (empty($msMode)) curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        $body = '';
+        if (FALSE === curl_exec($ch)) return FALSE;
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $next = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
-        if (!in_array($code, array(301, 302, 303, 307, 308), TRUE) || empty($next)) break;
-        // 相对 Location 解析（基于当前 URL）
-        if (!preg_match('#^https?://#i', $next)) {
-            $next = http_url_resolve($url, $next);
-        }
+        if (!in_array($code, array(301, 302, 303, 307, 308), TRUE) || empty($next)) return $body;
+        if ($i === $max_redirects) return FALSE;
+        if (!preg_match('#^https?://#i', $next)) $next = http_url_resolve($url, $next);
         $url = $next;
     }
-    return $output;
+    return FALSE;
 }
 
 /**
@@ -602,7 +535,7 @@ function https_request_multi(array $urls, $timeout = 10, $max_redirects = 5, $ma
  *         error 取值：ssrf / open_failed / http_error / empty / too_big / prefix_mismatch
  *                     / transfer_failed / timeout / write_failed / rename_failed / ok
  */
-function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout = 60, $maxRedirects = 5, $expectPrefix = '', $totalTimeout = 0)
+function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout = 60, $maxRedirects = 5, $expectPrefix = '', $totalTimeout = 0, $context = '')
 {
     $fail = function ($error, $bytes = 0, $code = 0) {
         return array('ok' => FALSE, 'bytes' => (int)$bytes, 'sha256' => '', 'error' => $error, 'http_code' => (int)$code);
@@ -627,8 +560,10 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
     $prefix    = '';
     $code      = 0;
     $current   = $url;
+    $context = outbound_request_context($url, $context);
     $success   = FALSE;
     $storeSig  = '';
+    $storeSigExp = 0;
     $errno = 0;
     $deadline = $totalTimeout > 0 ? microtime(TRUE) + (int)$totalTimeout : 0;
 
@@ -636,8 +571,10 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
         $remaining = $deadline ? (int)ceil($deadline - microtime(TRUE)) : $timeout;
         if ($remaining <= 0) { $errno = CURLE_OPERATION_TIMEDOUT; break; }
         $storeSig = '';
+        $storeSigExp = 0;
         $pinned = NULL;
-        if (!outbound_url_safe($current, TRUE, $pinned)) break;
+        $context = outbound_request_context($current, $context);
+        if (!outbound_url_safe($current, TRUE, $pinned, $context)) break;
         $remaining = $deadline ? (int)ceil($deadline - microtime(TRUE)) : $timeout;
         if ($remaining <= 0) { $errno = CURLE_OPERATION_TIMEDOUT; break; }
 
@@ -709,6 +646,11 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
         if (in_array($code, array(301, 302, 303, 307, 308), TRUE) && !empty($next)) {
             if (!preg_match('~^https?://~i', $next)) $next = http_url_resolve($current, $next);
             $current = $next;
+            // A redirect body is not part of the final file or its signed digest.
+            if (!@ftruncate($fp, 0) || !@rewind($fp)) { $writeFail = TRUE; break; }
+            $bytes = 0;
+            $prefix = '';
+            $hashCtx = hash_init('sha256');
             continue; // 下一跳重新校验（含 DNS 与内网段）
         }
         if ($ok === FALSE || $errno) break;

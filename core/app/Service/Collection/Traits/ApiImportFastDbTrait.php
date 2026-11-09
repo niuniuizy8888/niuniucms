@@ -487,7 +487,7 @@ trait ApiImportFastDbTrait
             message(-1, '未配置云端地址（cloud_api），无法获取快速入库数据');
         }
         if (!is_file($conffile)) {
-            $res_json = http_get($fast_url);
+            $res_json = http_get($fast_url, '', 30, 3, 'cloud');
             // 修复（自锁面）：原实现把**任何**响应体直接落盘 runtime/<code>.json，
             // 且该文件无 TTL、只在 !is_file 时重取 ⇒ 商店缺 /fast/<code>.json 时（实测 404）会把
             // 404 HTML 永久缓存下来，之后永远解析失败、必须手工删文件才能恢复。

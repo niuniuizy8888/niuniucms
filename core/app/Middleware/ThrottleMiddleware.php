@@ -10,8 +10,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  * 
  * 功能：
  * 1. 基于 IP + Session 的多维度限流
- * 2. 静态资源白名单放行
- * 3. 后台/管理路由白名单
+ * 2. 依据实际执行入口识别请求
+ * 3. 真实后台入口豁免（登录另有专项限流）
  * 4. 爬虫识别与验证
  * 5. 黑名单机制
  * 6. 阶梯惩罚（违规次数越多，封禁时间越长；penalty_max 封顶）
@@ -44,12 +44,6 @@ class ThrottleMiddleware implements MiddlewareInterface
     /** @var array */
     private $config;
     
-    /** @var array 静态资源扩展名 */
-    private $staticExt = ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'woff', 'woff2', 'ico'];
-    
-    /** @var array URL 前缀白名单 */
-    private $urlPrefixAllow = ['admin', 'api'];
-    
     /** @var array 爬虫 User-Agent 关键词 */
     private $botList = ['Googlebot', 'Baiduspider', 'bingbot', 'YandexBot', 'Sogou'];
     
@@ -76,18 +70,10 @@ class ThrottleMiddleware implements MiddlewareInterface
             'verify_robot' => false,        // 启用爬虫验证
             'verify_dns' => false,          // 启用 DNS 反查
             'bot_list' => [],               // 自定义爬虫列表
-            'url_prefix_allow' => [],       // 自定义白名单
-            'static_ext' => [],             // 自定义静态资源扩展名
         ], $config);
         
         if (!empty($this->config['bot_list'])) {
             $this->botList = $this->config['bot_list'];
-        }
-        if (!empty($this->config['url_prefix_allow'])) {
-            $this->urlPrefixAllow = $this->config['url_prefix_allow'];
-        }
-        if (!empty($this->config['static_ext'])) {
-            $this->staticExt = $this->config['static_ext'];
         }
         $this->verifyRobot = (bool)$this->config['verify_robot'];
         $this->verifyDns = (bool)$this->config['verify_dns'];
@@ -96,7 +82,7 @@ class ThrottleMiddleware implements MiddlewareInterface
     /**
      * 限流主入口（PSR-15 形状 + 渐进式兼容：不强制 Response，拦截时自行 echo 响应体后返回 FALSE）。
      * 判定顺序（enable=FALSE 总开关最先）：
-     *  ① URL 白名单（admin_entry 后台入口、url_prefix_allow 段边界）或静态扩展名 ⇒ 放行；
+     *  ① 实际执行后台入口且具备后台入口标记 ⇒ 放行；
      *  ② /api.php 机器通道：持**有效 wire 令牌**（hasValidWireToken，hash_equals 恒时）整体豁免限流，
      *     匿名/错令牌走独立洪水窗口（api_limit/api_window，超限 reason=1）；
      *  ③ 通用面按序：空 UA(1) → 黑名单(0) → 阶梯惩罚期内直接拒(2，不累加违规) →
@@ -113,8 +99,9 @@ class ThrottleMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
         
-        // 白名单：后台路由 & 静态资源
-        if ($this->isUrlAllowed() || $this->isStaticResource()) {
+        // 静态文件在 Web 服务器或入口静态服务层结束；抵达此处的请求一律按动态请求处理。
+        // REQUEST_URI 可由重写规则改变，不能用 admin/api 路径段或图片后缀豁免。
+        if ($this->isAdminEntry()) {
             return $handler->handle($request);
         }
 
@@ -180,99 +167,44 @@ class ThrottleMiddleware implements MiddlewareInterface
     }
     
     /**
-     * 是否持**有效** wire 令牌（机器通道豁免限流的唯一依据）
-     *
-     * 与 api.php 入口的鉴权口径**逐字对齐**（派生令牌优先 + legacy `auth_key` 受 `api_legacy_token` 开关约束），
-     * 保证"被豁免限流的集合" ⊆ "api.php 会放行的集合"：令牌错/缺失 ⇒ 不豁免，照旧走 30/600s 洪水窗口。
-     * 恒时比较（hash_equals）；GET/POST 双通道读取（商店 worker 的 store_push 把 token 放 POST body）。
+     * 与 api.php 共用分用途令牌校验；另一用途的有效令牌不能豁免当前路由限流。
      */
     private function hasValidWireToken(): bool
     {
-        // L-4（R4）：与 api.php 逐字对齐 —— header X-NNCMS-Token 优先，其次 POST body，最后 ?token=（弃用）。
-        $hdrTok = isset($_SERVER['HTTP_X_NNCMS_TOKEN']) ? (string)$_SERVER['HTTP_X_NNCMS_TOKEN'] : '';
-        $token = '' !== $hdrTok ? $hdrTok
-            : (isset($_POST['token']) ? (string)$_POST['token']
-            : (isset($_GET['token']) ? (string)$_GET['token'] : ''));
-        if ('' === $token) return false;
-
-        if (function_exists('api_wire_token')) {
-            $derived = (string)api_wire_token('api');
-            if ('' !== $derived && hash_equals($derived, $token)) return true;
-        }
-
-        // M-2 part2：专用商店令牌（store_report_token）同样豁免——与 api.php 入口逐字对齐，
-        // 仍满足「被豁免集合 ⊆ api.php 放行集合」不变量（缺省态该键为空 ⇒ 退化为派生令牌）。
-        if (function_exists('store_wire_token')) {
-            $storeTok = (string)store_wire_token();
-            if ('' !== $storeTok && hash_equals($storeTok, $token)) return true;
-        }
-
-        $conf = function_exists('_SERVER') ? _SERVER('conf') : null;
-        $conf = is_array($conf) ? $conf : array();
-        // 项目审查修复：原式 `!isset(...) || intval(...) === 1` 是 **fail-open** 形态——
-        // 存量站点 config.php 没有该键时（升级不重写站点配置），中间件会把「拿原始 auth_key 当 token」
-        // 的请求判为有效并豁免 30/600s 洪水窗口，而 api.php 同口径是 `isset(...) && === 1`（N-03 修复）
-        // ⇒ 打破本方法自述不变量「被豁免限流的集合 ⊆ api.php 会放行的集合」。此处**逐字对齐 api.php**。
-        $legacyOk = isset($conf['api_legacy_token']) && intval($conf['api_legacy_token']) === 1;
-        $authKey = isset($conf['auth_key']) ? (string)$conf['auth_key'] : '';
-        return $legacyOk && '' !== $authKey && hash_equals($authKey, $token);
+        // 与 api.php 对齐：header 优先，其次 POST body，最后兼容旧 query token。
+        $hdrTok = is_string($_SERVER['HTTP_X_NNCMS_TOKEN'] ?? null) ? $_SERVER['HTTP_X_NNCMS_TOKEN'] : '';
+        $token = '' !== $hdrTok ? $hdrTok : ($_POST['token'] ?? $_GET['token'] ?? '');
+        if (!is_string($token) || $token === '') return false;
+        $route = $_GET['route'] ?? 'api';
+        return is_string($route) && function_exists('api_wire_token_allows')
+            && api_wire_token_allows($token, $route, $hdrTok !== '');
     }
 
     /**
-     * 检查 URL 是否在白名单
+     * 后台入口标记只能由入口脚本定义；同时核实实际执行文件位于应用根目录。
+     * 不依赖 URL 或 admin_entry 配置，兼容子目录、入口改名及改名后的配置提示页。
+     * 此处确认入口身份；登录状态、操作权限及登录专项限流仍由后台统一门禁校验。
      */
-    private function isUrlAllowed(): bool
+    private function isAdminEntry(): bool
     {
-        $path = $this->requestPath();
-        $allow = $this->urlPrefixAllow;
-        // 修复失配：后台真实入口是随机改名文件（admin_entry），旧 '/admin' 前缀从未命中过
-        $conf = _SERVER('conf');
-        if (!empty($conf['admin_entry'])) {
-            $allow[] = basename((string)$conf['admin_entry']);
-        }
-        foreach ($allow as $prefix) {
-            $prefix = (string)$prefix;
-            if ($prefix === '') continue;
-            $prefix = trim($prefix, '/');
-            // 子目录部署下 REQUEST_URI 可能是 /subdir/admin.php 或 /subdir/admin/...，
-            // 这里按 path 段边界匹配，不再要求命中站点根。
-            if (preg_match('#(?:^|/)' . preg_quote($prefix, '#') . '(?:$|/)#', $path)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    
-    /**
-     * 检查是否为静态资源
-     */
-    private function isStaticResource(): bool
-    {
-        $path = $this->requestPath();
-        if (!$path) return false;
-        
-        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-        return in_array($ext, $this->staticExt);
+        if (!defined('IN_ADMIN') || !IN_ADMIN || !defined('SKIP_ROUTE') || !SKIP_ROUTE) return false;
+        $entry = $this->requestBasename();
+        return $entry !== '' && !in_array($entry, ['index.php', 'api.php', 'install.php'], true)
+            && pathinfo($entry, PATHINFO_EXTENSION) === 'php';
     }
 
     /**
-     * 当前请求的 path（去掉 query string），保留子目录前缀。
-     */
-    private function requestPath(): string
-    {
-        $path = parse_url((string)($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH);
-        return is_string($path) ? $path : '';
-    }
-
-    /**
-     * 当前请求脚本名（例如 api.php / admin.php）。
+     * 当前实际执行的应用入口。SCRIPT_FILENAME 来自服务器，不能按重写前的 URL 猜测。
      */
     private function requestBasename(): string
     {
-        $path = $this->requestPath();
-        return '' !== $path ? basename($path) : '';
+        if (!defined('APP_PATH') || !is_string($_SERVER['SCRIPT_FILENAME'] ?? null)) return '';
+        $root = realpath(APP_PATH);
+        $script = realpath($_SERVER['SCRIPT_FILENAME']);
+        if ($root === false || $script === false || dirname($script) !== $root) return '';
+        return basename($script);
     }
-    
+
     /**
      * 获取客户端真实 IP
      */

@@ -47,7 +47,6 @@ trait SetManageThrottleTrait
                 'verify_blacklist' => form_radio('verify_blacklist', array('1' => '开启', '0' => '关闭'), array_value($throttle, 'verify_blacklist', 1) ? 1 : 0),
                 'verify_robot' => form_radio('verify_robot', array('1' => '开启', '0' => '关闭'), array_value($throttle, 'verify_robot', 0) ? 1 : 0),
                 'bot_list' => form_textarea('bot_list', implode("\n", array_value($throttle, 'bot_list', array())), '', '100%', 80),
-                'url_prefix_allow' => form_text('url_prefix_allow', implode(',', array_value($throttle, 'url_prefix_allow', array('admin', 'api')))),
                 // api.php 机器通道：令牌豁免 + 无/错令牌的洪水窗口
                 'api_token_exempt' => form_radio('api_token_exempt', array('1' => '开启', '0' => '关闭'), array_value($throttle, 'api_token_exempt', 1) ? 1 : 0),
                 'api_limit' => form_text('api_limit', array_value($throttle, 'api_limit', 30)),
@@ -82,8 +81,8 @@ trait SetManageThrottleTrait
         $botList = array_filter(array_map('trim', explode("\n", $botListText)));
         $throttle['bot_list'] = $botList ?: array('Googlebot', 'Baiduspider', 'bingbot');
 
-        $prefixText = param('url_prefix_allow', 'admin,api');
-        $throttle['url_prefix_allow'] = array_filter(array_map('trim', explode(',', $prefixText)));
+        // URL 名称与扩展名不能证明请求是后台或静态资源，移除旧的宽泛豁免配置。
+        unset($throttle['url_prefix_allow'], $throttle['static_ext']);
 
         // api.php 机器通道：令牌豁免 + 洪水窗口。
         // 关掉 api_token_exempt 会让商店 rsync-task worker 的逐页回调撞 429（任务转 error），

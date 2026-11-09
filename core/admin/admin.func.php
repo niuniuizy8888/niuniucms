@@ -54,6 +54,14 @@ function admin_token_check(): void
             setcookie($conf['cookie_pre'] . 'admin_token', '', admin_cookie_opt($time - 86400));
             message(-1, lang('admin_token_expiry'));
         }
+        // 路由层仍会复核权限；在续签前清掉已撤权的后台登录状态，保留前台会员登录。
+        if (FALSE === group_access(intval($admin_user['gid']), 'intoadmin')) {
+            // 会话存储会合并旧键，显式写 0，避免 unset 后又恢复 admin_ok=1。
+            $_SESSION['admin_ok'] = 0;
+            admin_token_clean();
+            unset($_COOKIE[$conf['cookie_pre'] . 'admin_token']);
+            message(1, lang('user_group_insufficient_privilege'));
+        }
         // R3-6：必须同时持有服务端会话 admin_ok（登录成功写入）；仅伪造 Cookie 不够
         if (1 !== intval(_SESSION('admin_ok'))) {
             setcookie($conf['cookie_pre'] . 'admin_token', '', admin_cookie_opt($time - 86400));

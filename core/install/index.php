@@ -276,7 +276,7 @@ if (empty($action)) {
             // cloud_api 留空 ⇒ 直接跳过上报，不产生任何出网请求。
             $reportUrl = '' !== $cloudApi ? $cloudApi . '/index.php?api=install' : '';
             if ('' !== $reportUrl) {
-                $json = https_request($reportUrl, $post, '', 500, 1, 8 * 1048576);
+                $json = https_request($reportUrl, $post, '', 500, 1, 8 * 1048576, 'cloud');
             } else {
                 xn_log('install report skipped: cloud_api is empty', 'install_report');
             }

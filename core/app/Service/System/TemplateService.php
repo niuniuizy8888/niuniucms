@@ -444,7 +444,7 @@ class TemplateService
         // 完整性由签名兜底，故 http 亦允许（LAN/自建商店），此处只做可用时的传输升级。
         $storeHostT = strtolower((string)parse_url(\App\Service\System\CloudOpsService::storeBase(), PHP_URL_HOST));
         $dlHostT = strtolower((string)parse_url($downurl, PHP_URL_HOST));
-        if ('' !== $storeHostT && $dlHostT === $storeHostT && 0 === strpos(strtolower($downurl), 'http://')) {
+        if ('https' === strtolower((string)parse_url(\App\Service\System\CloudOpsService::storeBase(), PHP_URL_SCHEME)) && '' !== $storeHostT && $dlHostT === $storeHostT && 0 === strpos(strtolower($downurl), 'http://')) {
             $downurl = 'https://' . substr($downurl, 7);
         }
         // 代码审查 #1 修复：改为**流式下载**（原先 https_request 整包入内存后才 strlen 判 200MB，
@@ -452,7 +452,7 @@ class TemplateService
         // 写盘失败会静默留空文件，把「不是 zip」伪装成下载成功）。
         // 现由 http_download_to_file 在传输过程中按块累计、超限即中止，内存峰值与包体无关；
         // 写临时文件 + 成功后 rename，失败路径不留半截包。
-        $dl = http_download_to_file($downurl, $savePath, 200 * 1048576, 60, 5, '');
+        $dl = http_download_to_file($downurl, $savePath, 200 * 1048576, 60, 5, '', 0, 'cloud');
         if (!$dl['ok']) {
             self::templateLogError('ZipArchive error: download failed (' . $dl['error'] . ', ' . $dl['bytes'] . 'B) ' . $downurl);
             return false;

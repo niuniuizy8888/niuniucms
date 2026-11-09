@@ -900,49 +900,22 @@ function uniq_id()
 // 生成订单号 16位
 // 当前年的天数
 /**
- * HTTPS请求（支持GET/POST，自动选择curl或stream）
- * @param string $url 提交地址
- * @param string $post POST数组 / 空为GET获取数据 / 'GET'获取连续跳转最终URL
- * @param string $cookie cookie
- * @param int $timeout 超时
- * @param int $ms 设为1是毫秒超时
- * @param int $maxBytes 响应体上限（字节，0=不限）：超限在**传输中**中止（进度回调返 1 → curl 中止 →
- *                      本函数返回 FALSE），不会先把整包拉进内存。
- *                      ⚠ 仅 curl 路径生效：无 curl 扩展时走 stream 回退（https_post/http_get），
- *                      其读取长度在 core/func/http.php 内**硬编码 4096000（≈4MB）**，既不随本参数
- *                      放大也不缩小（复核更正：旧注释写「不设限」是错的，实际是固定 4MB 静默截断——
- *                      截断后的 JSON 会解码失败，调用方只能看到「没数据」）。采集页/列表类调用点建议给 8MB。
- * @return mixed 返回数据（FALSE=失败或超限）
+ * HTTP(S) GET/POST through IP-pinned cURL. Missing cURL fails closed.
+ * $maxBytes limits the decompressed body; zero uses the 8MB default.
+ * $context='cloud' is reserved for configured cloud-service calls and grants an
+ * exception only for its exact origin. It is never inferred from an image URL.
  */
-function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $maxBytes = 0)
+function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $maxBytes = 0, $context = '')
 {
-    if (empty($url)) return FALSE;
+    if (empty($url) || !extension_loaded('curl')) return FALSE;
     is_array($post) and $post = http_build_query($post);
-    // 没有安装curl 使用http的形式，支持post
-    if (!extension_loaded('curl')) {
-        //throw new Exception('server not install CURL');
-        if ($post) {
-            return https_post($url, $post, $cookie, $timeout);
-        } else {
-            return http_get($url, $cookie, $timeout);
-        }
-    }
     is_array($cookie) and $cookie = http_build_query($cookie);
-    $curl = _curl_setup($url);
-    if (FALSE === $curl) return FALSE; // SSRF 防护：出站 URL 校验失败
+    $context = outbound_request_context($url, $context);
+    $curl = _curl_setup($url, $context);
+    if (FALSE === $curl) return FALSE;
     curl_setopt($curl, CURLOPT_HEADER, false);
-    curl_setopt($curl, CURLOPT_MAXREDIRS, 5);
-    // SSRF 防护：禁自动跟随，改手动逐跳校验（outbound_curl_exec）
     curl_setopt($curl, CURLOPT_FOLLOWLOCATION, false);
     curl_setopt($curl, CURLOPT_MAXREDIRS, 0);
-    // 传输中体积上限（审查修复）：进度回调超限返回 1 即中止传输（CURLE_ABORTED_BY_CALLBACK），
-    // RETURNTRANSFER 仍正常收流，outbound_curl_exec 的每跳重定向同样受此回调约束。
-    if ($maxBytes > 0) {
-        curl_setopt($curl, CURLOPT_NOPROGRESS, false);
-        curl_setopt($curl, CURLOPT_PROGRESSFUNCTION, function ($ch, $dlTotal, $dlNow, $ulTotal, $ulNow) use ($maxBytes) {
-            return $dlNow > $maxBytes ? 1 : 0;
-        });
-    }
     $ua1 = 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1';
     $ua = empty($_SERVER["HTTP_USER_AGENT"]) ? $ua1 : $_SERVER["HTTP_USER_AGENT"];
     curl_setopt($curl, CURLOPT_USERAGENT, $ua);
@@ -961,9 +934,9 @@ function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $
         curl_setopt($curl, CURLOPT_TIMEOUT, intval($timeout));
     }
     // 返回执行结果（手动跟随重定向，每跳 SSRF 校验）
-    $output = outbound_curl_exec($curl, $url, intval($timeout), 5, !empty($ms));   // $ms=1 时保留调用方的 TIMEOUT_MS（复核修正）
+    $output = outbound_curl_exec($curl, $url, intval($timeout), 5, !empty($ms), $maxBytes, $context);   // $ms=1 时保留调用方的 TIMEOUT_MS（复核修正）
     // 有效URL，输出URL非URL页面内容 CURLOPT_RETURNTRANSFER 必须为false
-    'GET' == $post and $output = curl_getinfo($curl, CURLINFO_EFFECTIVE_URL);
+    FALSE !== $output && 'GET' == $post and $output = curl_getinfo($curl, CURLINFO_EFFECTIVE_URL);
     // curl_close() is a no-op since PHP 8.0 and deprecated since 8.5
     // The handle is automatically closed when it goes out of scope.
     return $output;

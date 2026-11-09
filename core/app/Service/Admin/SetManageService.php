@@ -405,7 +405,7 @@ class SetManageService
      */
     public static function authKeyPage(int $uid): array
     {
-        $tok = function_exists('api_wire_token') ? (string)api_wire_token('api') : '';
+        $tok = function_exists('api_wire_token') ? (string)api_wire_token('collect') : '';
         $conf = (array)_SERVER('conf');
         return array(
             'header' => array('title' => '更换 auth_key'),
@@ -457,7 +457,8 @@ class SetManageService
         class_exists('App', FALSE) and \App::set('conf', $conf);
         $_SERVER['conf'] = $conf;
         $GLOBALS['conf'] = $conf;
-        $newApi = (string)api_wire_token('api');
+        $newApi = (string)api_wire_token('collect');
+        $newReplace = (string)api_wire_token('replace');
         // 所有会话下线（前台 + 后台）：会话行本身不依赖 auth_key，需显式清空
         $s1 = db_truncate('session');
         $s2 = db_truncate('session_data');
@@ -469,8 +470,9 @@ class SetManageService
             $reg = !empty($res['ok']) ? '<br>已向商店补登记新的采集令牌。' : '<br>商店补登记未完成（' . htmlspecialchars((string)($res['msg'] ?? ''), ENT_QUOTES, 'UTF-8') . '），云端采集首次失败时会自动补登记。';
         }
         $msg = 'auth_key 已更换。所有用户与管理员（包括你）都需要重新登录。'
-            . '<br>新的 api 令牌（仅显示这一次）：<code>' . htmlspecialchars($newApi, ENT_QUOTES, 'UTF-8') . '</code>'
-            . '<br>宝塔计划任务里的 api.php?token=… 采集/cron 地址需要换成新令牌（「采集 → 接口列表」里的定时采集链接已自动更新）。'
+            . '<br>新的采集令牌（仅显示这一次）：<code>' . htmlspecialchars($newApi, ENT_QUOTES, 'UTF-8') . '</code>'
+            . '<br>地址替换专用令牌（仅供超级管理员使用）：<code>' . htmlspecialchars($newReplace, ENT_QUOTES, 'UTF-8') . '</code>'
+            . '<br>请在采集页面、附件管理中重新复制计划任务命令，替换宝塔中的旧命令。不同用途的令牌不能混用。'
             . ((1 === intval($conf['api_legacy_token'] ?? 0)) ? '<br>注意：api_legacy_token=1，旧的「auth_key 原文当 token」用法同样已失效。' : '')
             . (($s1 && $s2) ? '' : '<br>会话表清空失败，已登录用户可能要到会话过期才下线。')
             . $reg;

@@ -23,7 +23,8 @@ NiuNiuCMS 是一个基于 PHP + MySQL 的视频内容管理系统，包含前台
 - MySQL 5.7+ / 8.0+
 - Nginx 或 Apache
 - 必需 PHP 扩展：`pdo`、`pdo_mysql`、`mbstring`、`ctype`、`tokenizer`、`iconv`、`json`、`openssl`、`filter`（安装向导会检测，缺失则无法继续）
-- 可选 PHP 扩展：`curl`（采集/云端/在线升级）、`gd`（缩略图）、`zip`（模板/插件安装与升级）、`fileinfo`（上传 MIME 检测）
+- 采集、远程图片同步、云端功能及在线升级必须启用 `curl`；基本安装允许缺少该扩展，但相关出网功能会停用，不回退到不固定 IP 的连接方式。
+- 按需 PHP 扩展：`gd`（缩略图）、`zip`（模板/插件安装与升级）、`fileinfo`（上传 MIME 检测）
 
 ## 目录概览
 

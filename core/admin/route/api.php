@@ -42,7 +42,7 @@ switch ($action) {
             $conf = _SERVER('conf');
             $base = rtrim(trim(isset($conf['cloud_api']) ? (string)$conf['cloud_api'] : ''), '/');
             if ('' === $base) message(1, '未配置商店地址（config: cloud_api）');
-            $arr = xn_json_decode((string)https_request($base . '/index.php?api=sources', '', '', 30, 0, 8 * 1048576));
+            $arr = xn_json_decode((string)https_request($base . '/index.php?api=sources', '', '', 30, 0, 8 * 1048576, 'cloud'));
             $list = (is_array($arr) && isset($arr['data']['list']) && is_array($arr['data']['list'])) ? $arr['data']['list'] : array();
             $n = 0;
             foreach ($list as $s) {
@@ -69,7 +69,7 @@ switch ($action) {
             $err = '';
             if ('' === $base) $err = '未配置商店地址（config: cloud_api）';
             else {
-                $arr = xn_json_decode((string)https_request($base . '/index.php?api=replacements', '', '', 30, 0, 8 * 1048576));
+                $arr = xn_json_decode((string)https_request($base . '/index.php?api=replacements', '', '', 30, 0, 8 * 1048576, 'cloud'));
                 $rows = (is_array($arr) && isset($arr['data']['list']) && is_array($arr['data']['list'])) ? $arr['data']['list'] : array();
             }
             // ⚠ 口径澄清（真机取证）：商店有**两个**替换记录端点——

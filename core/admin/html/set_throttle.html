@@ -133,9 +133,8 @@
                     </div>
 
                     <div class="mb-4">
-                        <label class="form-label fw-semibold">URL 前缀白名单</label>
-                        <?php echo $input['url_prefix_allow']; ?>
-                        <small class="text-muted">逗号分隔，这些 URL 前缀不受限流限制</small>
+                        <label class="form-label fw-semibold">后台与静态资源</label>
+                        <p class="text-muted mb-0">后台操作不占用前台访问次数，登录仍受登录频率限制。图片、样式等静态文件由服务器直接提供，无需设置网址白名单。</p>
                     </div>
 
                     <div class="mt-4">

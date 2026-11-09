@@ -193,7 +193,7 @@ class ApiImportService
             if (empty($arrlist[$code][$_fk])) continue;
             $_fu = \App\Service\System\CloudOpsService::storeUrl((string)$arrlist[$code][$_fk]);
             if ('' === $_fu) continue;
-            $_fcls = xn_json_decode(http_get($_fu));
+            $_fcls = xn_json_decode(http_get($_fu, '', 30, 3, 'cloud'));
             if (!empty($_fcls['class']) && is_array($_fcls['class'])) {
                 $apiarr = $_fcls['class'];
                 break;

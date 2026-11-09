@@ -760,8 +760,7 @@ function like_escape($kw)
  *    本函数上方原注释写的「未显式置 0 时仍接受原始 auth_key」是 N-03 **之前**的旧口径，已过期，以代码为准）。
  * fail-closed：conf['auth_key'] 缺失/为空时本函数直接返回空串，调用方（api.php）随即不放行
  * ⇒ 没配 auth_key 的站点机器通道整体不可用，而不是退化成弱凭据。
- * @param string $purpose 用途标识（域隔离前缀，取证：全仓调用点当前只传 'api'——
- *                        api.php 主入口、TaskManageService 的 cron URL 渲染、ApiExecutionService 出网请求）
+ * @param string $purpose 用途标识：collect/images/replace/store_push；api 仅用于旧采集兼容。
  * @return string 32 位十六进制派生 token；auth_key 缺失/为空时返回空串（调用方据此拒绝放行）
  */
 function api_wire_token($purpose = 'api')
@@ -772,6 +771,40 @@ function api_wire_token($purpose = 'api')
         return '';
     }
     return md5($authKey . '|nncms-api-token|' . $purpose);
+}
+
+/**
+ * 机器凭据按用途授权；入口和限流豁免共用，避免两处规则漂移。
+ * 旧 api 令牌曾在采集页面公开给运营账号，只保留采集兼容，不能再授权图片或地址替换。
+ * 图片任务只接受请求头，避免凭据进入任务 URL 和访问日志。
+ */
+function api_wire_token_allows($token, $route, $fromHeader = FALSE)
+{
+    if (!is_string($token) || $token === '' || !is_string($route)) return FALSE;
+    if ($route === 'images' && !$fromHeader) return FALSE;
+    $scopes = array(
+        'collect' => array('api', 'collect', 'cron'),
+        'images' => array('api', 'images'),
+        'replace' => array('api', 'replace'),
+        'store_push' => array('api', 'store_push'),
+        'api' => array('api', 'collect', 'cron', 'rsync'),
+    );
+    foreach ($scopes as $purpose => $routes) {
+        if (!in_array($route, $routes, TRUE)) continue;
+        $expected = api_wire_token($purpose);
+        if ($expected !== '' && hash_equals($expected, $token)) return TRUE;
+    }
+    // 商店推送仍须由路由校验启用开关及清单签名；商店凭据不能调用直接替换接口。
+    if (in_array($route, array('api', 'rsync', 'store_push'), TRUE)) {
+        $storeToken = store_wire_token();
+        if ($storeToken !== '' && ($route !== 'store_push' || $storeToken !== api_wire_token('api'))
+            && hash_equals($storeToken, $token)) return TRUE;
+    }
+    $conf = (array)_SERVER('conf');
+    $legacyKey = (string)($conf['auth_key'] ?? '');
+    return intval($conf['api_legacy_token'] ?? 0) === 1
+        && in_array($route, array('api', 'collect', 'cron', 'rsync'), TRUE)
+        && $legacyKey !== '' && hash_equals($legacyKey, $token);
 }
 
 /**

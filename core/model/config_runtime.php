@@ -91,7 +91,7 @@ function config_runtime_strip_forbidden($values)
     // 上线前审计修复（VULN-M06）：补齐「一旦经 KV/缓存写入即成 RCE / SSRF / 删站」的键。
     // 原名单已含 auth_key/admin_entry/tpl_allow_php 等，但漏掉：
     //  - tpl_allow_expr：开启后 {if:}/{@EXPR} 表达式照常编译，与模板写原语叠加即 RCE；
-    //  - cloud_api：决定 outbound_trusted_hosts() 豁免名单（内网出网豁免 + wire 令牌外发目标）；
+    //  - cloud_api：决定显式商店请求的精确来源豁免（协议/主机/端口）及令牌外发目标；
     //  - cache_path/log_path/upload_path：rmdir_recusive($conf['cache_path'],1) 可递归删站；
     //  - auth_salt：参与凭据派生。
     $forbidden_top = array(

@@ -71,7 +71,7 @@ class CloudOpsService
             'php_version' => PHP_VERSION,
             'sitename' => isset($conf['sitename']) ? (string)$conf['sitename'] : '',
         );
-        $raw = https_request($store . 'index.php?api=install', $payload, '', 8, 0, 8 * 1048576);
+        $raw = https_request($store . 'index.php?api=install', $payload, '', 8, 0, 8 * 1048576, 'cloud');
         if (FALSE === $raw) {
             if (function_exists('xn_log')) xn_log('store install register failed: no response', 'cloud');
             return array('ok' => FALSE, 'msg' => '商店补登记 token 失败（无响应）');
@@ -201,7 +201,7 @@ class CloudOpsService
         if (cache_get('niuniuzs_code_backoff')) {
             return (string)cache_get('niuniuzs_code');
         }
-        $res = https_request($store . '?macapi', '', '', 8, 0, 8 * 1048576);
+        $res = https_request($store . '?macapi', '', '', 8, 0, 8 * 1048576, 'cloud');
         if ('' === trim((string)$res)) {
             cache_set('niuniuzs_code_backoff', 1, 60);
             $res = cache_get('niuniuzs_code');
@@ -217,7 +217,7 @@ class CloudOpsService
      */
     private static function storeFetch($url)
     {
-        $res = https_request($url, '', '', 15, 0, 8 * 1048576);
+        $res = https_request($url, '', '', 15, 0, 8 * 1048576, 'cloud');
         if (!is_string($res) || '' === trim($res)) return '';
         if (is_array(xn_json_decode($res))) {
             cache_set('code', $res, 600);
@@ -238,7 +238,7 @@ class CloudOpsService
     {
         $store = self::storeBase();
         if ('' === $store) return array(array(), '未配置商店地址（config: cloud_api）');
-        $arr = xn_json_decode((string)https_request($store . 'index.php?api=replacements', '', '', 20, 0, 8 * 1048576));
+        $arr = xn_json_decode((string)https_request($store . 'index.php?api=replacements', '', '', 20, 0, 8 * 1048576, 'cloud'));
         if (!is_array($arr) || !isset($arr['data']['list']) || !is_array($arr['data']['list'])) {
             return array(array(), '商店无响应或返回格式异常');
         }
@@ -271,7 +271,7 @@ class CloudOpsService
         if ('' === $token) return array('ok' => FALSE, 'msg' => '本站缺少采集令牌（auth_key 未配置），无法下发替换');
         $payload['token'] = $token;
         $url = $store . 'index.php?api=replace';
-        $raw = https_request($url, $payload, '', 20, 0, 8 * 1048576);
+        $raw = https_request($url, $payload, '', 20, 0, 8 * 1048576, 'cloud');
         $arr = xn_json_decode((string)$raw);
         if (!is_array($arr)) {
             self::logNoStore('replace');
@@ -281,7 +281,7 @@ class CloudOpsService
         if ('' !== $msg && preg_match('#无效 token|站点未启用#u', $msg)) {
             $repair = self::storeInstallRegister();
             if (!empty($repair['ok'])) {
-                $raw = https_request($url, $payload, '', 20, 0, 8 * 1048576);
+                $raw = https_request($url, $payload, '', 20, 0, 8 * 1048576, 'cloud');
                 $arr = xn_json_decode((string)$raw);
                 if (!is_array($arr)) {
                     self::logNoStore('replace-retry');
@@ -331,7 +331,7 @@ class CloudOpsService
         if (is_string($cached)) { $host = $cached; return $host; }
         $store = self::storeBase();
         if ('' === $store) return $host;
-        $arr = xn_json_decode((string)https_request($store . '?api=site', '', '', 10, 0, 8 * 1048576));
+        $arr = xn_json_decode((string)https_request($store . '?api=site', '', '', 10, 0, 8 * 1048576, 'cloud'));
         $u = (is_array($arr) && isset($arr['data']['site_url'])) ? (string)$arr['data']['site_url'] : '';
         $h = strtolower((string)parse_url($u, PHP_URL_HOST));
         if ('' !== $h) {
@@ -347,7 +347,7 @@ class CloudOpsService
      * 商店把自身配置的 `site_url` 写进它生成的绝对 URL（`api.php` 的 `tmpl.*.pic`/`downurl`、
      * `rsync`、`down_path`，`?api=plugin|template` 的图标与 `download_url`）。当商店 `site_url`
      * 与 CMS 的 `cloud_api` 不同（本站实况：商店写 `192.0.2.3:2651`，CMS 配 `127.0.0.1:2651`），
-     * 客户端拿到的就是**不可达地址**；且该主机不在 `outbound_trusted_hosts()` 豁免名单内，
+     * 客户端拿到的就是**不可达地址**；且该来源不符合显式商店请求的 `outbound_request_context()` 精确来源限制，
      * 会被 `outbound_url_safe()` 直接拦下，表现为"下载失败"而无明显线索。
      *
      * 处置：URL 主机**恰为商店主机**（`cloud_api` 的 host）时，只取 path+query+fragment 拼回
@@ -555,7 +555,7 @@ class CloudOpsService
         // 上限在内存维度无效；且 fwrite(fopen()) 无错误检查会静默留空包）。
         // 现在传输过程中按块累计、超限即中止；写临时文件 + 成功后 rename。
         // 包体下限 4 字节（zip 最小长度）与 PK 前缀一并在此校验，替代原 strlen($zip)<4。
-        $dl = http_download_to_file($url, $save_path, 200 * 1048576, 60, 5, 'PK');
+        $dl = http_download_to_file($url, $save_path, 200 * 1048576, 60, 5, 'PK', 0, 'cloud');
         if (!$dl['ok'] || $dl['bytes'] < 4) {
             self::upgradeLogError('update_down error: download failed (' . $dl['error'] . ', ' . $dl['bytes'] . 'B)');
             return false;

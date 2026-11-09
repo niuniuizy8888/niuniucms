@@ -52,6 +52,6 @@
  <div class="modal-body"><p id="referenceMessage" role="status"></p><div id="referenceList" class="att-detail-list"></div><p id="referenceMore" class="form-text" hidden>先显示 20 条引用，请到对应内容页面查看其他记录。</p><p class="form-text mt-3">回收站保存已删除的视频和文章，不单独列出图片。只需重新下载时，可以保留内容引用直接操作。</p><div id="referenceError" class="alert alert-danger" hidden></div></div>
  <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">关闭</button><button type="button" class="btn btn-outline-primary" id="referenceRedownload">重新下载这张图片</button><button type="button" class="btn btn-danger" id="confirmDeleteAsset" hidden>确认删除图片</button></div>
 </div></div></div>
-<script id="attachmentBoot" type="application/json"><?php echo json_encode(['revision'=>$attachment_revision,'token'=>$safe_token,'api_token'=>api_wire_token('api'),'data'=>$attachment_data,'keep_local'=>$storage['keep_local']], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_INVALID_UTF8_SUBSTITUTE); ?></script>
+<script id="attachmentBoot" type="application/json"><?php echo json_encode(['revision'=>$attachment_revision,'token'=>$safe_token,'api_token'=>api_wire_token('images'),'data'=>$attachment_data,'keep_local'=>$storage['keep_local']], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_INVALID_UTF8_SUBSTITUTE); ?></script>
 <script src="/static/js/attachment.js?v=<?php echo $attachment_revision; ?>" defer></script>
 <?php include _include(ADMIN_PATH . 'html/foot.html'); ?>

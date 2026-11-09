@@ -13,12 +13,12 @@
                     auth_key 用于 Cookie/会话签名、免登录令牌、后台登录令牌和 api.php 机器通道令牌。更换后：
                     <ul class="mb-0">
                         <li>所有前台用户和管理员（包括你自己）会立即下线，需要重新登录；</li>
-                        <li>api.php 的令牌会变成新值，宝塔计划任务里的采集/cron 地址需要换成新令牌；</li>
+                        <li>采集、图片任务和地址替换各自使用独立令牌，更换后请重新复制宝塔中的采集及图片任务命令；</li>
                         <li>已在商店登记的采集令牌会在启用安装上报时自动补登记，否则云端采集首次失败时自动补登记。</li>
                     </ul>
                     如果升级前的旧版本模板可能读取过全局配置，建议更换一次。
                 </div>
-                <p>当前 api 令牌：<code><?php echo xn_h($api_token_mask);?></code><?php if (!empty($legacy_on)) { ?>（已开启 api_legacy_token 兼容）<?php } ?></p>
+                <p>当前采集令牌：<code><?php echo xn_h($api_token_mask);?></code><?php if (!empty($legacy_on)) { ?>（已开启旧采集令牌兼容）<?php } ?></p>
                 <form action="<?php echo url('set-authkey', '', TRUE);?>" method="post" id="authkeyForm" style="max-width:420px;">
                     <input type="hidden" name="safe_token" value="<?php echo $safe_token??''; ?>">
                     <div class="mb-3">

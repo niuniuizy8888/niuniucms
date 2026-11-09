@@ -358,7 +358,7 @@ class ApiExecutionService
     private static function remoteSyncBase($url, bool $allowRepair = TRUE)
     {
         if ('' === trim((string)$url)) return array();
-        $html = https_request($url, '', '', 30, 0, 8 * 1048576); // 传输中 8MB 上限（审查修复）
+        $html = https_request($url, '', '', 30, 0, 8 * 1048576, 'cloud'); // Explicit cloud control request
         $arr = xn_json_decode($html);
         // token 自愈：商店返回「无效 token / 站点未启用」时，尝试按当前 auth_key 补登记一次并重试。
         // 场景：安装时漏登记、历史 auth_key 变更后商店里还是旧 token。只重试一次，避免坏配置死循环。
@@ -1525,21 +1525,7 @@ class ApiExecutionService
             $url = $encurl;
         }
         if (!$url) return '';
-        // SSRF 防护：出站 URL 统一校验（scheme + DNS 解析 + 内网 IP 拦截）
-        if (!outbound_url_safe($url)) return '';
-        $conf = _SERVER('conf');
-        $ssl_verify = !empty($conf['ssl_verify']);
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false, // 手动跟随（outbound_curl_exec 逐跳校验）
-            CURLOPT_SSL_VERIFYPEER => $ssl_verify,
-            CURLOPT_SSL_VERIFYHOST => $ssl_verify ? 2 : 0,
-            CURLOPT_USERAGENT => 'CorePHP/1.0',
-        ]);
-        // 手动跟随重定向（最多 4 跳），每跳 SSRF 校验
-        $res = outbound_curl_exec($ch, $url, 10, 4);
-        unset($ch); // curl_close() 自 PHP 8.0 起无作用、8.5 起弃用：释放句柄即可
+        $res = https_request($url, '', '', 10, 0, 8 * 1048576);
         return $res === false ? '' : $res;
     }
 
