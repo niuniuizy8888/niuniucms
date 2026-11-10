@@ -273,6 +273,7 @@ return array(
     'api_code_nup' => 'Play group: no update needed.',
     'api_code_up' => 'Play group: updated successfully.',
     'api_remarks_up' => 'Video remarks updated.',
+    'api_remarks_kept' => 'Source progress is older; current remarks were kept.',
     'api_type_ok' => 'Category not bound, skipped (error).',
     'api_url_err' => 'Incomplete data, skipped (error).',
     'api_no_set' => 'No collection source configured, skipped (error):',

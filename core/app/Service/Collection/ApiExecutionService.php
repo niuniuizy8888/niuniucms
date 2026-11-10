@@ -782,9 +782,13 @@ class ApiExecutionService
                             $updateRules = array_map('trim', explode(',', (string)($config['uprule'] ?? '')));
                             if (in_array('d', $updateRules, true) && trim($arr['remarks']) !== ''
                                 && $arr['remarks'] !== (string)($info['remarks'] ?? '')) {
-                                $update['remarks'] = $arr['remarks'];
-                                $color = 'green';
-                                $des .= ($des !== '' ? ' ' : '') . lang('api_remarks_up');
+                                if (VideoRemarksService::isRegression((string)($info['remarks'] ?? ''), $arr['remarks'])) {
+                                    $des .= ($des !== '' ? ' ' : '') . lang('api_remarks_kept');
+                                } else {
+                                    $update['remarks'] = $arr['remarks'];
+                                    $color = 'green';
+                                    $des .= ($des !== '' ? ' ' : '') . lang('api_remarks_up');
+                                }
                             }
                             $update['create_date'] = time();
                             if ($info['name'] !== $arr['name']) $update['name'] = $arr['name'];
@@ -892,6 +896,9 @@ class ApiExecutionService
     private static function fastVideoUpdate(array $source, array $payload, array $info, string $scope, array $config, string $owner, array &$state): array
     {
         $update = ApiImportService::fastDbFilterUpdateRowByScope(ApiImportService::fastDbBuildUpdateRow($source, $payload['arr']['cid']), $scope);
+        if (isset($update['remarks']) && VideoRemarksService::isRegression((string)($info['remarks'] ?? ''), (string)$update['remarks'])) {
+            unset($update['remarks']);
+        }
         foreach (['play_from','play_url','play_server','play_note'] as $field) unset($update[$field]);
         if (in_array($scope, ['all','play'], true)) {
             // Choosing fast "update play" authorizes updates, while shared ownership still protects other HD entries.
