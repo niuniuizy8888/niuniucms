@@ -6,7 +6,8 @@ if (\App\Service\Front\SitemapService::shardOutOfRange(param(1), param(2), $conf
     header('Content-type: text/plain');
     exit;
 }
-$cacheKey = "page_sitemap_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0));
+$cacheKey = "page_sitemap_public_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_r' . ($conf['url_rewrite_on'] ?? 0)
+    . '_access' . \App\Service\Content\SitemapVisibilityService::fingerprint());
 if (page_cache_start($cacheKey, function () { header('Content-type: ' . ('xml' === param(1) ? 'application/xml; charset=utf-8' : 'text/plain')); })) return;
 
 // hook route_sitemap_start.php

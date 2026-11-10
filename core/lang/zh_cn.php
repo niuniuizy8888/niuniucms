@@ -267,6 +267,7 @@ return array(
     'api_code_ok' => '播放组 ，新增ok。',
     'api_code_nup' => '播放组 ，无须更新。',
     'api_code_up' => '播放组，更新成功。',
+    'api_remarks_up' => '影片备注已更新。',
     'api_type_ok' => '分类未绑定，跳过err',
     'api_url_err' => '数据不完整，跳过err',
     'api_no_set' => '未设置采集源，跳过err：',

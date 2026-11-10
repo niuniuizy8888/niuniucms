@@ -778,6 +778,14 @@ class ApiExecutionService
                             if ($receipt['result_status'] === 'update') $receipt['action_type'] = 'update';
                         } else {
                             $update = self::mergePlayUpdates($info, $cj_play_from_arr, $cj_play_url_arr, $cj_play_server_arr, $cj_play_note_arr, $config, $des, $color, $owner, $versionStates[$vid]);
+                            // Remarks have their own update rule; unchanged/disabled play updates must not suppress them.
+                            $updateRules = array_map('trim', explode(',', (string)($config['uprule'] ?? '')));
+                            if (in_array('d', $updateRules, true) && trim($arr['remarks']) !== ''
+                                && $arr['remarks'] !== (string)($info['remarks'] ?? '')) {
+                                $update['remarks'] = $arr['remarks'];
+                                $color = 'green';
+                                $des .= ($des !== '' ? ' ' : '') . lang('api_remarks_up');
+                            }
                             $update['create_date'] = time();
                             if ($info['name'] !== $arr['name']) $update['name'] = $arr['name'];
                             foreach (array('year', 'douban_id') as $field) {
@@ -991,7 +999,7 @@ class ApiExecutionService
             $cids[$cid] = $cid;
         }
         if (!$wanted) return $found;
-        $fields = array('vid', 'cid', 'alias', 'name', 'year', 'douban_id', 'play_from', 'play_url', 'play_server', 'play_note');
+        $fields = array('vid', 'cid', 'alias', 'name', 'year', 'douban_id', 'remarks', 'play_from', 'play_url', 'play_server', 'play_note');
         $fields = array_values(array_unique(array_merge($fields, $extraFields)));
         if ($rule['mode'] === 'custom') $fields = array_values(array_unique(array_merge($fields, $rule['fields'])));
         $remember = static function (array $rows) use (&$found, $wanted, $rule) {
@@ -1071,7 +1079,7 @@ class ApiExecutionService
         $arr['director'] = htmlspecialchars(bull_format_text($v['vod_director'], true), ENT_QUOTES);
         $arr['writer'] = htmlspecialchars(bull_format_text($v['vod_writer'], true), ENT_QUOTES);
         $arr['blurb'] = htmlspecialchars($v['vod_blurb'], ENT_QUOTES);
-        $arr['remarks'] = htmlspecialchars(bull_format_text($v['vod_remarks'], true), ENT_QUOTES);
+        $arr['remarks'] = htmlspecialchars(bull_format_text($v['vod_remarks'] ?? '', true), ENT_QUOTES);
         $arr['area'] = htmlspecialchars($v['vod_area'], ENT_QUOTES);
         $arr['lang'] = htmlspecialchars($v['vod_lang'], ENT_QUOTES);
         $arr['year'] = intval($v['vod_year']);

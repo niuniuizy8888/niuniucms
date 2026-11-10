@@ -28,9 +28,8 @@ trait VideoQueryTrait
     }
 
     /**
-     * 站点地图行装配：从索引表取当页 vid（indexIds 传 desc=FALSE，按主键升序），再回 vod 主表按显式列补
-     * vid/cid（可选 tag、play_from/play_url），逐行拼 url（依赖全局 $catelist 的 alias 做伪静态），
-     * withTag/withPlay 时顺带装配 tag_url、play_urls。两处空集都短路，不发回表查询。
+     * 站点地图只收录游客可读分类，在排序分页前过滤主表；计数与分片使用同一范围。
+     * 显式读取 vid/cid（可选 tag、play_from/play_url），并装配站内详情、标签和播放 URL。
      * @param int  $page     页码（签名已声明）
      * @param int  $pagesize 每页条数（签名已声明）
      * @param bool $withTag  是否附带标签链接
@@ -39,9 +38,8 @@ trait VideoQueryTrait
      */
     public static function sitemapRows(int $page = 1, int $pagesize = 20, bool $withTag = FALSE, bool $withPlay = FALSE): array
     {
-        $arrlist = self::indexIds($page, $pagesize, FALSE);
-        $vidarr = arrlist_values($arrlist, 'vid');
-        if (empty($vidarr)) return array();
+        $cids = SitemapVisibilityService::categoryIds();
+        if (!$cids) return array();
 
         $col = array('vid', 'cid');
         if ($withTag) {
@@ -52,7 +50,7 @@ trait VideoQueryTrait
             $col[] = 'play_url';
         }
 
-        $videolist = \App\Repository\RepositoryFactory::vod()->find(array('vid' => $vidarr), array('vid' => 1), 1, count($vidarr), 'vid', $col);
+        $videolist = \App\Repository\RepositoryFactory::vod()->find(array('cid' => $cids), array('vid' => 1), $page, $pagesize, 'vid', $col);
         if (empty($videolist)) return array();
 
         global $catelist;
@@ -74,6 +72,12 @@ trait VideoQueryTrait
         unset($video);
 
         return $videolist;
+    }
+
+    public static function sitemapCount(): int
+    {
+        $cids = SitemapVisibilityService::categoryIds();
+        return $cids ? \App\Repository\RepositoryFactory::vod()->count(array('cid' => $cids)) : 0;
     }
 
     // ---- sitemapRows 装配 helper（与 format()/playData 同源搬出；修复） ----

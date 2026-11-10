@@ -297,11 +297,10 @@ class ArtService
     //------------------------ sitemap 行（SEO 优化：文章分片,与 VideoService::sitemapRows 同构） ------------------------
     public static function sitemapRows(int $page = 1, int $pagesize = 20): array
     {
-        $arrlist = self::indexIds($page, $pagesize, FALSE);
-        $aidarr = arrlist_values($arrlist, 'aid');
-        if (empty($aidarr)) return array();
+        $cids = SitemapVisibilityService::categoryIds();
+        if (!$cids) return array();
 
-        $rows = \App\Repository\RepositoryFactory::art()->find(array('aid' => $aidarr), array('aid' => 1), 1, count($aidarr), 'aid', array('aid', 'cid'));
+        $rows = \App\Repository\RepositoryFactory::art()->find(array('cid' => $cids), array('aid' => 1), $page, $pagesize, 'aid', array('aid', 'cid'));
         if (empty($rows)) return array();
 
         global $catelist;
@@ -317,5 +316,11 @@ class ArtService
         unset($art);
 
         return $rows;
+    }
+
+    public static function sitemapCount(): int
+    {
+        $cids = SitemapVisibilityService::categoryIds();
+        return $cids ? \App\Repository\RepositoryFactory::art()->count(array('cid' => $cids)) : 0;
     }
 }

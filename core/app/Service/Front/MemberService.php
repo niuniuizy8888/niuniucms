@@ -20,15 +20,15 @@ class MemberService
 
         $model = '1' == $model ? 1 : 0;
         if ('like' == $type) {
+            self::requireReadableContent($aid, $model);
             if (\App\Service\Content\LikeService::check($aid, $uid, $model)) nn_message(0, '已点赞');
             // add 撞唯一键失败（并发重复）时不再自增计数（审计修复）
             $r = \App\Service\Content\LikeService::add($aid, $uid, $model);
             $r and \App\Service\Content\LikeService::incrementCounter($aid, $model);
             nn_message(0, '点赞成功');
         } elseif ('unlike' == $type) {
-            // 幂等取消：无记录时不减计数（审计修复）
-            if (\App\Service\Content\LikeService::check($aid, $uid, $model)) {
-                \App\Service\Content\LikeService::remove($aid, $uid, $model);
+            // 撤权后仍可取消自己的旧记录；仅实际删掉记录时减数，避免并发重复取消误减。
+            if (\App\Service\Content\LikeService::remove($aid, $uid, $model)) {
                 \App\Service\Content\LikeService::decrementCounter($aid, $model);
             }
             nn_message(3, '取消点赞成功');
@@ -38,8 +38,7 @@ class MemberService
     }
 
     /**
-     * 「我的点赞」列表装配：LikeService::listByUser 分页取 id（按 id 倒序），再按 model 分派
-     * ArtService::findAsc / VideoService::findAsc 回表；countByUser 出总数并补分页条（审计修复：此前无分页数据）。
+     * 「我的点赞」列表装配：按可读内容关联计算总数和分页，再批量回表。
      * 只读，GET 分支专用。
      * @param int $uid 用户 uid
      * @param int|string $page 页码（调用点传 param('page',1)，字符串亦可）
@@ -49,22 +48,7 @@ class MemberService
      */
     public static function buildLikeList($uid, $page, $limit, $model)
     {
-        $model = '1' == $model ? 1 : 0;
-        $isArt = 1 == $model;
-        $idlist = \App\Service\Content\LikeService::listByUser($uid, $page, $limit, $model);
-        $ids = $isArt ? array_column($idlist, 'aid') : array_column($idlist, 'vid');
-        $lfarrlis = $isArt
-            ? \App\Service\Content\ArtService::findAsc($ids)
-            : \App\Service\Content\VideoService::findAsc($ids, count($ids), true);
-        $total = \App\Service\Content\LikeService::countByUser($uid, $model);
-        // 分页（此前缺分页数据，模板分页区恒空；审计修复）
-        $pagination = self::buildPagination($total, $page, $limit, 'member-' . ($isArt ? 'art_like' : 'vod_like'));
-        return array(
-            'title' => $isArt ? '文章点赞' : '视频点赞',
-            'lfarrlis' => $lfarrlis,
-            'total' => $total,
-            'pagination' => $pagination,
-        );
+        return self::buildRelationList($uid, $page, $limit, $model, 'like');
     }
 
     /**
@@ -83,15 +67,15 @@ class MemberService
 
         $model = '1' == $model ? 1 : 0;
         if ('favorite' == $type) {
+            self::requireReadableContent($aid, $model);
             if (\App\Service\Content\FavoriteService::check($aid, $uid, $model)) nn_message(0, '已收藏');
             // add 撞唯一键失败（并发重复）时不再自增计数（审计修复）
             $r = \App\Service\Content\FavoriteService::add($aid, $uid, $model);
             $r and \App\Service\Content\FavoriteService::incrementCounter($aid, $model);
             nn_message(0, '收藏成功');
         } elseif ('unfavorite' == $type) {
-            // 幂等取消：无记录时不减计数（审计修复）
-            if (\App\Service\Content\FavoriteService::check($aid, $uid, $model)) {
-                \App\Service\Content\FavoriteService::remove($aid, $uid, $model);
+            // 不要求仍能阅读内容，用户可以清理撤权或删除前留下的收藏。
+            if (\App\Service\Content\FavoriteService::remove($aid, $uid, $model)) {
                 \App\Service\Content\FavoriteService::decrementCounter($aid, $model);
             }
             nn_message(3, '取消收藏成功');
@@ -111,19 +95,44 @@ class MemberService
      */
     public static function buildFavoriteList($uid, $page, $limit, $model)
     {
+        return self::buildRelationList($uid, $page, $limit, $model, 'favorite');
+    }
+
+    /** 新增关系必须指向当前可读内容；直接读取最小列，避免旧内容缓存沿用已变更的分类。 */
+    private static function requireReadableContent(int $id, int $model): void
+    {
+        global $gid;
+        $content = $id > 0
+            ? ($model === 1
+                ? \App\Repository\RepositoryFactory::art()->findOne(['aid' => $id], [], ['aid', 'cid'])
+                : \App\Repository\RepositoryFactory::vod()->findOne(['vid' => $id], [], ['vid', 'cid']))
+            : null;
+        if (!$content || !\App\Service\Content\CateService::accessUser((int)($content['cid'] ?? 0), (int)$gid, 'allowread')) {
+            nn_message(-1, '内容不存在或无权访问');
+        }
+    }
+
+    /** 两类内容及两种关系使用同一可见性、总数与分页口径，不在分页后剔除整页。 */
+    private static function buildRelationList($uid, $page, $limit, $model, string $kind): array
+    {
         $model = '1' == $model ? 1 : 0;
         $isArt = 1 == $model;
-        $idlist = \App\Service\Content\FavoriteService::listByUser($uid, $page, $limit, $model);
-        $ids = $isArt ? array_column($idlist, 'aid') : array_column($idlist, 'vid');
-        $lfarrlis = $isArt
-            ? \App\Service\Content\ArtService::findAsc($ids)
-            : \App\Service\Content\VideoService::findAsc($ids, count($ids), true);
-        $total = \App\Service\Content\FavoriteService::countByUser($uid, $model);
-        $pagination = self::buildPagination($total, $page, $limit, 'member-' . ($isArt ? 'art_favorites' : 'vod_favorites'));
+        $result = \App\Repository\MemberRelationRepository::page(
+            $kind, (int)$uid, $model, (int)$page, (int)$limit,
+            \App\Service\Content\ContentVisibilityService::categoryIds()
+        );
+        $ids = $result['ids'];
+        $rows = $ids ? ($isArt
+            ? \App\Service\Content\ArtService::findAsc($ids, count($ids))
+            : \App\Service\Content\VideoService::findAsc($ids, count($ids), true)) : [];
+        $lfarrlis = \App\Service\Content\ContentVisibilityService::filter((array)$rows);
+        $isLike = $kind === 'like';
+        $route = 'member-' . ($isArt ? 'art_' : 'vod_') . ($isLike ? 'like' : 'favorites');
+        $pagination = self::buildPagination($result['total'], $result['page'], $result['limit'], $route);
         return array(
-            'title' => $isArt ? '文章收藏' : '视频收藏',
+            'title' => ($isArt ? '文章' : '视频') . ($isLike ? '点赞' : '收藏'),
             'lfarrlis' => $lfarrlis,
-            'total' => $total,
+            'total' => $result['total'],
             'pagination' => $pagination,
         );
     }

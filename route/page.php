@@ -27,10 +27,21 @@ if (null === $pageCate) {
     exit;
 }
 
+// 阅读权限先于缓存和正文读取，旧页面也不能绕过撤权。
+if (!\App\Service\Content\CateService::accessUser(intval($pageCate['cid']), intval($gid), 'allowread')) {
+    http_response_code(403);
+    if ($json) message(-1, lang('forbidden'));
+    $header['title'] = '无权限';
+    $message = '您无权访问此内容，请登录或升级会员';
+    include _file(view_load('message'));
+    return;
+}
+
 // 整页缓存键（复核修正）：与 art/vod/play 同口径带 uid/gid/json/rewrite——
 // 少了 uid/gid 会把「管理员视角」的整页（public/head.html 的 intoadmin 块含后台入口名与登出令牌）
 // 写进全站共享缓存并回放给游客；少了 json 会让 HTML 与 JSON 分支互相串键。
 $cacheKey = "page_single_" . md5($slugDecoded . '_u' . intval($uid) . '_g' . intval($gid) . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
+$cacheKey .= '_access' . \App\Service\Content\ContentVisibilityService::fingerprint();
 if (page_cache_start($cacheKey)) return;
 
 // ⚠ 正文按需补读：全局 $catelist 是列表口径（不含 content 大列，见 CateService::findFmt），
