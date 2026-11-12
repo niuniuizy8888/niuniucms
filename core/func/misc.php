@@ -904,9 +904,11 @@ function uniq_id()
  * $maxBytes limits the decompressed body; zero uses the 8MB default.
  * $context='cloud' is reserved for configured cloud-service calls and grants an
  * exception only for its exact origin. It is never inferred from an image URL.
+ * $httpStatus receives the last HTTP status (0 if no response was received).
  */
-function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $maxBytes = 0, $context = '')
+function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $maxBytes = 0, $context = '', &$httpStatus = NULL, $maxRedirects = 5)
 {
+    $httpStatus = 0;
     if (empty($url) || !extension_loaded('curl')) return FALSE;
     is_array($post) and $post = http_build_query($post);
     is_array($cookie) and $cookie = http_build_query($cookie);
@@ -934,7 +936,8 @@ function https_request($url, $post = '', $cookie = '', $timeout = 30, $ms = 0, $
         curl_setopt($curl, CURLOPT_TIMEOUT, intval($timeout));
     }
     // 返回执行结果（手动跟随重定向，每跳 SSRF 校验）
-    $output = outbound_curl_exec($curl, $url, intval($timeout), 5, !empty($ms), $maxBytes, $context);   // $ms=1 时保留调用方的 TIMEOUT_MS（复核修正）
+    $output = outbound_curl_exec($curl, $url, intval($timeout), $maxRedirects, !empty($ms), $maxBytes, $context);
+    $httpStatus = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
     // 有效URL，输出URL非URL页面内容 CURLOPT_RETURNTRANSFER 必须为false
     FALSE !== $output && 'GET' == $post and $output = curl_getinfo($curl, CURLINFO_EFFECTIVE_URL);
     // curl_close() is a no-op since PHP 8.0 and deprecated since 8.5

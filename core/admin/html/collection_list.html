@@ -38,7 +38,57 @@ var asyncUrl=<?php echo json_encode(url('api-async_action',[],true)); ?>;
 var asyncToken=<?php echo json_encode(bull_token_get($uid,'admin_api_rsync')); ?>;
 var asyncSource='',asyncBusy=false;
 document.getElementById('asyncModal').addEventListener('show.bs.modal',function(e){asyncSource=e.relatedTarget.dataset.source;document.getElementById('asyncTitle').textContent=e.relatedTarget.dataset.name+' · 云端异步采集';document.getElementById('asyncResult').hidden=true;document.getElementById('asyncProgress').hidden=true;var box=document.getElementById('asyncActions');box.textContent='';[['register','注册'],['start','启动'],['pause','暂停'],['stop','停止'],['status','查看进度']].forEach(function(x){var b=document.createElement('button');b.type='button';b.className='btn '+(x[0]==='start'?'btn-primary':'btn-outline-secondary');b.textContent=x[1];b.dataset.cloudAction=x[0];box.appendChild(b);});});
-document.getElementById('asyncActions').addEventListener('click',function(e){var b=e.target.closest('[data-cloud-action]');if(!b||asyncBusy)return;asyncBusy=true;var box=document.getElementById('asyncResult'),progress=document.getElementById('asyncProgress');box.hidden=false;box.textContent='正在'+b.textContent+'…';progress.hidden=true;document.querySelectorAll('#asyncActions button').forEach(function(x){x.disabled=true;});fetch(asyncUrl,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},body:new URLSearchParams({operation:b.dataset.cloudAction,code:asyncSource,safe_token:asyncToken})}).then(function(r){if(!r.ok)throw Error('请求失败（'+r.status+'）');return r.json();}).then(function(r){box.textContent=r.message||'操作完成';box.classList.toggle('warn',r.code!==0);if(r.task){var t=r.task;var statuses={pending:'等待执行',running:'采集中',done:'已完成',stopped:'已停止（断点保留）',error:'采集异常',timeout:'超时'};progress.hidden=false;progress.textContent='状态：'+(statuses[t.status]||t.status)+' · 已完成 '+t.progress+' / '+t.count+' 页 · 失败 '+t.fail+' 页'+(t.last_error?' · '+t.last_error:'');}}).catch(function(e){box.textContent=e.message;box.classList.add('warn');}).finally(function(){asyncBusy=false;document.querySelectorAll('#asyncActions button').forEach(function(x){x.disabled=false;});});});
+function requestCloudAction(action) {
+    return fetch(asyncUrl, {
+        method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},
+        body:new URLSearchParams({operation:action,code:asyncSource,safe_token:asyncToken})
+    }).then(function(response) {
+        if (!response.ok) throw Error('请求失败（'+response.status+'）');
+        return response.json();
+    });
+}
+var cloudStatuses={pending:'等待执行',running:'采集中',done:'已完成',stopped:'已停止（断点保留）',error:'采集异常',timeout:'超时'};
+function showCloudProgress(result) {
+    var progress=document.getElementById('asyncProgress');
+    var task=result.task;
+    progress.hidden=false;
+    progress.classList.toggle('warn',!task);
+    if (!task) {
+        progress.textContent='暂未取得任务进度。'+(result.message||'请稍后点击查看进度。');
+        return;
+    }
+    progress.textContent='状态：'+(cloudStatuses[task.status]||task.status)+' · 已完成 '+task.progress+' / '+task.count+' 页 · 失败 '+task.fail+' 页'+(task.last_error?' · '+task.last_error:'');
+}
+document.getElementById('asyncActions').addEventListener('click',async function(event) {
+    var button=event.target.closest('[data-cloud-action]');
+    if (!button||asyncBusy) return;
+    var action=button.dataset.cloudAction;
+    var resultBox=document.getElementById('asyncResult');
+    var buttons=document.querySelectorAll('#asyncActions button');
+    asyncBusy=true;
+    buttons.forEach(function(item){item.disabled=true;});
+    resultBox.hidden=false;
+    resultBox.classList.remove('warn');
+    resultBox.textContent='正在'+button.textContent+'…';
+    document.getElementById('asyncProgress').hidden=true;
+    try {
+        var result=await requestCloudAction(action);
+        resultBox.textContent=result.message||'操作完成';
+        resultBox.classList.toggle('warn',result.code!==0);
+        if (result.task) showCloudProgress(result);
+        if (action==='start'&&result.code===0) {
+            try { showCloudProgress(await requestCloudAction('status')); }
+            catch (error) { showCloudProgress({message:error.message}); }
+        }
+    } catch (error) {
+        resultBox.textContent=error.message;
+        resultBox.classList.add('warn');
+    } finally {
+        asyncBusy=false;
+        buttons.forEach(function(item){item.disabled=false;});
+    }
+});
 document.getElementById('asyncModal').addEventListener('hide.bs.modal',function(e){if(asyncBusy)e.preventDefault();});
 var startup=new URL(location.href),startSource=<?php echo json_encode($cloud_start,JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>;if(startup.searchParams.has('cloud_start')){startup.searchParams.delete('cloud_start');history.replaceState(null,'',startup);}if(startSource){var trigger=Array.from(document.querySelectorAll('[data-bs-target="#asyncModal"]')).find(function(b){return b.dataset.source===startSource;});if(trigger){bootstrap.Modal.getOrCreateInstance(document.getElementById('asyncModal')).show(trigger);document.querySelector('#asyncActions [data-cloud-action="start"]').click();}}
 document.getElementById('sourceSearch').addEventListener('input',function(e){document.querySelectorAll('[data-source-name]').forEach(function(r){r.hidden=!r.dataset.sourceName.toLowerCase().includes(e.target.value.toLowerCase());});});

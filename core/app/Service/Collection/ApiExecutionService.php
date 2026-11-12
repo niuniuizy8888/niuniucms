@@ -131,9 +131,14 @@ class ApiExecutionService
         }
         $r = $action === 'start' ? self::rsyncStart($code) : self::rsyncStop($code);
         $msg = is_array($r) ? trim((string)($r['msg'] ?? '')) : '';
-        $ok = is_array($r) && (isset($r['code']) ? (int)$r['code'] === 0 : (bool)preg_match('/^(ok|success|running|pending|stopped)$/i', $msg));
+        $ok = is_array($r) && (array_key_exists('code', $r)
+            ? in_array($r['code'], [0, '0'], true)
+            : (bool)preg_match('/^(ok|success|pending|stopped)$/i', $msg));
         admin_audit_log('api_cloud_' . $action, ['source'=>$code, 'ok'=>$ok]);
         $labels = ['start'=>'已请求启动，已有断点时将继续采集。', 'pause'=>'已请求暂停，云端在分页结束后停下并保留断点。', 'stop'=>'已请求停止，云端保留采集进度。'];
+        if ($ok && $action === 'start' && $msg === 'running') {
+            return ['code'=>0, 'message'=>'已启动采集，云端已确认任务状态为「采集中」。'];
+        }
         return ['code'=>$ok ? 0 : 1, 'message'=>$ok ? $labels[$action] : ($msg !== '' ? $msg : '云端未确认操作，请稍后重试或查看进度')];
     }
 
@@ -197,7 +202,7 @@ class ApiExecutionService
      * 以 taskCode=md5(token.源码.'all') 请求商店 rsync/start（空 h = 不限窗口，与 count 同口径，
      * 窗口化改造要求见体内注释）。所有失败路径都返回带 msg 的数组（不再回 FALSE/空 ⇒ 后台静默）。
      * @param string $code 采集源编码（conf['api'] 的键）
-     * @return array 商店 JSON 响应原样透传，或本地兜底 array('msg' => string)
+     * @return array 商店响应（已确认的 running 归一为业务码 0），或本地错误消息
      */
     public static function rsyncStart(string $code)
     {
@@ -228,6 +233,14 @@ class ApiExecutionService
             //   ② 用同一个窗口算 count（apiPageCount 需接受 h 参数），否则又会「分母全量/分子窗口」错位。
             $query = "token=$token&from_code=$fromCode&count=$allPage&page=$page&code=$taskCode";
             $r = self::remoteSyncBase(self::rsyncUrl('api', 'start', $query));
+            // 官方启动接口的 code 是回显的任务标识，不能按数字业务码解释。
+            if (is_array($r) && is_string($r['msg'] ?? null) && strcasecmp(trim($r['msg']), 'running') === 0) {
+                $replyCode = $r['code'] ?? null;
+                if (!array_key_exists('code', $r) || $replyCode === $taskCode || in_array($replyCode, [0, '0'], true)) {
+                    return ['code'=>0, 'msg'=>'running'];
+                }
+                return ['code'=>1, 'msg'=>'云端未确认当前任务已启动，请查看进度'];
+            }
             return is_array($r) ? $r : array('msg' => '启动失败：商店 rsync 端点无响应');
         }
         return array('msg' => '启动失败：取不到源站总页数（源 API 不可达或返回异常），请确认采集源可用');

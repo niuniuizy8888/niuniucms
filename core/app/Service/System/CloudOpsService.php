@@ -71,18 +71,25 @@ class CloudOpsService
             'php_version' => PHP_VERSION,
             'sitename' => isset($conf['sitename']) ? (string)$conf['sitename'] : '',
         );
-        $raw = https_request($store . 'index.php?api=install', $payload, '', 8, 0, 8 * 1048576, 'cloud');
-        if (FALSE === $raw) {
-            if (function_exists('xn_log')) xn_log('store install register failed: no response', 'cloud');
-            return array('ok' => FALSE, 'msg' => '商店补登记 token 失败（无响应）');
+        // 商店登记成功返回 HTTP 200 空正文，参数错误也可能空正文。令牌仅发送给配置的登记端点。
+        $raw = https_request($store . 'index.php?api=install', $payload, '', 8, 0, 8 * 1048576, 'cloud', $status, 0);
+        $result = is_string($raw) && $raw !== '' ? xn_json_decode($raw) : null;
+        $code = $result['code'] ?? null;
+        if ($status === 200 && ($raw === '' || $code === 0 || $code === '0')) {
+            return array('ok' => TRUE, 'msg' => 'ok');
         }
-        $res = xn_json_decode((string)$raw);
-        if (!is_array($res) || 0 !== intval($res['code'] ?? -1)) {
-            $err = is_array($res) ? (string)($res['msg'] ?? '') : '返回非 JSON';
-            if (function_exists('xn_log')) xn_log('store install register rejected: ' . $err, 'cloud');
-            return array('ok' => FALSE, 'msg' => '商店补登记 token 失败：' . $err);
+        $detail = is_array($result) && is_string($result['msg'] ?? null) ? trim($result['msg']) : '';
+        if ($status === 0) {
+            $err = '未收到商店响应';
+        } elseif ($status !== 200) {
+            $err = 'HTTP ' . $status . ($detail !== '' ? '，' . $detail : '');
+        } elseif ($raw === FALSE) {
+            $err = '读取商店回执失败';
+        } else {
+            $err = $detail !== '' ? $detail : '商店返回了无法确认成功的登记回执';
         }
-        return array('ok' => TRUE, 'msg' => 'ok');
+        if (function_exists('xn_log')) xn_log('store install register rejected: ' . $err, 'cloud');
+        return array('ok' => FALSE, 'msg' => '云端注册失败：' . $err);
     }
 
     /**
