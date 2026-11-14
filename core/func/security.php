@@ -395,11 +395,13 @@ function bull_token_failure_kind($safe_key, $token, $uid = 0)
  * 只做「失败原因怎么说」的分支，校验链 bull_token_verify（解密 + ip + uid + UA + 时效 +
  * 场景指纹环）一字未改；三种类别见 bull_token_failure_kind()。
  * 放在 security.php 而非 admin.func.php：Service 层也要调用，且不依赖后台入口的加载顺序。
+ * @return string 校验通过后签发的下一枚令牌
  */
 function admin_bull_token_guard($uid, $scene = '', $token = '')
 {
     if (NULL === $token || '' === $token) $token = param('safe_token');
-    if (FALSE !== bull_token_verify($uid, $token, $scene)) return;
+    $next_token = bull_token_verify($uid, $token, $scene);
+    if (FALSE !== $next_token) return $next_token;
     $kind = bull_token_failure_kind($scene, $token, $uid);
     if ('session_expired' === $kind) {
         if (function_exists('admin_audit_log')) admin_audit_log('admin_session_expired', array('scene' => $scene, 'target_uid' => $uid));

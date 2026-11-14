@@ -44,6 +44,8 @@ function requestCloudAction(action) {
         headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},
         body:new URLSearchParams({operation:action,code:asyncSource,safe_token:asyncToken})
     }).then(function(response) {
+        var nextToken=response.headers.get('X-NNCMS-CSRF-Token');
+        if (nextToken) asyncToken=nextToken;
         if (!response.ok) throw Error('请求失败（'+response.status+'）');
         return response.json();
     });

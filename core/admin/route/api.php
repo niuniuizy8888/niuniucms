@@ -12,7 +12,9 @@ $header['title'] = lang('api_page');
 switch ($action) {
     case 'async_action':
         if ('POST' !== $method) message(1, lang('method_error'));
-        admin_bull_token_guard($uid, 'admin_api_rsync', param('safe_token'));
+        $next_token = admin_bull_token_guard($uid, 'admin_api_rsync', param('safe_token'));
+        header('X-NNCMS-CSRF-Token: ' . $next_token);
+        header('Cache-Control: no-store');
         $result = \App\Service\Collection\ApiExecutionService::cloudAction((string)param('operation'), (string)param('code'));
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($result, JSON_UNESCAPED_UNICODE);

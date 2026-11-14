@@ -135,9 +135,12 @@ class ApiExecutionService
             ? in_array($r['code'], [0, '0'], true)
             : (bool)preg_match('/^(ok|success|pending|stopped)$/i', $msg));
         admin_audit_log('api_cloud_' . $action, ['source'=>$code, 'ok'=>$ok]);
-        $labels = ['start'=>'已请求启动，已有断点时将继续采集。', 'pause'=>'已请求暂停，云端在分页结束后停下并保留断点。', 'stop'=>'已请求停止，云端保留采集进度。'];
+        $labels = ['start'=>'已请求启动，已有断点时将继续采集。', 'pause'=>'已请求暂停，请查看进度确认任务状态。', 'stop'=>'已请求停止，请查看进度确认任务状态。'];
         if ($ok && $action === 'start' && $msg === 'running') {
             return ['code'=>0, 'message'=>'已启动采集，云端已确认任务状态为「采集中」。'];
+        }
+        if ($ok && $action !== 'start' && ($msg === '任务已停止' || strcasecmp($msg, 'stopped') === 0)) {
+            return ['code'=>0, 'message'=>$action === 'pause' ? '已暂停采集，当前页处理结束后停下，可从断点继续。' : '已停止采集，云端保留断点，可从任务详情继续。'];
         }
         return ['code'=>$ok ? 0 : 1, 'message'=>$ok ? $labels[$action] : ($msg !== '' ? $msg : '云端未确认操作，请稍后重试或查看进度')];
     }
@@ -247,19 +250,28 @@ class ApiExecutionService
     }
 
     /**
-     * 停止云端异步采集：按 taskCode=md5(token.源码.'all') 请求商店 rsync/stop。
-     * 失败不拦截——响应直接透传给上层 rsyncMsg 兜底成可读文案。
+     * 暂停与停止共用商店 rsync/stop。以 HTTP 状态和商店回执共同确认，保留断点。
      * @param string $code 采集源编码
-     * @return mixed 商店 JSON 解码结果（期望 array；URL 非法/非 JSON 时为 array()/null）
+     * @return array 含业务码及可显示消息的动作结果
      */
     public static function rsyncStop(string $code)
     {
-        $conf = _SERVER('conf');
         // token 派生化：出网 URL 一律用 api_wire_token（auth_key 不再出现在 URL/日志/云端存储）
         $token = function_exists('store_wire_token') ? (string)store_wire_token() : (string)api_wire_token('api');
-        $fromCode = $code;
-        $taskCode = md5($token . $fromCode . 'all');
-        return self::remoteSyncBase(self::rsyncUrl('api-stop', 'stop', "token=$token&code=$taskCode"));
+        $taskCode = md5($token . $code . 'all');
+        $result = self::remoteSyncBase(self::rsyncUrl('api-stop', 'stop', "token=$token&code=$taskCode"), true, $httpStatus);
+        $msg = is_string($result['msg'] ?? null) ? trim($result['msg']) : '';
+        // 官方 stop 成功只返回中文 msg，旧商店也可能用数字业务码或英文回执。
+        $confirmed = $msg === '任务已停止' || preg_match('/^(ok|success|pending|stopped)$/iD', $msg);
+        $ok = is_array($result) && (array_key_exists('code', $result) ? in_array($result['code'], [0, '0'], true) : $confirmed);
+        if ($httpStatus >= 200 && $httpStatus < 300 && $ok && $msg !== '任务不存在或已结束') {
+            return ['code'=>0, 'msg'=>$msg !== '' ? $msg : '停止请求已受理'];
+        }
+        $error = $msg !== '' && !$confirmed ? $msg : '云端未确认任务停止';
+        if ($httpStatus < 200 || $httpStatus >= 300) {
+            $error .= $httpStatus ? '（HTTP ' . $httpStatus . '）' : '（未收到商店响应）';
+        }
+        return ['code'=>1, 'msg'=>$error];
     }
 
     /**
@@ -368,19 +380,20 @@ class ApiExecutionService
     }
 
     /** 明文基址请求（store 模式；来源基址在 fetchJson/fetchVideoJson 内经 core_decrypt 解出后直连） */
-    private static function remoteSyncBase($url, bool $allowRepair = TRUE)
+    private static function remoteSyncBase($url, bool $allowRepair = TRUE, &$httpStatus = null)
     {
+        $httpStatus = 0;
         if ('' === trim((string)$url)) return array();
-        $html = https_request($url, '', '', 30, 0, 8 * 1048576, 'cloud'); // Explicit cloud control request
+        $html = https_request($url, '', '', 30, 0, 8 * 1048576, 'cloud', $httpStatus);
         $arr = xn_json_decode($html);
         // token 自愈：商店返回「无效 token / 站点未启用」时，尝试按当前 auth_key 补登记一次并重试。
         // 场景：安装时漏登记、历史 auth_key 变更后商店里还是旧 token。只重试一次，避免坏配置死循环。
         if ($allowRepair && is_array($arr)) {
-            $msg = trim((string)($arr['msg'] ?? ''));
+            $msg = is_string($arr['msg'] ?? null) ? trim($arr['msg']) : '';
             if ('' !== $msg && preg_match('#无效 token|站点未启用#u', $msg)) {
                 $repair = \App\Service\System\CloudOpsService::storeInstallRegister();
                 if (!empty($repair['ok'])) {
-                    return self::remoteSyncBase($url, FALSE);
+                    return self::remoteSyncBase($url, FALSE, $httpStatus);
                 }
             }
         }
