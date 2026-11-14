@@ -392,15 +392,21 @@ function bull_token_failure_kind($safe_key, $token, $uid = 0)
 /**
  * 后台写操作 token 校验统一入口：校验失败即 message 终止（不返回）
  *
- * 只做「失败原因怎么说」的分支，校验链 bull_token_verify（解密 + ip + uid + UA + 时效 +
- * 场景指纹环）一字未改；三种类别见 bull_token_failure_kind()。
- * 放在 security.php 而非 admin.func.php：Service 层也要调用，且不依赖后台入口的加载顺序。
+ * 写操作成功后轮换令牌。只读轮询通过相同的场景和上下文校验后复用会话令牌，
+ * 避免频繁查询把其他标签页的令牌从场景环中挤出。
  * @return string 校验通过后签发的下一枚令牌
  */
-function admin_bull_token_guard($uid, $scene = '', $token = '')
+function admin_bull_token_guard($uid, $scene = '', $token = '', $read_only = FALSE)
 {
     if (NULL === $token || '' === $token) $token = param('safe_token');
-    $next_token = bull_token_verify($uid, $token, $scene);
+    if ($read_only) {
+        $next_token = FALSE;
+        if (is_string($token) && bull_session_token_has($scene, $token) && bull_token_validate($uid, $token)) {
+            $next_token = bull_token_get($uid, $scene);
+        }
+    } else {
+        $next_token = bull_token_verify($uid, $token, $scene);
+    }
     if (FALSE !== $next_token) return $next_token;
     $kind = bull_token_failure_kind($scene, $token, $uid);
     if ('session_expired' === $kind) {
