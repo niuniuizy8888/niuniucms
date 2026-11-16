@@ -50,6 +50,7 @@ class ApiImportService
         if ($limit < 1 || $limit > 50000 || !in_array($updateMode, ['skip','update'], true)
             || !array_key_exists($updateScope, self::fastDbUpdateScopeOptions())) throw new \InvalidArgumentException('快速采集策略无效');
         $categories = self::fastCat($code, $canCreateCategories);
+        if (!$categories['bound']) throw new \RuntimeException('没有可采集的已绑定视频分类，请先在视频采集中配置分类');
         $sourceMeta = api_import_batch_source_meta($code);
         
         $note = $updateMode === 'update' 
@@ -83,9 +84,7 @@ class ApiImportService
         
         return [
             'batch_id' => $batchId,
-            'resstr' => $canCreateCategories
-                ? '分类已导入，准备开始第1页数据入库'
-                : '已绑定 ' . $categories['bound'] . ' 个现有分类；无创建分类权限，已跳过 ' . $categories['skipped'] . ' 个缺失分类，其内容不会导入。准备开始第1页数据入库',
+            'resstr' => '将按已绑定的 ' . $categories['bound'] . ' 个视频分类采集，准备开始第 1 页数据入库',
         ];
     }
 
@@ -152,6 +151,14 @@ class ApiImportService
     public static function fastCat(string $code, bool $canCreateCategories = false): array
     {
         global $conf;
+        $model = CollectionCategoryService::sourceModel($code, $conf);
+        if ($model === 1) throw new \RuntimeException('所选资源站用于文章采集，请选择视频资源站');
+        if (isset($conf['api'][$code]) && array_key_exists($code, $conf['bind'] ?? [])) {
+            $saved = (array)$conf['bind'][$code];
+            $bindings = CollectionCategoryService::videoBindings($saved);
+            $bound = count($bindings['ids']) + count($bindings['legacy']);
+            return ['bound'=>$bound, 'skipped'=>count($saved)-$bound];
+        }
         // 修复：统一走 cloudPayload()（商店不加密 / legacy 解密自适应）
         $_codes = \App\Service\System\CloudOpsService::cloudPayload();
         $arrlist = $_codes['api'] ?? array();

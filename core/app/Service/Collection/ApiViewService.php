@@ -12,7 +12,7 @@ class ApiViewService
      */
     public static function listPage(int $uid): array
     {
-        $decoded = self::decodedCodePayload();
+        $sources = VideoCategoryCatalog::sources();
         $safe_token = bull_token_set($uid, 'admin_api_set');
         bull_token_set($uid, 'admin_api_setdel');
         bull_token_set($uid, 'admin_api_create');
@@ -23,7 +23,7 @@ class ApiViewService
         bull_token_set($uid, 'admin_api_auto');
 
         return array(
-            'arrlist' => isset($decoded['list']) ? $decoded['list'] : array(),
+            'arrlist' => array_values($sources),
             'safe_token' => $safe_token,
             // 「清空分类」按钮的破坏范围提示（栏目/视频/文章总量，仅 COUNT(*)）
             'cate_total' => \App\Repository\RepositoryFactory::cate()->count(),
@@ -84,8 +84,31 @@ class ApiViewService
             return array('status' => 'error', 'msg' => '采集源未配置');
         }
 
-        $api_type = self::apiClass($code, $conf);
-        $typelist = CollectionCategoryService::targets(CollectionCategoryService::sourceModel($code, $conf) ?? $model);
+        $bindings = $conf['bind'][$code] ?? [];
+        $byId = [];
+        $sourceModel = CollectionCategoryService::sourceModel($code, $conf);
+        $video = $sourceModel === 0 || CollectionCategoryService::usesVideoIds($bindings);
+        $typelist = CollectionCategoryService::targets($video ? 0 : ($sourceModel ?? $model));
+        if ($video) {
+            try {
+                $api_type = VideoCategoryCatalog::categories($conf['api'][$code]['api'])['rows'];
+            } catch (\RuntimeException $e) { return ['status'=>'error', 'msg'=>$e->getMessage()]; }
+            $index = CollectionCategoryService::videoBindings($bindings, $typelist);
+            $byId = $index['ids'];
+            $bindings = [];
+            $counts = array_count_values(array_column($api_type, 'type_name'));
+            foreach ($api_type as $type) {
+                $name = $type['type_name'];
+                if ($counts[$name] !== 1) continue;
+                $cid = CollectionCategoryService::videoTarget($index, $type);
+                if ($cid) {
+                    $byId[$type['type_id']] = $cid;
+                    $bindings[$name] = $cid;
+                }
+            }
+        } else {
+            $api_type = self::apiClass($code, $conf);
+        }
         $cate = arrlist_key_values($typelist, 'name', 'cid');
 
         bull_token_set($uid, 'admin_api_newcreate');
@@ -93,7 +116,9 @@ class ApiViewService
             'status' => 'success',
             'api_type' => $api_type,
             'cate' => $cate,
-            'bind' => $conf['bind'][$code] ?? array(),
+            'cate_by_id' => $typelist,
+            'bind' => $bindings,
+            'bind_by_id' => $byId,
             'safe_token' => bull_token_set($uid, 'admin_api_cate'),
         );
     }

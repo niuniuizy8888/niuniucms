@@ -38,7 +38,7 @@
                             <select name="category" class="form-control">
                                 <option value="0" selected>顶级分类</option>
                                 <?php if ($arrlist) { foreach($arrlist as $_cid=>$_cate) { ?>
-                                <option value="<?php echo $_cid;?>" <?php echo (($cup ?? 0) == $_cid) ? 'selected' : ''; ?>><?php echo $_cate['name'];?></option>
+                                <option value="<?php echo $_cid;?>" <?php echo (($cup ?? 0) == $_cid) ? 'selected' : ''; ?>><?php echo str_repeat('　', min(8, $_cate['depth'])).$_cate['name'];?></option>
                                 <?php }} ?>
                             </select>
                         </div>

@@ -700,7 +700,7 @@ class ApiExecutionService
         if (!isset($conf['bind'][$code])) {
             exit(lang('api_no_set'));
         }
-        $apicate = CollectionCategoryService::validBindings((array)$conf['bind'][$code], 0);
+        $apicate = CollectionCategoryService::videoBindings((array)$conf['bind'][$code]);
         $ress = array();
 
         // 海报预取只使用提示快照；真正入库在持锁后从主库重新查重。
@@ -714,9 +714,10 @@ class ApiExecutionService
         if (!empty($conf['down_pic']) && $conf['down_pic'] == 1 && function_exists('https_request_multi')) {
             $prefetch_urls = array();
             foreach ($data['data'] as $pv) {
-                if (!isset($apicate[$pv['type_name']]) || empty($pv['vod_name'])) continue;
-                $candidates = $existing_vods[self::videoIdentity(self::storedVodName($pv['vod_name']), $apicate[$pv['type_name']], $matchRule)] ?? array();
-                if (self::matchingVideo($candidates, VideoMatchRuleService::sourceMetadata($pv, (int)$apicate[$pv['type_name']]), $matchRule)) continue;
+                $cid = CollectionCategoryService::videoTarget($apicate, $pv);
+                if (!$cid || empty($pv['vod_name'])) continue;
+                $candidates = $existing_vods[self::videoIdentity(self::storedVodName($pv['vod_name']), $cid, $matchRule)] ?? array();
+                if (self::matchingVideo($candidates, VideoMatchRuleService::sourceMetadata($pv, $cid), $matchRule)) continue;
                 if (!preg_match('#^https?://#i', (string)($pv['vod_pic'] ?? ''))) continue;
                 $pu = xn_url_strip($pv['vod_pic']);
                 if ('' !== $pu) $prefetch_urls[$pu] = $pu;
@@ -748,7 +749,7 @@ class ApiExecutionService
         $created = $categoryCounts = $touched = $movedCategories = $receipts = array();
         try {
             if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
-            $apicate = CollectionCategoryService::validBindings((array)$conf['bind'][$code], 0);
+            $apicate = CollectionCategoryService::videoBindings((array)$conf['bind'][$code]);
             $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule,
                 $fastOptions !== null ? array_keys(ApiImportService::fastDbDiffLabels()) : []);
             $candidates = array();
@@ -761,14 +762,15 @@ class ApiExecutionService
                 $msg = '';
                 $arr = array();
                 $receipt = ['vid'=>0, 'cid'=>0, 'vod_name'=>self::storedVodName($v['vod_name'] ?? ''), 'action_type'=>'skip', 'result_status'=>'unbound', 'diff_fields'=>[], 'diff_snapshot'=>[]];
-                if (!isset($apicate[$v['type_name']])) {
+                $cid = CollectionCategoryService::videoTarget($apicate, $v);
+                if (!$cid) {
                     // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
                     // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
                     $des = lang('api_type_ok') . htmlspecialchars((string)$v['type_name'], ENT_QUOTES, 'UTF-8');
                 } elseif (self::storedVodName($v['vod_name'] ?? '') === '') {
                     $des = lang('api_url_err');
                 } else {
-                    $payload = self::videoRowPayload($v, $apicate[$v['type_name']], $players, $param);
+                    $payload = self::videoRowPayload($v, $cid, $players, $param);
                     $arr = $payload['arr'];
                     if ($fastOptions !== null) $arr['uptime'] = \App\Service\Content\VideoService::fitColumns(['uptime'=>(string)($v['vod_time'] ?? '')])['uptime'];
                     $cid = $arr['cid'];
@@ -941,13 +943,13 @@ class ApiExecutionService
     public static function previewFastVideoData(array $items, string $code, string $scope): array
     {
         $conf = _SERVER('conf'); $rule = VideoMatchRuleService::settings($conf);
-        $bindings = CollectionCategoryService::validBindings((array)($conf['bind'][$code] ?? []), 0);
+        $bindings = CollectionCategoryService::videoBindings((array)($conf['bind'][$code] ?? []));
         $items = self::normalizeFastVideoRows($items);
         $candidates = self::findExistingVideos($items, $bindings, $rule, array_keys(ApiImportService::fastDbDiffLabels()));
         $rows = []; foreach ($candidates as $bucket) foreach ($bucket as $vid => $row) $rows[$vid] = $row;
         $states = VideoVersionService::load($rows); $result = []; $previewId = -1;
         foreach ($items as $source) {
-            $cid = (int)($bindings[$source['type_name']] ?? 0);
+            $cid = CollectionCategoryService::videoTarget($bindings, $source);
             $name = self::storedVodName($source['vod_name']);
             $row = ['vod_name'=>(string)$source['vod_name'], 'type_name'=>$source['type_name'], 'vod_id'=>(int)$source['vod_id'], 'cid'=>$cid, 'vod_time'=>$source['vod_time'] ?? '', 'vid'=>0, 'diff_fields'=>[], 'diff_snapshot'=>[]];
             if ($cid < 1 || $name === '') { $row['status']='unbound'; $result[]=$row; continue; }
@@ -1021,10 +1023,10 @@ class ApiExecutionService
         $useCategory = VideoMatchRuleService::usesCategory($rule);
         $wanted = $names = $cids = $found = array();
         foreach ($items as $item) {
-            if (!isset($bindings[$item['type_name'] ?? ''])) continue;
+            $cid = CollectionCategoryService::videoTarget($bindings, $item);
+            if (!$cid) continue;
             $name = self::storedVodName($item['vod_name'] ?? '');
             if ($name === '') continue;
-            $cid = (int)$bindings[$item['type_name']];
             $wanted[self::videoIdentity($name, $cid, $rule)] = $name;
             $names[$name] = $name;
             $raw = \App\Service\Content\VideoService::fitColumns(array('name' => htmlspecialchars((string)$item['vod_name'], ENT_QUOTES, 'UTF-8')));
@@ -1050,10 +1052,11 @@ class ApiExecutionService
         }
         $missing = array();
         foreach ($items as $item) {
-            if (!isset($bindings[$item['type_name'] ?? ''])) continue;
+            $cid = CollectionCategoryService::videoTarget($bindings, $item);
+            if (!$cid) continue;
             $name = self::storedVodName($item['vod_name'] ?? '');
-            $key = self::videoIdentity($name, $bindings[$item['type_name']], $rule);
-            if ($name !== '' && !self::matchingVideo($found[$key] ?? array(), VideoMatchRuleService::sourceMetadata($item, (int)$bindings[$item['type_name']]), $rule)) $missing[$key] = true;
+            $key = self::videoIdentity($name, $cid, $rule);
+            if ($name !== '' && !self::matchingVideo($found[$key] ?? array(), VideoMatchRuleService::sourceMetadata($item, $cid), $rule)) $missing[$key] = true;
         }
         if ($missing) {
             $db = _SERVER('db');
@@ -1682,8 +1685,9 @@ class ApiExecutionService
         if ('' === $decodeurl && preg_match('#^https?://#i', (string)$encodeurl)) {
             $decodeurl = (string)$encodeurl;
         }
-        $uri = "?ac=" . $ac . "&t=" . urlencode($t) . "&pg=" . urlencode($pg) . "&h=" . urlencode($h) . "&ids=&wd=";
-        $url = "$decodeurl" . $uri;
+        $params = ['ac'=>$ac, 'pg'=>$pg, 'h'=>$h];
+        if ($t !== '' && $t !== null) $params['t'] = $t;
+        $url = ApiSourceService::withQuery((string)$decodeurl, $params, ['t'=>'','ids'=>'','wd'=>'']);
         $html = https_request($url, '', '', 30, 0, 8 * 1048576); // 传输中 8MB 上限（审查修复：采集页整包入内存面）
         $json = json_decode((string)$html, true);
         if (!is_array($json) || !isset($json['page'], $json['pagecount'], $json['limit'], $json['total'], $json['list'])

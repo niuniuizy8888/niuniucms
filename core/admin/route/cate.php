@@ -7,13 +7,19 @@ $action = param(1, 'list');
 $header['title'] = lang('cate_page');
 $catelist = cate_list_cache();
 switch ($action) {
+    case 'setup_sources':
     case 'setup_preview':
     case 'setup_apply':
         if ('POST' !== $method) message(1, lang('method_error'));
-        admin_bull_token_guard($uid, 'admin_cate', param('safe_token'));
+        admin_bull_token_guard($uid, 'admin_cate', param('safe_token'), $action !== 'setup_apply');
         try {
-            if ($action === 'setup_preview') {
-                $data = \App\Service\Collection\CollectionSetupService::preview('template', (string)param('key'));
+            if ($action === 'setup_sources') {
+                $data = [];
+                foreach (\App\Service\Collection\VideoCategoryCatalog::sources() as $code => $source) {
+                    $data[] = ['code'=>(string)$code, 'name'=>$source['name'] ?? $code, 'type'=>$source['type'] ?? ''];
+                }
+            } elseif ($action === 'setup_preview') {
+                $data = \App\Service\Collection\CollectionSetupService::preview('template', (string)param('key'), 0, (string)param('from_code', ''));
             } else {
                 $choices = json_decode((string)param('choices', '', FALSE), true);
                 if (!is_array($choices)) throw new \RuntimeException('请选择分类');

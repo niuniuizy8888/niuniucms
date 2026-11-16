@@ -22,6 +22,20 @@ class ApiSourceService
         return $url;
     }
 
+    /** 替换采集动作参数，保留线路路径和其他参数的原始编码。 */
+    public static function withQuery(string $url, array $parameters, array $defaults = []): string
+    {
+        $parts = explode('?', explode('#', $url, 2)[0], 2);
+        $query = [];
+        foreach (explode('&', $parts[1] ?? '') as $pair) {
+            $key = urldecode(explode('=', $pair, 2)[0]);
+            unset($defaults[$key]);
+            if ($pair !== '' && !array_key_exists($key, $parameters)) $query[] = $pair;
+        }
+        $query[] = http_build_query($parameters + $defaults, '', '&', PHP_QUERY_RFC3986);
+        return $parts[0] . '?' . implode('&', $query);
+    }
+
     /**
      * 保存或更新采集源
      * 

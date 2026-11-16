@@ -12,8 +12,10 @@ class CategoryManageService
      */
     public static function listPage(array $catelist, int $uid): array
     {
+        $tree = category_tree($catelist);
         return array(
-            'arrlist' => category_tree($catelist),
+            'arrlist' => $tree,
+            'categoryRows' => self::categoryRows((array)$tree),
             'safe_token' => bull_token_set($uid, 'admin_cate'),
             // 导入/清空分类为独立 POST 场景，需单独生成场景 token
             'import_token' => bull_token_set($uid, 'admin_api_import'),
@@ -48,7 +50,7 @@ class CategoryManageService
         array_htmlspecialchars($_cate);
         return array(
             '_cid' => $cid,
-            'arrlist' => category_tree($catelist),
+            'arrlist' => self::categoryRows((array)category_tree($catelist), $cid),
             'name' => $_cate['name'],
             'seo_title' => $_cate['seo_title'],
             'seo_key' => $_cate['seo_key'],
@@ -185,8 +187,10 @@ class CategoryManageService
             message(-1, lang('save_failed'));
         }
 
-        $conf['bind'] = self::removeBindByCateName($cate['name'], isset($conf['bind']) && is_array($conf['bind']) ? $conf['bind'] : array());
-        kv_set('bind', $conf['bind']);
+        $cleaned = \App\Service\Collection\CollectionCategoryService::updateBindings($conf, static function (array $current) use ($cid) {
+            return self::removeBindingsForCategory($cid, $current['bind']);
+        });
+        if (!$cleaned) message(1, '分类已删除，采集绑定清理失败，请检查该资源站的绑定');
 
         admin_audit_log('cate_del', array('cid' => $cid, 'name' => $cate['name']));
         return $cid;
@@ -427,22 +431,29 @@ class CategoryManageService
         admin_bull_token_guard($uid, 'admin_cate', $safeToken);
     }
 
-    /**
-     * 从采集绑定配置剔除已删分类：$bind 形态为 源编码 => [分类名 => cid]（conf['bind']），
-     * 逐源删除该分类名映射，返回新数组（不修改入参 $bind）。
-     * @param string $cateName 已删除分类的名称（库内转义形态）
-     * @param array $bind 全量绑定配置
-     * @return array 剔除后的绑定配置
-     */
-    private static function removeBindByCateName(string $cateName, array $bind): array
+    private static function categoryRows(array $tree, int $exclude = 0, int $depth = 0): array
     {
-        $replaces = array();
-        foreach ($bind as $key => $value) {
-            if (is_array($value) && isset($value[$cateName])) {
-                unset($value[$cateName]);
-            }
-            $replaces[$key] = $value;
+        $rows = [];
+        foreach ($tree as $row) {
+            $cid = (int)$row['cid'];
+            if ($cid === $exclude) continue;
+            $children = $row['sonlist'] ?? [];
+            unset($row['sonlist']);
+            $row['depth'] = $depth;
+            $rows[$cid] = $row;
+            if ($children) $rows += self::categoryRows($children, $exclude, $depth + 1);
         }
-        return $replaces;
+        return $rows;
+    }
+
+    /** 按本地 cid 清理绑定，同名的其他本地分类保留。 */
+    private static function removeBindingsForCategory(int $cid, array $bind): array
+    {
+        foreach ($bind as $code => $entries) {
+            foreach ((array)$entries as $key => $entry) {
+                if ((int)(is_array($entry) ? ($entry['cid'] ?? 0) : $entry) === $cid) unset($bind[$code][$key]);
+            }
+        }
+        return $bind;
     }
 }

@@ -24,7 +24,7 @@ switch ($action) {
     case 'setup_preview':
     case 'setup_apply':
         if ('POST' !== $method) message(1, lang('method_error'));
-        admin_bull_token_guard($uid, 'admin_api_setup', param('safe_token'));
+        admin_bull_token_guard($uid, 'admin_api_setup', param('safe_token'), $action === 'setup_preview');
         try {
             if ($action === 'setup_preview') {
                 $data = \App\Service\Collection\CollectionSetupService::preview('source', (string)param('key'), (int)param('model', 0));
@@ -177,9 +177,9 @@ switch ($action) {
             }
 
             if ($binstatus === 'bind') {
-                $result = \App\Service\Collection\ApiBindService::bind($code, $name, $local_id);
+                $result = \App\Service\Collection\ApiBindService::bind($code, $name, $local_id, (string)param('type_id',''));
             } elseif ($binstatus === 'unbind') {
-                $result = \App\Service\Collection\ApiBindService::unbind($code, $name);
+                $result = \App\Service\Collection\ApiBindService::unbind($code, $name, (string)param('type_id',''));
             } else {
                 $result = ['success' => false, 'msg' => '未知的操作类型'];
             }
@@ -221,7 +221,11 @@ switch ($action) {
                 extract(\App\Service\Collection\ApiViewService::fastDbStage('preview', $code, $update_scope, intval($uid)), EXTR_SKIP);
                 include _include(ADMIN_PATH . 'html/api_fast_preview.html');
             } elseif ('prepare' === $stage) {
-                extract(\App\Service\Collection\ApiViewService::fastDbStage('prepare', $code, $update_scope, intval($uid), $limit, $update_mode, $page, $batch_id, $canManageCategories), EXTR_SKIP);
+                try {
+                    extract(\App\Service\Collection\ApiViewService::fastDbStage('prepare', $code, $update_scope, intval($uid), $limit, $update_mode, $page, $batch_id, $canManageCategories), EXTR_SKIP);
+                } catch (\RuntimeException $e) {
+                    message(1, xn_h($e instanceof \PDOException ? '准备采集失败，请重试' : $e->getMessage()));
+                }
                 include _include(ADMIN_PATH . 'html/api_fast_res.html');
             } elseif ('import' === $stage) {
                 $importData = \App\Service\Collection\ApiViewService::fastDbStage('import', $code, $update_scope, intval($uid), $limit, $update_mode, $page, $batch_id);
@@ -300,6 +304,7 @@ switch ($action) {
                 message(0, jump('请先设置采集源', url('api-list', array(), TRUE), 3));
             }
             $result = \App\Service\Collection\ApiBindService::autoBindAll($code, $api);
+            if (empty($result['success'])) message(1, xn_h($result['msg']));
             message(0, jump($result['msg'], url('api-list', array(), TRUE), 3));
         }
         break;

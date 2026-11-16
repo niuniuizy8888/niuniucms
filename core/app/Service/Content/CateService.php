@@ -361,7 +361,8 @@ class CateService
             $catelist = cache_get('catelist');
         }
         if (NULL === $catelist) {
-            $catelist = self::findFmt();
+            // 全站分类索引保留全部父级，多个资源站分别导入后可能超过单个源的分类数。
+            $catelist = self::findFmt([], ['rank'=>-1], 1, PHP_INT_MAX);
             if (empty($domain['site']) || !is_array($domain['site'])) {
                 cache_set('catelist', $catelist, 7200);
             }
@@ -610,7 +611,7 @@ class CateService
     {
         if (empty($catelist)) return NULL;
         if (null !== self::$categoryTreeCache) return self::$categoryTreeCache;
-        $arrlist = arrlist_cond_orderby($catelist, array('type' => 1), array(), 1, 1000);
+        $arrlist = arrlist_cond_orderby($catelist, array('type' => 1), array(), 1, count($catelist));
         $arrlist = self::categoryTreeFormat($arrlist);
         self::$categoryTreeCache = array_multisort_key($arrlist, 'rank', FALSE, 'cid');
         return self::$categoryTreeCache;
@@ -621,13 +622,20 @@ class CateService
      */
     public static function categoryTreeFormat($catelist)
     {
-        foreach ($catelist as &$v) {
-            if ($v['cup']) {
-                $catelist[$v['cup']]['sonlist'][$v['cid']] = $v;
-                unset($catelist[$v['cid']]);
+        $children = [];
+        foreach ((array)$catelist as $row) $children[(int)$row['cup']][] = $row;
+        // 从根开始组装，兼容任意源站排序以及多级子分类。
+        $branch = static function (int $pid) use (&$branch, &$children): array {
+            $out = [];
+            foreach ($children[$pid] ?? [] as $row) {
+                $cid = (int)$row['cid'];
+                if ($cid <= 0) continue;
+                if (isset($children[$cid])) $row['sonlist'] = $branch($cid);
+                $out[$cid] = $row;
             }
-        }
-        return $catelist;
+            return $out;
+        };
+        return $branch(0);
     }
 
     /**
