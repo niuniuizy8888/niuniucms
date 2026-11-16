@@ -155,8 +155,9 @@ class ApiImportService
         if ($model === 1) throw new \RuntimeException('所选资源站用于文章采集，请选择视频资源站');
         if (isset($conf['api'][$code]) && array_key_exists($code, $conf['bind'] ?? [])) {
             $saved = (array)$conf['bind'][$code];
-            $bindings = CollectionCategoryService::videoBindings($saved);
-            $bound = count($bindings['ids']) + count($bindings['legacy']);
+            $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved);
+            $bindings = CollectionCategoryService::videoBindings($saved, catalog: $catalog);
+            $bound = count($bindings['ids']);
             return ['bound'=>$bound, 'skipped'=>count($saved)-$bound];
         }
         // 修复：统一走 cloudPayload()（商店不加密 / legacy 解密自适应）

@@ -180,6 +180,7 @@ class ApiExecutionService
      */
     public static function videoApi(string $type, string $api, string $code, int $page, int $uid = 0, int $batch = 1): array
     {
+        $page = max(1, $page);
         admin_audit_log('api_collect_video', array('type' => $type, 'code' => $code, 'page' => $page, 'batch' => $batch));
         return self::runPagedApi($type, $api, $code, $page, 'videoApiPage', 'pg', 'api-list', $uid, $batch);
     }
@@ -196,6 +197,7 @@ class ApiExecutionService
      */
     public static function artApi(string $type, string $api, string $code, int $page, int $uid = 0, int $batch = 1): array
     {
+        $page = max(1, $page);
         admin_audit_log('api_collect_art', array('type' => $type, 'code' => $code, 'page' => $page, 'batch' => $batch));
         return self::runPagedApi($type, $api, $code, $page, 'artApiPage', 'artpg', 'api-art_list', $uid, $batch);
     }
@@ -499,6 +501,7 @@ class ApiExecutionService
 
         return array(
             'done' => false,
+            'page' => $page,
             'resstr' => $resstr,
             'jump' => url(
                 $successUrl === 'api-list' ? 'api-api' : 'api-art_api',
@@ -700,18 +703,18 @@ class ApiExecutionService
         if (!isset($conf['bind'][$code])) {
             exit(lang('api_no_set'));
         }
-        $apicate = CollectionCategoryService::videoBindings((array)$conf['bind'][$code]);
+        $savedBindings = (array)$conf['bind'][$code];
+        // 分类目录在采集锁外获取；入库时仍在事务内重新校验本地分类和父级。
+        $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $savedBindings, $data['data']);
         $ress = array();
-
-        // 海报预取只使用提示快照；真正入库在持锁后从主库重新查重。
-        $existing_vods = !empty($conf['down_pic'])
-            ? self::findExistingVideos($data['data'], $apicate, $matchRule) : array();
 
         // 采集性能专项：并发预取新增条目的海报，替代逐张串行下载（curl_multi，SSRF 逐跳校验）。
         // 条件与 applyPosterAndTag 一致（down_pic 开启）、仅新增条目（已存在的走 mergePlayUpdates 不下载）、
         // 键与 videoRowPayload 的 $arr['pic'] 同口径；失败/超限保留外链，禁止单发回退绕过整批预算。
         $poster_prefetch = array();
         if (!empty($conf['down_pic']) && $conf['down_pic'] == 1 && function_exists('https_request_multi')) {
+            $apicate = CollectionCategoryService::videoBindings($savedBindings, catalog: $catalog);
+            $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule);
             $prefetch_urls = array();
             foreach ($data['data'] as $pv) {
                 $cid = CollectionCategoryService::videoTarget($apicate, $pv);
@@ -749,7 +752,7 @@ class ApiExecutionService
         $created = $categoryCounts = $touched = $movedCategories = $receipts = array();
         try {
             if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
-            $apicate = CollectionCategoryService::videoBindings((array)$conf['bind'][$code]);
+            $apicate = CollectionCategoryService::videoBindings($savedBindings, catalog: $catalog);
             $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule,
                 $fastOptions !== null ? array_keys(ApiImportService::fastDbDiffLabels()) : []);
             $candidates = array();
@@ -943,8 +946,10 @@ class ApiExecutionService
     public static function previewFastVideoData(array $items, string $code, string $scope): array
     {
         $conf = _SERVER('conf'); $rule = VideoMatchRuleService::settings($conf);
-        $bindings = CollectionCategoryService::videoBindings((array)($conf['bind'][$code] ?? []));
         $items = self::normalizeFastVideoRows($items);
+        $saved = (array)($conf['bind'][$code] ?? []);
+        $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved, $items);
+        $bindings = CollectionCategoryService::videoBindings($saved, catalog: $catalog);
         $candidates = self::findExistingVideos($items, $bindings, $rule, array_keys(ApiImportService::fastDbDiffLabels()));
         $rows = []; foreach ($candidates as $bucket) foreach ($bucket as $vid => $row) $rows[$vid] = $row;
         $states = VideoVersionService::load($rows); $result = []; $previewId = -1;

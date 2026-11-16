@@ -91,21 +91,12 @@ class ApiViewService
         $typelist = CollectionCategoryService::targets($video ? 0 : ($sourceModel ?? $model));
         if ($video) {
             try {
-                $api_type = VideoCategoryCatalog::categories($conf['api'][$code]['api'])['rows'];
+                $catalog = VideoCategoryCatalog::categories($conf['api'][$code]['api']);
             } catch (\RuntimeException $e) { return ['status'=>'error', 'msg'=>$e->getMessage()]; }
-            $index = CollectionCategoryService::videoBindings($bindings, $typelist);
+            $api_type = $catalog['rows'];
+            $index = CollectionCategoryService::videoBindings($bindings, $typelist, $catalog);
             $byId = $index['ids'];
-            $bindings = [];
-            $counts = array_count_values(array_column($api_type, 'type_name'));
-            foreach ($api_type as $type) {
-                $name = $type['type_name'];
-                if ($counts[$name] !== 1) continue;
-                $cid = CollectionCategoryService::videoTarget($index, $type);
-                if ($cid) {
-                    $byId[$type['type_id']] = $cid;
-                    $bindings[$name] = $cid;
-                }
-            }
+            $bindings = $index['names'];
         } else {
             $api_type = self::apiClass($code, $conf);
         }

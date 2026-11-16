@@ -40,7 +40,7 @@ class CollectionSetupService
             }
         }
         if (empty($raw)) throw new \RuntimeException('未取到分类，请检查源站连接后重试；尚未创建或绑定任何分类');
-        $local = self::localRows($model);
+        $local = CollectionCategoryService::targets($model);
         $bindings = $kind === 'source' ? ($conf['bind'][$key] ?? null) : null;
         $rows = self::matchRows($raw, $local, $bindings, $video, $hierarchical);
         $id = bin2hex(random_bytes(16));
@@ -49,24 +49,25 @@ class CollectionSetupService
         $plans = array_slice($plans, -4, null, true);
         $plans[$id] = ['kind'=>$kind, 'key'=>$key, 'model'=>$model, 'source'=>$source, 'source_state'=>$kind === 'source' ? self::sourceState($conf, $key, $model) : null, 'rows'=>$rows, 'video'=>$video, 'hierarchical'=>$hierarchical, 'expires'=>time()+900];
         $_SESSION['collection_plans'] = $plans;
-        return ['plan'=>$id, 'kind'=>$kind, 'model'=>$model, 'name'=>$categorySource['name'] ?? $source['name'] ?? ['art'=>'文章分类','av'=>'X 资讯分类'][$key], 'hierarchical'=>$hierarchical, 'rows'=>array_values($rows), 'local'=>array_values($local), 'official_player'=>$model === 0 && !empty($source['player']), 'has_player'=>$model === 0 && !empty($conf['vodplayer'][$key]), 'player_name'=>$kind === 'source' && $model === 0 ? self::playerDisplayName((array)($conf['vodplayer'] ?? []), $key) : '', 'empty_local'=>!$local];
+        return ['plan'=>$id, 'kind'=>$kind, 'model'=>$model, 'name'=>$categorySource['name'] ?? $source['name'] ?? ['art'=>'文章分类','av'=>'X 资讯分类'][$key], 'hierarchical'=>$hierarchical, 'rows'=>array_values($rows), 'local'=>self::localOptions($local), 'official_player'=>$model === 0 && !empty($source['player']), 'has_player'=>$model === 0 && !empty($conf['vodplayer'][$key]), 'player_name'=>$kind === 'source' && $model === 0 ? self::playerDisplayName((array)($conf['vodplayer'] ?? []), $key) : '', 'empty_local'=>!$local];
     }
 
     /** 旧版自动绑定入口也使用向导的匹配规则，只计算结果。 */
     public static function videoBindingRows(string $api, array $bindings): array
     {
         $catalog = VideoCategoryCatalog::categories($api);
-        return self::matchRows($catalog['rows'], self::localRows(0), $bindings, true, $catalog['hierarchical']);
+        return self::matchRows($catalog['rows'], CollectionCategoryService::targets(0), $bindings, true, $catalog['hierarchical']);
     }
 
     private static function matchRows(array $raw, array $local, ?array $bindings, bool $video, bool $hierarchical): array
     {
         $byName = $byParent = [];
         foreach ($local as $c) {
-            $byName[$c['name']][] = $c['cid'];
-            $byParent[$c['cup']][$c['name']][] = $c['cid'];
+            $name = htmlspecialchars_decode($c['name'], ENT_QUOTES);
+            $byName[$name][] = (int)$c['cid'];
+            $byParent[$c['cup']][$name][] = (int)$c['cid'];
         }
-        $index = $video ? CollectionCategoryService::videoBindings($bindings ?? [], $local) : [];
+        $index = $video ? CollectionCategoryService::videoBindings($bindings ?? [], $local, ['rows'=>$raw, 'hierarchical'=>$hierarchical]) : [];
         $nameCounts = $video ? array_count_values(array_column($raw, 'type_name')) : [];
         $rows = []; $names = [];
         foreach ($raw as $item) {
@@ -77,7 +78,7 @@ class CollectionSetupService
             if (isset($rows[$id])) throw new \RuntimeException('源站分类编号重复，无法安全导入');
             $names[$name] = true;
             $unique = !$video || $nameCounts[$name] === 1;
-            $bound = $video ? ($index['ids'][$id] ?? ($unique ? ($index['legacy'][$name] ?? 0) : 0)) : (int)($bindings[$name] ?? 0);
+            $bound = $video ? ($index['ids'][$id] ?? 0) : (int)($bindings[$name] ?? 0);
             $parent = (string)($item['type_pid'] ?? '0');
             $cup = (!$hierarchical || $parent === '0') ? 0 : ($rows[$parent]['target'] ?: -1);
             $localName = $video ? trim(filter_all_html($name)) : $name;
@@ -86,7 +87,9 @@ class CollectionSetupService
             // 已配置源沿用上次确认的范围；同名匹配仅提供目标，不重新勾选已取消的分类。
             $selected = $bindings !== null
                 ? $bound > 0 && isset($local[$bound]) : $hit > 0;
-            $rows[$id] = ['id'=>$id, 'name'=>$name, 'local_name'=>$localName, 'parent'=>$parent, 'unique'=>$unique, 'target'=>$hit, 'selected'=>$selected, 'status'=>$hit ? ($bound === $hit ? '已绑定' : '已匹配') : (count($matches)>1 ? '同名待确认' : '未创建')];
+            $status = $hit ? ($bound === $hit ? '已绑定' : '已匹配') : (count($matches)>1 ? '同名待确认' : '未创建');
+            if (!$bound && isset($index['ambiguous'][$name])) $status = '同名待确认';
+            $rows[$id] = ['id'=>$id, 'name'=>$name, 'local_name'=>$localName, 'parent'=>$parent, 'unique'=>$unique, 'target'=>$hit, 'selected'=>$selected, 'status'=>$status];
         }
         if (!$rows || count($rows)>1000) throw new \RuntimeException('分类为空或超过 1000 个，请检查源站数据');
         return $rows;
@@ -113,11 +116,11 @@ class CollectionSetupService
         return '高速线路'.$n;
     }
 
-    private static function localRows(int $model): array
+    private static function localOptions(array $local): array
     {
         $out = [];
-        foreach (CollectionCategoryService::targets($model) as $row) {
-            $out[(int)$row['cid']] = ['cid'=>(int)$row['cid'], 'cup'=>(int)$row['cup'], 'name'=>htmlspecialchars_decode((string)$row['name'], ENT_QUOTES)];
+        foreach ($local as $row) {
+            $out[] = ['cid'=>(int)$row['cid'], 'cup'=>(int)$row['cup'], 'name'=>htmlspecialchars_decode((string)$row['name'], ENT_QUOTES)];
         }
         return $out;
     }

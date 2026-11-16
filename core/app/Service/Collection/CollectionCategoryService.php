@@ -41,25 +41,87 @@ class CollectionCategoryService
         return $out;
     }
 
-    /** 新视频绑定每个源分类编号一条。旧站保存的「分类名称 => cid」仍可直接采集。 */
-    public static function videoBindings(array $bindings, ?array $targets = null): array
+    /** 在内存中把旧名称绑定还原到当前来源编号，保留站长保存的原始配置。 */
+    public static function videoBindings(array $bindings, ?array $targets = null, ?array $catalog = null): array
     {
         $targets = $targets ?? self::targets(0, array_map(static function ($entry) {
             return is_array($entry) ? ($entry['cid'] ?? 0) : $entry;
         }, $bindings));
-        $ids = $names = $legacy = [];
+        $ids = $byName = [];
         foreach ($bindings as $key => $entry) {
             if (is_array($entry)) {
                 $cid = self::positiveId($entry['cid'] ?? 0);
                 if (!isset($targets[$cid])) continue;
                 $ids[$key] = $cid;
-                if (!empty($entry['unique']) && is_string($entry['name'] ?? null)) $names[$entry['name']] = $cid;
             } else {
                 $cid = self::positiveId($entry);
-                if (isset($targets[$cid])) $legacy[$key] = $cid;
+                if (isset($targets[$cid])) $byName[$key] = $cid;
             }
         }
-        return ['ids'=>$ids, 'names'=>$names + $legacy, 'legacy'=>$legacy];
+        $types = array_column($catalog['rows'] ?? [], null, 'type_id');
+        $groups = [];
+        foreach ($types as $id => $type) $groups[$type['type_name']][] = $id;
+
+        $legacy = $ambiguous = [];
+        foreach ($byName as $name => $cid) {
+            $group = $groups[$name] ?? [];
+            if (count($group) === 1) {
+                if (!isset($ids[$group[0]])) {
+                    $ids[$group[0]] = $cid;
+                    $legacy[$group[0]] = (string)$name;
+                }
+            } elseif (count($group) > 1) {
+                $ambiguous[$name] = $cid;
+            }
+        }
+        if ($ambiguous && !empty($catalog['hierarchical'])) {
+            $targets = self::withVideoParents($targets);
+            $anchors = $ids;
+            foreach ($ambiguous as $name => $cid) {
+                $matches = [];
+                foreach ($groups[$name] as $id) {
+                    if (self::sameVideoParent((int)$types[$id]['type_pid'], (int)$targets[$cid]['cup'], $types, $targets, $anchors)) $matches[] = $id;
+                }
+                if (count($matches) !== 1) continue;
+                $id = $matches[0];
+                if (!isset($ids[$id])) {
+                    $ids[$id] = $cid;
+                    $legacy[$id] = (string)$name;
+                }
+                unset($ambiguous[$name]);
+            }
+        }
+        $names = [];
+        foreach ($groups as $name => $group) {
+            if (count($group) === 1 && isset($ids[$group[0]])) $names[$name] = $ids[$group[0]];
+        }
+        return ['ids'=>$ids, 'names'=>$names, 'legacy'=>$legacy, 'ambiguous'=>$ambiguous];
+    }
+
+    /** 只补齐已绑定分类缺少的祖先；按层取数，避免在入库事务中锁住整张分类表。 */
+    private static function withVideoParents(array $targets): array
+    {
+        $rows = $targets;
+        while ($rows) {
+            $missing = array_diff(array_unique(array_filter(array_column($rows, 'cup'))), array_keys($targets));
+            if (!$missing) break;
+            $rows = self::targets(0, $missing);
+            $targets += $rows;
+        }
+        return $targets;
+    }
+
+    private static function sameVideoParent(int $remote, int $local, array $types, array $targets, array $anchors): bool
+    {
+        while ($remote && $local) {
+            // 父级有明确绑定时，以站长的映射为准，允许本站重命名或移动父分类。
+            if (isset($anchors[$remote])) return $anchors[$remote] === $local;
+            if (!isset($types[$remote], $targets[$local])) return false;
+            if (trim(filter_all_html($types[$remote]['type_name'])) !== htmlspecialchars_decode($targets[$local]['name'], ENT_QUOTES)) return false;
+            $remote = (int)$types[$remote]['type_pid'];
+            $local = (int)$targets[$local]['cup'];
+        }
+        return $remote === $local;
     }
 
     public static function videoTarget(array $index, array $item): int
@@ -68,7 +130,8 @@ class CollectionCategoryService
         $id = $item['type_id'] ?? null;
         if (!is_string($name) || ($id !== null && !is_int($id) && !is_string($id))) return 0;
         if ($id === null || $id === '' || $id === 0 || $id === '0') return $index['names'][$name] ?? 0;
-        return $index['ids'][$id] ?? $index['legacy'][$name] ?? 0;
+        if (isset($index['legacy'][$id]) && $index['legacy'][$id] !== $name) return 0;
+        return $index['ids'][$id] ?? 0;
     }
 
     public static function usesVideoIds(array $bindings): bool

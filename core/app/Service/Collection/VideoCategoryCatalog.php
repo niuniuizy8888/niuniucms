@@ -25,7 +25,20 @@ class VideoCategoryCatalog
         return $sources;
     }
 
-    public static function categories(string $api): array
+    /** 有明确编号的采集保持直通。缺编号的记录必须用本次目录核对名称是否唯一。 */
+    public static function forImport(string $api, array $bindings, array $items = []): ?array
+    {
+        if (!$bindings) return null;
+        foreach ($items as $item) {
+            if (empty($item['type_id']) && !empty($item['type_name'])) return self::categories($api, true);
+        }
+        foreach ($bindings as $entry) {
+            if (!is_array($entry)) return self::categories($api);
+        }
+        return null;
+    }
+
+    public static function categories(string $api, bool $refresh = false): array
     {
         $url = ApiSourceService::resolveUrl($api);
         $parts = parse_url($url);
@@ -34,7 +47,7 @@ class VideoCategoryCatalog
         }
         $url = explode('#', $url, 2)[0];
         $key = 'video_types_' . substr(hash('sha256', $url), 0, 32);
-        $cached = cache_get($key);
+        $cached = $refresh ? null : cache_get($key);
         if (!empty($cached['rows'])) return $cached;
         $origin = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
         $items = self::readClass($origin . '/api.php/fapi/type/');
