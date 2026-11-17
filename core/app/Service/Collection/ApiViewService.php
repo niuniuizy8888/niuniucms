@@ -91,7 +91,7 @@ class ApiViewService
         $typelist = CollectionCategoryService::targets($video ? 0 : ($sourceModel ?? $model));
         if ($video) {
             try {
-                $catalog = VideoCategoryCatalog::categories($conf['api'][$code]['api']);
+                $catalog = VideoCategoryCatalog::forBindings($code, $conf['api'][$code]['api'], $bindings);
             } catch (\RuntimeException $e) { return ['status'=>'error', 'msg'=>$e->getMessage()]; }
             $api_type = $catalog['rows'];
             $index = CollectionCategoryService::videoBindings($bindings, $typelist, $catalog);

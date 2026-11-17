@@ -705,7 +705,7 @@ class ApiExecutionService
         }
         $savedBindings = (array)$conf['bind'][$code];
         // 分类目录在采集锁外获取；入库时仍在事务内重新校验本地分类和父级。
-        $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $savedBindings, $data['data']);
+        $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $savedBindings, $data['data'], $code);
         $ress = array();
 
         // 采集性能专项：并发预取新增条目的海报，替代逐张串行下载（curl_multi，SSRF 逐跳校验）。
@@ -753,6 +753,7 @@ class ApiExecutionService
         try {
             if (!$db->beginTransaction()) throw new \RuntimeException('无法开始采集事务');
             $apicate = CollectionCategoryService::videoBindings($savedBindings, catalog: $catalog);
+            LegacyVideoBindingService::checkBeforeImport($code, $savedBindings, $catalog);
             $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule,
                 $fastOptions !== null ? array_keys(ApiImportService::fastDbDiffLabels()) : []);
             $candidates = array();
@@ -948,7 +949,7 @@ class ApiExecutionService
         $conf = _SERVER('conf'); $rule = VideoMatchRuleService::settings($conf);
         $items = self::normalizeFastVideoRows($items);
         $saved = (array)($conf['bind'][$code] ?? []);
-        $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved, $items);
+        $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved, $items, $code);
         $bindings = CollectionCategoryService::videoBindings($saved, catalog: $catalog);
         $candidates = self::findExistingVideos($items, $bindings, $rule, array_keys(ApiImportService::fastDbDiffLabels()));
         $rows = []; foreach ($candidates as $bucket) foreach ($bucket as $vid => $row) $rows[$vid] = $row;
@@ -1787,7 +1788,7 @@ class ApiExecutionService
     }
 
     /**
-     * 带缓存的分类列表（键 `api_cls_<code>`，与全站共享键空间隔离——H-A1 结论）。
+     * 新目录与升级前的 api_cls_<code> 隔离，旧缓存仅作为绑定来源的历史依据。
      *
      * **空结果不写缓存**：分类取空多为网络/契约问题（可自愈），旧实现把空数组也 `cache_set` 1 小时，
      * 一次失败即把后续 1 小时全部毒化成「源无分类」。命中空缓存视为未命中。
@@ -1798,7 +1799,7 @@ class ApiExecutionService
      */
     public static function sourceClassList(string $code, string $api = ''): array
     {
-        $cacheKey = 'api_cls_' . preg_replace('#[^A-Za-z0-9_-]#', '_', $code);
+        $cacheKey = 'api_cls_v2:' . $code;
         $cached = cache_get($cacheKey);
         if (is_array($cached) && !empty($cached)) return $cached;
 

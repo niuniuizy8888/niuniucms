@@ -16,7 +16,9 @@ class CollectionSetupService
             $categorySource = VideoCategoryCatalog::sources()[$code] ?? null;
             if (!$categorySource) throw new \RuntimeException('请选择有效的视频资源站');
             if ($kind === 'source') $source = $categorySource;
-            $catalog = VideoCategoryCatalog::categories((string)$categorySource['api']);
+            $catalog = $kind === 'source'
+                ? VideoCategoryCatalog::forBindings($code, (string)$categorySource['api'], $conf['bind'][$key] ?? [])
+                : VideoCategoryCatalog::categories((string)$categorySource['api']);
             $raw = $catalog['rows'];
             $hierarchical = $catalog['hierarchical'];
             $model = 0;
@@ -42,24 +44,49 @@ class CollectionSetupService
         if (empty($raw)) throw new \RuntimeException('未取到分类，请检查源站连接后重试；尚未创建或绑定任何分类');
         $local = CollectionCategoryService::targets($model);
         $bindings = $kind === 'source' ? ($conf['bind'][$key] ?? null) : null;
-        $rows = self::matchRows($raw, $local, $bindings, $video, $hierarchical);
+        $index = $video ? CollectionCategoryService::videoBindings($bindings ?? [], $local, $catalog) : [];
+        $rows = self::matchRows($raw, $local, $bindings, $video, $hierarchical, $index);
         $id = bin2hex(random_bytes(16));
         $plans = (array)($_SESSION['collection_plans'] ?? []);
         foreach ($plans as $p => $v) if (($v['expires'] ?? 0) < time()) unset($plans[$p]);
         $plans = array_slice($plans, -4, null, true);
         $plans[$id] = ['kind'=>$kind, 'key'=>$key, 'model'=>$model, 'source'=>$source, 'source_state'=>$kind === 'source' ? self::sourceState($conf, $key, $model) : null, 'rows'=>$rows, 'video'=>$video, 'hierarchical'=>$hierarchical, 'expires'=>time()+900];
+        if ($video && $kind === 'source') $plans[$id]['paths'] = VideoCategoryCatalog::paths($catalog);
         $_SESSION['collection_plans'] = $plans;
-        return ['plan'=>$id, 'kind'=>$kind, 'model'=>$model, 'name'=>$categorySource['name'] ?? $source['name'] ?? ['art'=>'文章分类','av'=>'X 资讯分类'][$key], 'hierarchical'=>$hierarchical, 'rows'=>array_values($rows), 'local'=>self::localOptions($local), 'official_player'=>$model === 0 && !empty($source['player']), 'has_player'=>$model === 0 && !empty($conf['vodplayer'][$key]), 'player_name'=>$kind === 'source' && $model === 0 ? self::playerDisplayName((array)($conf['vodplayer'] ?? []), $key) : '', 'empty_local'=>!$local];
+        return ['plan'=>$id, 'kind'=>$kind, 'model'=>$model, 'name'=>$categorySource['name'] ?? $source['name'] ?? ['art'=>'文章分类','av'=>'X 资讯分类'][$key], 'hierarchical'=>$hierarchical, 'pending_bindings'=>$index['pending'] ?? [], 'rows'=>array_values($rows), 'local'=>self::localOptions($local), 'official_player'=>$model === 0 && !empty($source['player']), 'has_player'=>$model === 0 && !empty($conf['vodplayer'][$key]), 'player_name'=>$kind === 'source' && $model === 0 ? self::playerDisplayName((array)($conf['vodplayer'] ?? []), $key) : '', 'empty_local'=>!$local];
     }
 
     /** 旧版自动绑定入口也使用向导的匹配规则，只计算结果。 */
-    public static function videoBindingRows(string $api, array $bindings): array
+    public static function videoBindingRows(string $api, array $bindings, string $code = ''): array
     {
-        $catalog = VideoCategoryCatalog::categories($api);
-        return self::matchRows($catalog['rows'], CollectionCategoryService::targets(0), $bindings, true, $catalog['hierarchical']);
+        $catalog = VideoCategoryCatalog::forBindings($code, $api, $bindings);
+        $local = CollectionCategoryService::targets(0);
+        $index = CollectionCategoryService::videoBindings($bindings, $local, $catalog);
+        if ($index['pending']) throw new \RuntimeException('有旧分类绑定待确认，请打开配置采集逐项选择');
+        return self::matchRows($catalog['rows'], $local, $bindings, true, $catalog['hierarchical'], $index);
     }
 
-    private static function matchRows(array $raw, array $local, ?array $bindings, bool $video, bool $hierarchical): array
+    /** 自动操作只绑定可确定的编号。快速通道还须与其实际提供的分类一致。 */
+    public static function automaticVideoBindings(string $code, string $api, array $saved, ?array $available = null): array
+    {
+        $byId = $byName = [];
+        foreach ($available ?? [] as $type) {
+            if (!is_array($type) || !in_array($type['type_mid'] ?? 1, [1, '1'], true) || !is_string($type['type_name'] ?? null)) continue;
+            $name = $type['type_name'];
+            $id = $type['type_id'] ?? '';
+            if ($id === '' || $id === null) $byName[$name] = ($byName[$name] ?? 0) + 1;
+            elseif ((is_int($id) || is_string($id)) && ctype_digit((string)$id)) $byId[$id] = $name;
+        }
+        $bindings = [];
+        foreach (self::videoBindingRows($api, $saved, $code) as $row) {
+            if (!$row['target'] || (!$row['unique'] && $row['status'] !== '已绑定')) continue;
+            if ($available !== null && ($byId[$row['id']] ?? null) !== $row['name'] && ($byName[$row['name']] ?? 0) !== 1) continue;
+            $bindings[$row['id']] = ['cid'=>$row['target'], 'name'=>$row['name'], 'unique'=>$row['unique']];
+        }
+        return $bindings;
+    }
+
+    private static function matchRows(array $raw, array $local, ?array $bindings, bool $video, bool $hierarchical, array $index): array
     {
         $byName = $byParent = [];
         foreach ($local as $c) {
@@ -67,7 +94,6 @@ class CollectionSetupService
             $byName[$name][] = (int)$c['cid'];
             $byParent[$c['cup']][$name][] = (int)$c['cid'];
         }
-        $index = $video ? CollectionCategoryService::videoBindings($bindings ?? [], $local, ['rows'=>$raw, 'hierarchical'=>$hierarchical]) : [];
         $nameCounts = $video ? array_count_values(array_column($raw, 'type_name')) : [];
         $rows = []; $names = [];
         foreach ($raw as $item) {
@@ -83,13 +109,17 @@ class CollectionSetupService
             $cup = (!$hierarchical || $parent === '0') ? 0 : ($rows[$parent]['target'] ?: -1);
             $localName = $video ? trim(filter_all_html($name)) : $name;
             $matches = $hierarchical ? ($byParent[$cup][$localName] ?? []) : ($byName[$localName] ?? []);
-            $hit = isset($local[$bound]) ? $bound : (count($matches) === 1 ? $matches[0] : 0);
+            $oldName = $index['pendingIds'][$id] ?? null;
+            $previousTarget = $oldName !== null ? ($index['pending'][$oldName] ?? 0) : 0;
+            $hit = isset($local[$bound]) ? $bound : ($previousTarget ?: (count($matches) === 1 ? $matches[0] : 0));
             // 已配置源沿用上次确认的范围；同名匹配仅提供目标，不重新勾选已取消的分类。
             $selected = $bindings !== null
                 ? $bound > 0 && isset($local[$bound]) : $hit > 0;
             $status = $hit ? ($bound === $hit ? '已绑定' : '已匹配') : (count($matches)>1 ? '同名待确认' : '未创建');
-            if (!$bound && isset($index['ambiguous'][$name])) $status = '同名待确认';
-            $rows[$id] = ['id'=>$id, 'name'=>$name, 'local_name'=>$localName, 'parent'=>$parent, 'unique'=>$unique, 'target'=>$hit, 'selected'=>$selected, 'status'=>$status];
+            if (!$bound && (isset($index['pending'][$name]) || isset($index['pendingIds'][$id]))) {
+                $status = $unique ? '旧绑定待确认' : '同名待确认';
+            }
+            $rows[$id] = ['id'=>$id, 'name'=>$name, 'local_name'=>$localName, 'parent'=>$parent, 'unique'=>$unique, 'previous_target'=>$previousTarget, 'target'=>$hit, 'selected'=>$selected, 'status'=>$status];
         }
         if (!$rows || count($rows)>1000) throw new \RuntimeException('分类为空或超过 1000 个，请检查源站数据');
         return $rows;
@@ -138,6 +168,14 @@ class CollectionSetupService
         }
         if (!$selected) throw new \RuntimeException('请至少选择一个分类');
         $source = $plan['source']; $key = $plan['key'];
+        if ($kind === 'source' && !empty($plan['video'])) {
+            $currentPaths = VideoCategoryCatalog::paths(VideoCategoryCatalog::categories((string)$source['api'], true));
+            foreach ($selected as $sid => $_) {
+                if (!isset($currentPaths[$sid]) || $currentPaths[$sid] !== ($plan['paths'][$sid] ?? null)) {
+                    throw new \RuntimeException('资源站分类名称或父级已变更，请重新打开向导核对后保存');
+                }
+            }
+        }
         if ($plan['model'] === 1 && $player !== 'keep') throw new \RuntimeException('文章采集不使用播放器');
         if ($playerName !== null) {
             if ($kind !== 'source' || $plan['model'] !== 0) throw new \RuntimeException('仅视频采集支持设置播放器名称');

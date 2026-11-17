@@ -31,29 +31,26 @@ class ApiBindService
         if (!isset($targets[$localId])) return ['success'=>false, 'msg'=>'所选分类已删除、类型不符或不能用于采集，请重新绑定'];
 
         $saved = (array)($conf['bind'][$code] ?? []);
-        if ($model === 0 || CollectionCategoryService::usesVideoIds($saved)) {
+        if ($model === 0 || ($model === null && (int)$targets[$localId]['model'] === 0)) {
             try {
-                $catalog = VideoCategoryCatalog::categories($conf['api'][$code]['api']);
+                $catalog = VideoCategoryCatalog::forBindings($code, $conf['api'][$code]['api'], $saved);
                 $types = $catalog['rows'];
                 $idsByName = [];
                 $namesById = array_column($types, 'type_name', 'type_id');
                 foreach ($namesById as $id => $typeName) $idsByName[$typeName][] = (string)$id;
                 $ids = $idsByName[$name] ?? [];
-                if ($sourceId === '' && count($ids) === 1) $sourceId = $ids[0];
-                if (!in_array($sourceId, $ids, true)) throw new \RuntimeException('请在配置采集中按来源层级选择分类');
-                // 旧版可能按名称绑定了多个分类。只在能逐项识别时迁移，避免改一项丢失其他绑定。
-                $legacyIds = array_flip(CollectionCategoryService::videoBindings($saved, catalog: $catalog)['legacy']);
-                $bindings = [];
-                foreach ($saved as $key => $entry) {
-                    if (is_array($entry)) {
-                        $entry['name'] = $namesById[$key] ?? $entry['name'];
-                        $entry['unique'] = isset($namesById[$key]) && count($idsByName[$entry['name']]) === 1;
-                        $bindings[$key] = $entry;
-                        continue;
-                    }
-                    if (!isset($legacyIds[$key])) throw new \RuntimeException('旧绑定的来源或本地分类无法确定，请在配置采集中逐项确认');
-                    $bindings[$legacyIds[$key]] = ['cid'=>(int)$entry, 'name'=>(string)$key, 'unique'=>count($idsByName[$key]) === 1];
+                $index = CollectionCategoryService::videoBindings($saved, catalog: $catalog);
+                if ($sourceId === '' && count($ids) === 1 && !isset($index['pending'][$name]) && !isset($index['pendingIds'][$ids[0]])) {
+                    $sourceId = $ids[0];
                 }
+                if (!in_array($sourceId, $ids, true)) throw new \RuntimeException('请在配置采集中按来源编号和层级确认分类');
+                $bindings = $saved;
+                // 单项操作只确认当前来源编号，其他名称绑定仍须在采集时核验。
+                foreach ([$name, $index['legacy'][$sourceId] ?? null, $index['pendingIds'][$sourceId] ?? null] as $oldName) {
+                    if ($oldName !== null && isset($bindings[$oldName]) && !is_array($bindings[$oldName])
+                        && ($model === 0 || isset($index['pending'][$oldName]) || in_array((string)$oldName, $index['legacy'], true))) unset($bindings[$oldName]);
+                }
+                if (isset($bindings[$sourceId]) && !is_array($bindings[$sourceId])) throw new \RuntimeException('来源编号与旧分类名称冲突，请在配置采集中逐项确认');
                 $bindings[$sourceId] = ['cid'=>$localId, 'name'=>$name, 'unique'=>count($ids) === 1];
             } catch (\RuntimeException $e) { return ['success'=>false, 'msg'=>$e->getMessage()]; }
         } else {
@@ -89,10 +86,12 @@ class ApiBindService
         $bindings = (array)($conf['bind'][$code] ?? []);
         $key = $name;
         $usesIds = CollectionCategoryService::usesVideoIds($bindings);
-        $video = $usesIds || CollectionCategoryService::sourceModel($code, $conf) === 0;
-        if ($video && $sourceId !== '' && isset($bindings[$name]) && !is_array($bindings[$name])) {
+        $model = CollectionCategoryService::sourceModel($code, $conf);
+        $named = isset($bindings[$name]) && !is_array($bindings[$name]);
+        $namedVideo = $named && ($model === 0 || ($model === null && CollectionCategoryService::targets(0, [$bindings[$name]])));
+        if ($sourceId !== '' && $namedVideo && !is_array($bindings[$sourceId] ?? null)) {
             try {
-                $catalog = VideoCategoryCatalog::categories((string)($conf['api'][$code]['api'] ?? ''));
+                $catalog = VideoCategoryCatalog::forBindings($code, (string)($conf['api'][$code]['api'] ?? ''), $bindings);
                 $index = CollectionCategoryService::videoBindings($bindings, catalog: $catalog);
             } catch (\RuntimeException $e) { return ['success'=>false, 'msg'=>$e->getMessage()]; }
             if (($index['legacy'][$sourceId] ?? null) !== $name) return ['success'=>false, 'msg'=>'该来源编号与旧绑定不符，请在配置采集中核对分类'];
@@ -127,7 +126,7 @@ class ApiBindService
 
     private const SAVE_FAILED = '分类绑定未保存，请重新读取当前配置后重试';
 
-    private static function storeBindings(array $conf, string $code, array $bindings): bool
+    public static function storeBindings(array $conf, string $code, array $bindings): bool
     {
         return CollectionCategoryService::updateBindings($conf, static function (array $current) use ($conf, $code, $bindings) {
             if (($current['api'][$code] ?? null) !== ($conf['api'][$code] ?? null)
@@ -156,56 +155,14 @@ class ApiBindService
         if ($model !== null && $model !== 0) return ['success' => false, 'msg' => '采集源类型不符，请在文章采集中绑定分类'];
 
         $saved = (array)($conf['bind'][$code] ?? []);
-        if ($model === 0 || CollectionCategoryService::usesVideoIds($saved)) {
-            try {
-                $rows = CollectionSetupService::videoBindingRows($conf['api'][$code]['api'], $saved);
-            } catch (\RuntimeException $e) { return ['success'=>false, 'msg'=>$e->getMessage()]; }
-            $bindings = [];
-            foreach ($rows as $row) {
-                if ($row['target']) $bindings[$row['id']] = ['cid'=>$row['target'], 'name'=>$row['name'], 'unique'=>$row['unique']];
-            }
-            if (!$bindings) return ['success'=>false, 'msg'=>'没有匹配的本地分类，已保留原有绑定'];
-            if (!self::storeBindings($conf, $code, $bindings)) return ['success'=>false, 'msg'=>self::SAVE_FAILED];
-            admin_audit_log('api_bind_auto_all', ['code'=>$code]);
-            return ['success'=>true, 'msg'=>'已绑定 '.count($bindings).' 个分类'];
-        }
-
-        // 新商店对接修复：取源分类统一走 ApiExecutionService::sourceClassList()
-        // （缓存键 api_cls_ 前缀保留；真凶是商店**明文** URL 被 core_decrypt 判死 ⇒ class 恒空；
-        // 另修掉"空结果被缓存 1 小时"）。
-        $apiarr = \App\Service\Collection\ApiExecutionService::sourceClassList($code, $api);
-        if (empty($apiarr)) {
-            // fail-closed：取不到源分类时**绝不能**走到下面那句整条替换——旧实现会把 kv('bind') 写成
-            // 空数组并回「操作成功」，实测把已有 44 条绑定静默清空（故障被伪装成成功，最难排查）。
-            return ['success' => false, 'msg' => '未取到采集源分类（源站不可达或接口无 class 字段），已保留原有绑定'];
-        }
-
-        // 未标记模型的旧混合源使用名称键。视频自动绑定只处理能明确区分的名称。
-        $video = CollectionCategoryService::targets(0);
-        $article = CollectionCategoryService::validBindings($saved, 1);
-        $byName = $counts = $catelistarr = [];
-        foreach ($video as $cid => $row) $byName[htmlspecialchars_decode($row['name'], ENT_QUOTES)][] = $cid;
-        foreach ($apiarr as $row) {
-            if (isset($row['type_mid']) && !in_array($row['type_mid'], [1, '1'], true)) continue;
-            $name = $row['type_name'] ?? '';
-            if (is_string($name) && $name !== '') $counts[$name] = ($counts[$name] ?? 0) + 1;
-        }
-        foreach ($counts as $name => $count) {
-            if ($count !== 1 || isset($article[$name])) continue;
-            $cid = $saved[$name] ?? 0;
-            if (isset($video[$cid])) $catelistarr[$name] = (int)$cid;
-            elseif (count($byName[$name] ?? []) === 1) $catelistarr[$name] = $byName[$name][0];
-        }
-
-        if (empty($catelistarr)) {
-            // 源有分类但本地一个同名都没有：同样不能把绑定清空（先「一键采集/创建分类」再来绑定）
-            return ['success' => false, 'msg' => '源站 ' . count($apiarr) . ' 个分类在本地无同名分类，未做任何绑定（请先执行「一键采集」或「创建分类」）'];
-        }
-
-        if (!self::storeBindings($conf, $code, $catelistarr + $article)) return ['success'=>false, 'msg'=>self::SAVE_FAILED];
-        
-        admin_audit_log('api_bind_auto_all', array('code' => $code));
-        
-        return ['success' => true, 'msg' => '自动绑定分类完成：绑定 ' . count($catelistarr) . ' 个（源站 ' . count($apiarr) . ' 个）'];
+        try {
+            $bindings = CollectionSetupService::automaticVideoBindings($code, $api, $saved);
+        } catch (\RuntimeException $e) { return ['success'=>false, 'msg'=>$e->getMessage()]; }
+        $article = $model === null ? CollectionCategoryService::validBindings($saved, 1) : [];
+        $bindings = array_diff_key($bindings, $article);
+        if (!$bindings) return ['success'=>false, 'msg'=>'没有可确定的本地视频分类，已保留原有绑定'];
+        if (!self::storeBindings($conf, $code, $bindings + $article)) return ['success'=>false, 'msg'=>self::SAVE_FAILED];
+        admin_audit_log('api_bind_auto_all', ['code'=>$code]);
+        return ['success'=>true, 'msg'=>'已绑定 '.count($bindings).' 个视频分类'];
     }
 }

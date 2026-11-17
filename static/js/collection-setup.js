@@ -36,7 +36,7 @@ function updateTreeTargets(){
  if(!state.data.hierarchical)return;
  state.data.rows.forEach(function(r){
   if(state.selected[r.id]&&state.manual[r.id]){state.targets[r.id]=state.manual[r.id];return;}
-  if(r.status==='已绑定'){state.targets[r.id]=String(r.target);return;}
+  if(r.status==='已绑定'||r.previous_target){state.targets[r.id]=String(r.target);return;}
   var parent=r.parent==='0'?0:Number(state.targets[r.parent]);
   var siblings=state.byParent.get(parent), id=siblings&&siblings.get(r.local_name||r.name);
   state.targets[r.id]=id?String(id):'create';
@@ -63,7 +63,12 @@ function render(){
  el.querySelectorAll('[data-step]').forEach(function(li){li.classList.toggle('active',Number(li.dataset.step)===state.step);});updateCount();
  if(state.step===1){
   var missing=state.data.rows.filter(function(r){return !r.target;}).length;
-  content.innerHTML='<div class="cw-notice '+(missing?'warn':'')+'"><strong>'+(state.data.empty_local?'分类未创建':missing?'有 '+missing+' 个分类需要确认':'已匹配本地分类')+'</strong><div>'+(state.kind==='source'?'勾选需要采集的分类，选择已有分类或新建。未勾选的分类不采集；已有绑定也将在确认后解除。':'勾选要导入的分类，已有分类会复用，不重复创建。')+'</div></div><div class="cw-toolbar"><input class="form-control form-control-sm" id="cwSearch" placeholder="搜索分类"><button class="btn btn-primary btn-sm" data-bulk="all">全选</button><button class="btn btn-outline-secondary btn-sm" data-bulk="none">取消全选</button><button class="btn btn-light btn-sm" data-bulk="matched">仅选已匹配</button></div><div class="cw-table"><table class="table"><thead><tr><th>选择</th><th>来源分类</th><th>状态</th><th>导入 / 绑定到</th></tr></thead><tbody id="cwRows"></tbody></table></div><p class="small text-muted mt-2 mb-0">全选和取消全选作用于全部分类。'+hierarchyHelp()+'</p>';
+  var pending=Object.entries(state.data.pending_bindings||{}).map(function(entry){
+   var target=state.localById.get(Number(entry[1]));
+   return esc(entry[0])+(target?' → '+esc(target.path):'');
+  });
+  var warning=pending.length?'<div class="cw-notice warn"><strong>旧分类绑定待确认</strong><div>'+pending.join('、')+'。请勾选对应的来源分类并选择本地目标，保存后恢复采集。</div></div>':'';
+  content.innerHTML=warning+'<div class="cw-notice '+(missing?'warn':'')+'"><strong>'+(state.data.empty_local?'分类未创建':missing?'有 '+missing+' 个分类需要确认':'已匹配本地分类')+'</strong><div>'+(state.kind==='source'?'勾选需要采集的分类，选择已有分类或新建。未勾选的分类不采集；已有绑定也将在确认后解除。':'勾选要导入的分类，已有分类会复用，不重复创建。')+'</div></div><div class="cw-toolbar"><input class="form-control form-control-sm" id="cwSearch" placeholder="搜索分类"><button class="btn btn-primary btn-sm" data-bulk="all">全选</button><button class="btn btn-outline-secondary btn-sm" data-bulk="none">取消全选</button><button class="btn btn-light btn-sm" data-bulk="matched">仅选已匹配</button></div><div class="cw-table"><table class="table"><thead><tr><th>选择</th><th>来源分类</th><th>状态</th><th>导入 / 绑定到</th></tr></thead><tbody id="cwRows"></tbody></table></div><p class="small text-muted mt-2 mb-0">全选和取消全选作用于全部分类。'+hierarchyHelp()+'</p>';
   drawRows('');
  }else if(state.step===2){
   if(state.kind==='template'){content.innerHTML='<h5>导入设置</h5><div class="cw-notice">已勾选 '+chosen().length+' 个分类。已有分类会复用，新建分类显示在导航中。'+hierarchyHelp()+'</div><p class="mt-3 text-muted">下一步可检查完整清单，确认后才保存。</p>';return;}
@@ -91,7 +96,7 @@ function drawRows(q){
  var body=document.getElementById('cwRows'), query=q.toLowerCase();
  body.innerHTML=state.data.rows.filter(function(r){return sourcePath(r).toLowerCase().includes(query);}).map(function(r){
   var id=esc(r.id), name=esc(sourcePath(r)), target=state.targets[r.id], pick=state.selected[r.id];
-  var matched=target!=='create', status=matched?(target===String(r.target)?r.status:'已匹配'):(r.status==='同名待确认'?r.status:'待新建');
+  var matched=target!=='create', status=matched?(target===String(r.target)?r.status:'已匹配'):(r.status.endsWith('待确认')?r.status:'待新建');
   return '<tr data-row="'+id+'"><td><input type="checkbox" aria-label="选择 '+name+'" data-pick="'+id+'" '+(pick?'checked':'')+'></td><td>'+name+'</td>'+
    '<td><span class="cw-status '+(matched?'matched':'missing')+'">'+esc(status)+'</span></td>'+
    '<td><select class="form-select form-select-sm" aria-label="'+name+' 的目标分类" data-target="'+id+'" '+(!pick?'disabled':'')+'>'+targetOptions(target,false)+'</select></td></tr>';
@@ -144,7 +149,7 @@ content.addEventListener('click',function(e){
  var action=button.dataset.bulk, query=document.getElementById('cwSearch').value;
  state.data.rows.forEach(function(r){
   if(action==='matched'&&!state.selected[r.id]&&state.manual[r.id]!==state.targets[r.id])delete state.manual[r.id];
-  state.selected[r.id]=action==='matched'?state.targets[r.id]!=='create':action==='all';
+  state.selected[r.id]=action==='matched'?state.targets[r.id]!=='create'&&!r.status.endsWith('待确认'):action==='all';
  });
  updateTreeTargets();drawRows(query);updateCount();
 });

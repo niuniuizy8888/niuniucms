@@ -41,63 +41,59 @@ class CollectionCategoryService
         return $out;
     }
 
-    /** 在内存中把旧名称绑定还原到当前来源编号，保留站长保存的原始配置。 */
+    /** 已确认的来源编号直接使用；旧名称仅使用本次目录核验过的结果。 */
     public static function videoBindings(array $bindings, ?array $targets = null, ?array $catalog = null): array
     {
-        $targets = $targets ?? self::targets(0, array_map(static function ($entry) {
-            return is_array($entry) ? ($entry['cid'] ?? 0) : $entry;
-        }, $bindings));
-        $ids = $byName = [];
+        $targets = $targets ?? self::targets(0, array_map(static fn($v) => is_array($v) ? ($v['cid'] ?? 0) : $v, $bindings));
+        $ids = $legacy = $pending = $pendingIds = [];
         foreach ($bindings as $key => $entry) {
+            $cid = self::positiveId(is_array($entry) ? ($entry['cid'] ?? 0) : $entry);
+            if (!isset($targets[$cid])) continue;
             if (is_array($entry)) {
-                $cid = self::positiveId($entry['cid'] ?? 0);
-                if (!isset($targets[$cid])) continue;
                 $ids[$key] = $cid;
+                continue;
+            }
+            $ref = $catalog['legacy'][$key] ?? [];
+            $id = (int)($ref['id'] ?? 0);
+            if ($id && !is_array($bindings[$id] ?? null) && ($ref['cid'] ?? 0) === $cid && empty($ref['pending'])) {
+                $legacy[$id] = (string)$key;
+                $ids[$id] = $cid;
             } else {
-                $cid = self::positiveId($entry);
-                if (isset($targets[$cid])) $byName[$key] = $cid;
+                $pending[$key] = $cid;
+                if ($id) $pendingIds[$id] = (string)$key;
             }
         }
-        $types = array_column($catalog['rows'] ?? [], null, 'type_id');
-        $groups = [];
-        foreach ($types as $id => $type) $groups[$type['type_name']][] = $id;
-
-        $legacy = $ambiguous = [];
-        foreach ($byName as $name => $cid) {
-            $group = $groups[$name] ?? [];
-            if (count($group) === 1) {
-                if (!isset($ids[$group[0]])) {
-                    $ids[$group[0]] = $cid;
-                    $legacy[$group[0]] = (string)$name;
-                }
-            } elseif (count($group) > 1) {
-                $ambiguous[$name] = $cid;
-            }
-        }
-        if ($ambiguous && !empty($catalog['hierarchical'])) {
-            $targets = self::withVideoParents($targets);
-            $anchors = $ids;
-            foreach ($ambiguous as $name => $cid) {
-                $matches = [];
-                foreach ($groups[$name] as $id) {
-                    if (self::sameVideoParent((int)$types[$id]['type_pid'], (int)$targets[$cid]['cup'], $types, $targets, $anchors)) $matches[] = $id;
-                }
-                if (count($matches) !== 1) continue;
-                $id = $matches[0];
-                if (!isset($ids[$id])) {
-                    $ids[$id] = $cid;
-                    $legacy[$id] = (string)$name;
-                }
-                unset($ambiguous[$name]);
-            }
-        }
-        $names = [];
+        $groups = $names = [];
+        foreach ($catalog['rows'] ?? [] as $row) $groups[$row['type_name']][] = $row['type_id'];
         foreach ($groups as $name => $group) {
             if (count($group) === 1 && isset($ids[$group[0]])) $names[$name] = $ids[$group[0]];
         }
-        return ['ids'=>$ids, 'names'=>$names, 'legacy'=>$legacy, 'ambiguous'=>$ambiguous];
+        return compact('ids', 'names', 'legacy', 'pending', 'pendingIds');
     }
 
+    /** 从先前见过的来源编号中找出唯一符合旧绑定层级的分支。 */
+    public static function legacyCandidates(array $bindings, array $catalog, array $previousIds): array
+    {
+        $targets = self::targets(0, array_map(static fn($v) => is_array($v) ? ($v['cid'] ?? 0) : $v, $bindings));
+        $targets = self::withVideoParents($targets);
+        $types = array_column($catalog['rows'], null, 'type_id');
+        $anchors = $candidates = [];
+        foreach ($bindings as $key => $entry) {
+            if (is_array($entry) && isset($targets[$entry['cid'] ?? 0])) $anchors[$key] = (int)$entry['cid'];
+        }
+        // 目录已按父子顺序排列，先识别出的父级可对应站长自定义的本地父分类。
+        foreach ($types as $id => $type) {
+            $name = $type['type_name'];
+            $cid = self::positiveId($bindings[$name] ?? 0);
+            $known = $previousIds[$name] ?? [];
+            if (!$cid || !isset($targets[$cid]) || !in_array((int)$id, $known, true) || isset($anchors[$id])) continue;
+            if (empty($catalog['hierarchical']) || self::sameVideoParent((int)$type['type_pid'], (int)$targets[$cid]['cup'], $types, $targets, $anchors)) {
+                $candidates[$name] = (int)$id;
+                $anchors[$id] = $cid;
+            }
+        }
+        return $candidates;
+    }
     /** 只补齐已绑定分类缺少的祖先；按层取数，避免在入库事务中锁住整张分类表。 */
     private static function withVideoParents(array $targets): array
     {

@@ -143,7 +143,7 @@ class ApiImportService
      * 动作：把商店 cloudPayload 里该源的 api/player 条目写入运行时配置——其中 vodplayer 的 parse
      * 有**站内播放器保护闸**（现值为 inline/same 时保留站长本地配置，只接受第三方完整地址形态，注释在案）；
      * 分类取数三级回落 fast_type → fast_down → 源站 api(ac=list)，全落空则 message(-1) 明确报错（不再静默建 0 类）。
-     * 仅授权创建时调用 buildCategoryTree；否则只匹配已有分类。按原名/转义名双查生成 $conf['bind'][$code] 并 kv_set。
+     * 仅授权创建时调用 buildCategoryTree；视频新绑定使用已核对的来源分类编号。
      * @param string $code 采集源编码（调用点已限 [a-zA-Z0-9_-]）
      * @param bool $canCreateCategories 调用方取得的创建分类权限，默认不授权
      * @return array{bound:int, skipped:int} 已绑定与未绑定的源分类数量
@@ -155,7 +155,7 @@ class ApiImportService
         if ($model === 1) throw new \RuntimeException('所选资源站用于文章采集，请选择视频资源站');
         if (isset($conf['api'][$code]) && array_key_exists($code, $conf['bind'] ?? [])) {
             $saved = (array)$conf['bind'][$code];
-            $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved);
+            $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved, [], $code);
             $bindings = CollectionCategoryService::videoBindings($saved, catalog: $catalog);
             $bound = count($bindings['ids']);
             return ['bound'=>$bound, 'skipped'=>count($saved)-$bound];
@@ -171,6 +171,7 @@ class ApiImportService
         $arr[$code] = array(
             'api' => $api,
             'code' => $_code,
+            'model' => 0,
         );
         $conf['api'] = $arr;
         $vodplayer = $conf['vodplayer'];
@@ -244,31 +245,10 @@ class ApiImportService
             if ($mid == 2) return 1;
             return NULL;
         }, $canCreateCategories);
-        $catelist = CollectionCategoryService::targets(0);
-        $arrlista = arrlist_key_values($catelist, 'name', 'cid');
-        $catelistarr = array();
-        $skipped = 0;
-        foreach ($apiarr as $value) {
-            $sitetype = $value['type_name'];
-            // 分类名现按转义值入库（buildCategoryTree），但存量分类可能仍是原始名，故原名/转义名双查取其一
-            $tname = htmlspecialchars((string)$sitetype, ENT_QUOTES, 'UTF-8');
-            $match_cid = $arrlista[$sitetype] ?? $arrlista[$tname] ?? '';
-            if (!empty($match_cid)) {
-                $catelistarr[] = array(
-                    'cid' => $match_cid,
-                    'name' => $sitetype,
-                );
-            } else {
-                $skipped++;
-            }
-        }
-        $catelistarr = arrlist_key_values($catelistarr, 'name', 'cid');
-        $apiconf = $conf['bind'];
-        unset($apiconf[$code]);
-        $apiconf[$code] = $catelistarr;
-        $conf['bind'] = $apiconf;
-        kv_set('bind', $conf['bind']);
-        return array('bound' => count($catelistarr), 'skipped' => $skipped);
+        $bindings = CollectionSetupService::automaticVideoBindings($code, (string)$api, [], $apiarr);
+        if (!ApiBindService::storeBindings($conf, $code, $bindings)) throw new \RuntimeException('分类绑定已变更，请重新读取后再采集');
+        $conf['bind'][$code] = $bindings;
+        return ['bound'=>count($bindings), 'skipped'=>count($apiarr)-count($bindings)];
     }
 
     /**
