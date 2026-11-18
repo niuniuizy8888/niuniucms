@@ -1,0 +1,121 @@
+<?php include _include(ADMIN_PATH.'html/head.html'); ?>
+<div class="main-content app-content"><div class="side-app">
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">历史分类核对</h3><a class="btn btn-secondary btn-sm ms-auto" href="<?php echo xn_h(url('vod-list','',true)); ?>">返回视频管理</a></div>
+        <div class="card-body">
+            <p>核对资源站与已有影片的分类，列出可能串类的记录。核对只保存来源信息，不自动改类或导入新影片。</p>
+            <p class="text-muted">确认后，本片保持您选择的分类，重采继续更新原记录和播放地址。其他影片仍按资源站分类绑定采集，请同时检查采集配置。</p>
+            <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
+                <label for="review-source">资源站</label>
+                <select id="review-source" class="form-control" style="width:auto;max-width:100%"><option value="">全部来源（查看结果）</option>
+                    <?php foreach ($review_sources as $source) { ?><option value="<?php echo xn_h($source['code']); ?>" <?php if ($review_code===$source['code']) echo 'selected'; ?>><?php echo xn_h($source['name']); ?></option><?php } ?>
+                </select>
+                <?php if ($review_can_scan) { ?>
+                <button id="review-start" type="button" class="btn btn-primary">开始核对</button>
+                <button id="review-resume" type="button" class="btn btn-secondary">继续核对</button>
+                <button id="review-pause" type="button" class="btn btn-secondary" disabled>暂停</button>
+                <?php } ?>
+                <label class="mb-0"><input id="review-all" type="checkbox" <?php if ($review_all) echo 'checked'; ?>> 包含已确认和一致的记录</label>
+                <button id="review-refresh" type="button" class="btn btn-secondary">刷新结果</button>
+            </div>
+            <p id="review-progress" role="status" aria-live="polite"></p>
+            <p class="text-muted">每次只处理一页，进度自动保存。暂停或关闭页面后，当前页会保存，重新打开可继续。结果每页最多显示 20 条。</p>
+            <div id="review-message" class="text-danger mb-3" role="alert"></div>
+            <div class="table-responsive"><table class="table table-striped">
+                <thead><tr><th>影片</th><th>资源站与分类</th><th>当前分类</th><th>核对结果</th><th>确认分类</th></tr></thead>
+                <tbody id="review-rows"></tbody>
+            </table></div>
+            <div class="d-flex align-items-center gap-2"><button id="review-prev" class="btn btn-secondary" type="button">上一页</button><span id="review-pages"></span><button id="review-next" class="btn btn-secondary" type="button">下一页</button></div>
+        </div>
+    </div>
+</div></div>
+<?php include _include(ADMIN_PATH.'html/foot.html'); ?>
+<script>
+(function () {
+    'use strict';
+    const initial = <?php echo json_encode(['state'=>$review_state,'data'=>$review_result,'cats'=>$review_categories,'token'=>$safe_token,'endpoint'=>url('vod-category_review','',true),'edit'=>url('vod-update','',true)], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE); ?>;
+    const el = id => document.getElementById('review-' + id);
+    let state = initial.state, token = initial.token, page = initial.data.page, running = false, busy = false;
+    const categoryMap = new Map(initial.cats.map(c => [Number(c.cid), c]));
+    function path(cid) {
+        const parts = [], seen = new Set();
+        while (categoryMap.has(Number(cid)) && !seen.has(Number(cid))) {
+            const c = categoryMap.get(Number(cid)); seen.add(Number(cid));
+            parts.unshift(c.name); cid = c.cup;
+        }
+        return parts.join(' / ');
+    }
+    function controls() {
+        el('source').disabled = busy || running; el('all').disabled = busy || running;
+        el('refresh').disabled = busy || running;
+        if (el('start')) {
+            el('start').disabled = busy || running || !el('source').value;
+            el('resume').disabled = busy || running || !state.run || state.done;
+            el('pause').disabled = !running;
+        }
+    }
+    function progress() {
+        el('progress').textContent = state.run
+            ? (running ? '正在核对' : state.done ? '核对完成' : '已暂停') + ' · 已处理 ' + Math.max(0, Number(state.next)-1) + ' / ' + (state.pages || '?') + ' 页 · 已检查 ' + state.checked + ' 条资源 · 关联 ' + state.matched + ' 条记录'
+            : '请选择资源站开始核对历史影片。';
+    }
+    function render(data) {
+        page = data.page; el('rows').replaceChildren();
+        data.rows.forEach(row => {
+            const tr = document.createElement('tr');
+            function cell(text) { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; }
+            const title = cell(''); const link = document.createElement('a');
+            link.href = initial.edit + (initial.edit.includes('?') ? '&' : '?') + 'vid=' + Number(row.vid); link.textContent = '#' + row.vid + ' ' + row.name; title.appendChild(link);
+            cell(row.source_name + ' · 资源 ' + row.remote_id + '\n' + (row.type_path || row.type_name) + '（分类 ' + row.type_id + '）').style.whiteSpace = 'pre-line';
+            cell(row.local_path); cell(row.status);
+            const actions = cell(''); const select = document.createElement('select'); select.className = 'form-control mb-2'; select.setAttribute('aria-label', '为' + row.name + '选择分类');
+            initial.cats.forEach(c => { const opt = document.createElement('option'); opt.value = c.cid; opt.textContent = path(c.cid); select.appendChild(opt); });
+            select.value = Number(row.pending) && Number(row.suggested_cid) ? row.suggested_cid : row.cid;
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-primary btn-sm'; button.textContent = '确认此片及分类';
+            button.addEventListener('click', async () => {
+                if (busy || running) return;
+                if (!window.confirm('确认资源 ' + row.remote_id + ' 对应《' + row.name + '》，并将本片分类设为“' + path(select.value) + '”？原播放地址会保留。')) return;
+                await action({operation:'confirm', source:row.source, remote_id:row.remote_id, vid:row.vid, cid:select.value});
+                if (row.source !== el('source').value) await action({operation:'list'});
+            });
+            actions.append(select, button); el('rows').appendChild(tr);
+        });
+        if (!data.rows.length) { const tr=document.createElement('tr'),td=document.createElement('td'); td.colSpan=5; td.textContent='当前筛选没有待核对记录；未扫描的资源需要先执行核对。'; tr.appendChild(td); el('rows').appendChild(tr); }
+        el('pages').textContent = '第 ' + data.page + ' / ' + data.pages + ' 页 · 共 ' + data.total + ' 条来源记录';
+        el('prev').disabled = data.page <= 1; el('next').disabled = data.page >= data.pages;
+    }
+    async function action(params) {
+        if (busy) return false;
+        busy = true; controls(); el('message').textContent = '';
+        try {
+            const body = new URLSearchParams(Object.assign({source:el('source').value, page, all:el('all').checked ? 1 : 0, safe_token:token}, params));
+            const response = await fetch(initial.endpoint, {method:'POST', body, headers:{'X-Requested-With':'XMLHttpRequest'}});
+            token = response.headers.get('X-NNCMS-CSRF-Token') || token;
+            const result = await response.json();
+            if (!response.ok || result.code !== 0) throw new Error(result.message || result.msg || '本次请求失败，请重试');
+            state = result.state; render(result.data); return true;
+        } catch (err) { running = false; el('message').textContent = err.message || '请求失败，已保存的进度仍可继续'; return false; }
+        finally { busy = false; progress(); controls(); }
+    }
+    async function collect(start) {
+        running = true; controls();
+        if (start && !await action({operation:'start'})) return;
+        while (running && !state.done) {
+            if (!await action({operation:'scan', run:state.run})) break;
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        running = false; progress(); controls();
+    }
+    if (el('start')) {
+        el('start').addEventListener('click', () => collect(true));
+        el('resume').addEventListener('click', () => collect(false));
+        el('pause').addEventListener('click', () => { running=false; progress(); controls(); });
+    }
+    el('source').addEventListener('change', () => { page=1; action({operation:'list'}); });
+    el('all').addEventListener('change', () => { page=1; action({operation:'list'}); });
+    el('refresh').addEventListener('click', () => action({operation:'list'}));
+    el('prev').addEventListener('click', () => { if (!busy) action({operation:'list',page:page-1}); });
+    el('next').addEventListener('click', () => { if (!busy) action({operation:'list',page:page+1}); });
+    render(initial.data); progress(); controls();
+})();
+</script>

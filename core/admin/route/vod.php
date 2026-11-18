@@ -5,6 +5,42 @@
 FALSE === group_access($gid, 'managevod') and message(1, lang('user_group_insufficient_privilege'));
 $action = param(1, 'list');
 switch ($action) {
+    case 'category_review':
+        $canScan = (bool)group_access($gid, 'manageapi');
+        $reviewCode = admin_param_text('source', '', 32);
+        if ('GET' === $method) {
+            $data = \App\Service\Admin\VodCategoryReviewService::page($uid, $reviewCode, admin_param_int('page', 1, 1), (bool)admin_param_int('all', 0, 0, 1), $canScan);
+            extract($data, EXTR_SKIP);
+            include _include(ADMIN_PATH . 'html/vod_category_review.html');
+        } elseif ('POST' === $method) {
+            $operation = admin_param_text('operation', '', 16);
+            if (in_array($operation, ['start','scan'], true) && !$canScan) message(1, lang('user_group_insufficient_privilege'));
+            $nextToken = admin_bull_token_guard($uid, 'admin_vod_category_review', param('safe_token'), $operation === 'list');
+            header('X-NNCMS-CSRF-Token: ' . $nextToken);
+            header('Cache-Control: no-store');
+            try {
+                \App\Service\Collection\VideoOriginService::ensureReady();
+                if (in_array($operation, ['start','scan'], true)) {
+                    $state = \App\Service\Admin\VodCategoryReviewService::scan($reviewCode, $operation === 'start', admin_param_text('run', '', 32));
+                    if ($operation === 'start') admin_audit_log('vod_category_scan', ['source'=>$reviewCode]);
+                } elseif ($operation === 'confirm') {
+                    $vid = admin_param_int('vid', 0, 1);
+                    $target = admin_param_int('cid', 0, 1);
+                    \App\Service\Admin\VodCategoryReviewService::confirm($reviewCode, admin_param_int('remote_id', 0, 1), $vid, $target);
+                    admin_audit_log('vod_category_confirm', ['source'=>$reviewCode,'vid'=>$vid,'cid'=>$target]);
+                } elseif ($operation !== 'list') {
+                    throw new \RuntimeException('不支持的核对操作');
+                }
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['code'=>0,'state'=>$state ?? \App\Service\Admin\VodCategoryReviewService::state($reviewCode),
+                    'data'=>\App\Service\Admin\VodCategoryReviewService::listing($reviewCode, admin_param_int('page', 1, 1), (bool)admin_param_int('all', 0, 0, 1))], JSON_UNESCAPED_UNICODE);
+            } catch (\Throwable $e) {
+                xn_log('video category review: ' . $e->getMessage(), 'category_review_error');
+                message(1, xn_h($e instanceof \PDOException ? '保存失败，请重试；当前页未提交' : $e->getMessage()));
+            }
+            exit;
+        } else message(1, lang('method_error'));
+        break;
     case 'list':
         if ('GET' == $method) {
             $filters = array(

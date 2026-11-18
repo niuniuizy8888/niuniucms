@@ -56,6 +56,7 @@
             <div class="card-header">
                 <h3 class="card-title">视频列表</h3>
                 <div class="ms-auto d-flex gap-2 align-items-center">
+                    <a href="<?php echo xn_h(url('vod-category_review', '', TRUE)); ?>" class="btn btn-secondary btn-sm">分类核对</a>
                     <div class="card-actions">
                         <form method="post" action="<?php echo url('vod-poster', '', TRUE); ?>" style="display:inline;">
                             <input type="hidden" name="safe_token" value="<?php echo htmlspecialchars($poster_token ?? '', ENT_QUOTES, 'UTF-8'); ?>">

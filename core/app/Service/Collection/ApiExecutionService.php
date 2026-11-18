@@ -688,6 +688,7 @@ class ApiExecutionService
     public static function importVideoData($data, $code, ?array $fastOptions = null, ?callable $onCommit = null)
     {
         \App\Service\System\ArticleTagSchema::ensureReady();
+        VideoOriginService::ensureReady();
         $conf = _SERVER('conf');
         if ($fastOptions !== null) {
             if (!in_array($fastOptions['mode'] ?? '', ['skip', 'update'], true)
@@ -715,10 +716,13 @@ class ApiExecutionService
         if (!empty($conf['down_pic']) && $conf['down_pic'] == 1 && function_exists('https_request_multi')) {
             $apicate = CollectionCategoryService::videoBindings($savedBindings, catalog: $catalog);
             $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule);
+            $origins = VideoOriginService::context($data['data'], (string)$code);
             $prefetch_urls = array();
             foreach ($data['data'] as $pv) {
                 $cid = CollectionCategoryService::videoTarget($apicate, $pv);
                 if (!$cid || empty($pv['vod_name'])) continue;
+                $origin = VideoOriginService::resolve($pv, $origins);
+                if ($origin['row'] || $origin['blocked']) continue;
                 $candidates = $existing_vods[self::videoIdentity(self::storedVodName($pv['vod_name']), $cid, $matchRule)] ?? array();
                 if (self::matchingVideo($candidates, VideoMatchRuleService::sourceMetadata($pv, $cid), $matchRule)) continue;
                 if (!preg_match('#^https?://#i', (string)($pv['vod_pic'] ?? ''))) continue;
@@ -756,7 +760,8 @@ class ApiExecutionService
             LegacyVideoBindingService::checkBeforeImport($code, $savedBindings, $catalog);
             $existing_vods = self::findExistingVideos($data['data'], $apicate, $matchRule,
                 $fastOptions !== null ? array_keys(ApiImportService::fastDbDiffLabels()) : []);
-            $candidates = array();
+            $origins = VideoOriginService::context($data['data'], (string)$code);
+            $candidates = $origins['rows'];
             foreach ($existing_vods as $rows) foreach ($rows as $vid => $row) $candidates[$vid] = $row;
             $versionStates = VideoVersionService::load($candidates);
             $originalStates = $versionStates;
@@ -774,6 +779,13 @@ class ApiExecutionService
                 } elseif (self::storedVodName($v['vod_name'] ?? '') === '') {
                     $des = lang('api_url_err');
                 } else {
+                    $origin = VideoOriginService::resolve($v, $origins);
+                    if ($origin['blocked']) {
+                        $ress[] = ($k + 1) . '、' . htmlspecialchars($v['vod_name'], ENT_QUOTES, 'UTF-8') . ' <font color="orange">历史来源待确认，已保留原影片和播放地址；请到视频管理的分类核对确认。</font>';
+                        if ($fastOptions !== null) $receipts[] = $receipt;
+                        continue;
+                    }
+                    if (!empty($origin['row']['_manual_cid'])) $cid = (int)$origin['row']['cid'];
                     $payload = self::videoRowPayload($v, $cid, $players, $param);
                     $arr = $payload['arr'];
                     if ($fastOptions !== null) $arr['uptime'] = \App\Service\Content\VideoService::fitColumns(['uptime'=>(string)($v['vod_time'] ?? '')])['uptime'];
@@ -785,7 +797,7 @@ class ApiExecutionService
                     $cj_play_note_arr = $payload['cj_play_note'];
                     $identity = self::videoIdentity($arr['name'], $cid, $matchRule);
                     $owner = VideoVersionService::owner((string)$code, (int)$arr['vod_id']);
-                    $info = self::matchingVideo($existing_vods[$identity] ?? array(), $arr, $matchRule);
+                    $info = $origin['row'] ?? self::matchingVideo($existing_vods[$identity] ?? array(), $arr, $matchRule);
                     if (!$info) {
                         $vid = \App\Repository\RepositoryFactory::vod()->insert($arr);
                         if (!$vid) throw new \RuntimeException('视频入库失败，本页已回滚，请重试');
@@ -845,6 +857,8 @@ class ApiExecutionService
                         }
                         $existing_vods[$identity][$vid] = array_merge($info, $update);
                     }
+                    VideoOriginService::remember((string)$code, $v, $existing_vods[$identity][$vid], true);
+                    VideoOriginService::rememberContext($origins, $v, $existing_vods[$identity][$vid]);
                     $receipt['vid'] = (int)$vid;
                     $receipt['cid'] = (int)($existing_vods[$identity][$vid]['cid'] ?? $cid);
                     $touched[$vid] = $vid;
@@ -946,22 +960,27 @@ class ApiExecutionService
     /** Read-only fast preview, retaining every same-name candidate and the configured matching rule. */
     public static function previewFastVideoData(array $items, string $code, string $scope): array
     {
+        VideoOriginService::ensureReady();
         $conf = _SERVER('conf'); $rule = VideoMatchRuleService::settings($conf);
         $items = self::normalizeFastVideoRows($items);
         $saved = (array)($conf['bind'][$code] ?? []);
         $catalog = VideoCategoryCatalog::forImport((string)($conf['api'][$code]['api'] ?? ''), $saved, $items, $code);
         $bindings = CollectionCategoryService::videoBindings($saved, catalog: $catalog);
         $candidates = self::findExistingVideos($items, $bindings, $rule, array_keys(ApiImportService::fastDbDiffLabels()));
-        $rows = []; foreach ($candidates as $bucket) foreach ($bucket as $vid => $row) $rows[$vid] = $row;
+        $origins = VideoOriginService::context($items, $code);
+        $rows = $origins['rows']; foreach ($candidates as $bucket) foreach ($bucket as $vid => $row) $rows[$vid] = $row;
         $states = VideoVersionService::load($rows); $result = []; $previewId = -1;
         foreach ($items as $source) {
             $cid = CollectionCategoryService::videoTarget($bindings, $source);
             $name = self::storedVodName($source['vod_name']);
             $row = ['vod_name'=>(string)$source['vod_name'], 'type_name'=>$source['type_name'], 'vod_id'=>(int)$source['vod_id'], 'cid'=>$cid, 'vod_time'=>$source['vod_time'] ?? '', 'vid'=>0, 'diff_fields'=>[], 'diff_snapshot'=>[]];
             if ($cid < 1 || $name === '') { $row['status']='unbound'; $result[]=$row; continue; }
+            $origin = VideoOriginService::resolve($source, $origins);
+            if ($origin['blocked']) { $row['status']='unbound'; $row['reason']='历史来源待确认，请先到分类核对确认'; $result[]=$row; continue; }
+            if (!empty($origin['row']['_manual_cid'])) $row['cid'] = $cid = (int)$origin['row']['cid'];
             $payload = self::videoRowPayload($source, $cid, $conf['vodplayer'] ?? [], ['filter'=>0]);
             $identity = self::videoIdentity($name, $cid, $rule);
-            $info = self::matchingVideo($candidates[$identity] ?? [], $payload['arr'], $rule);
+            $info = $origin['row'] ?? self::matchingVideo($candidates[$identity] ?? [], $payload['arr'], $rule);
             $owner = VideoVersionService::owner($code, (int)$source['vod_id']);
             if ($info) {
                 $vid = (int)$info['vid'];
@@ -976,6 +995,7 @@ class ApiExecutionService
                 $candidates[$identity][$vid] = $payload['arr'] + ['vid'=>$vid];
                 $states[$vid] = VideoVersionService::seed($payload['arr'], $owner);
             }
+            VideoOriginService::rememberContext($origins, $source, $candidates[$identity][$vid]);
             $result[] = $row;
         }
         return $result;

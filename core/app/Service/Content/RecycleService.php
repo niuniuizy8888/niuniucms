@@ -164,6 +164,7 @@ class RecycleService
         if ($deleted) {
             try {
                 \App\Service\Collection\VideoVersionService::purgeOrphans();
+                \App\Service\Collection\VideoOriginService::purgeOrphans();
             } catch (\Throwable $e) {
                 xn_log('recycle purge: version source cleanup failed', 'recycle_error');
             }

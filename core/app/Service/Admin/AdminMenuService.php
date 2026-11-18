@@ -76,6 +76,7 @@ class AdminMenuService
                 array('anchor_open' => '<a href="' . url('vod-list', '', TRUE) . '" class="slide-item ' . ($action == 'list' ? 'active' : '') . '">', 'label' => lang('vod_page')),
                 array('anchor_open' => '<a href="' . url('vod-posterlist', '', TRUE) . '" class="slide-item ' . ($action == 'posterlist' ? 'active' : '') . '">', 'label' => lang('vod_poster')),
                 array('anchor_open' => '<a href="' . url('vod-duplicate', '', TRUE) . '" class="slide-item ' . ($action == 'duplicate' ? 'active' : '') . '">', 'label' => '重复检测'),
+                array('anchor_open' => '<a href="' . url('vod-category_review', '', TRUE) . '" class="slide-item ' . ($action == 'category_review' ? 'active' : '') . '">', 'label' => '分类核对'),
             ),
         );
 

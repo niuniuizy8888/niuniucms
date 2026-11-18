@@ -226,10 +226,10 @@ class VodEditService
      * admin_bull_token_guard('admin_vod_update', 用路由 $uid 而非会话 uid，失配修复注释在案) →
      * admin_param_int/text 取参 → **入库转义**（纯文本 htmlspecialchars、content 走 xn_html_safe、
      * play_url 控制符清洗 + xn_url_strip；前台 {$player} 裸 echo 依赖此处）→ VideoService::update。
-     * 成功后同步 vod_vid 索引 cid（改分类滞留旧类问题修复）、维护置顶（sticky=1 重建，否则删除）。
+     * 分类、来源保护及 vod_vid 索引在采集锁内同事务保存；随后维护置顶（sticky=1 重建，否则删除）。
      * @param int $vid 视频 id
      * @param int $uid 路由层管理员 uid（token 生成/校验必须同源）
-     * @return bool FALSE=VideoService::update 写主表失败；TRUE=已写主表（索引/置顶维护为尽力而为，不反馈到返回值）
+     * @return bool TRUE=影片与分类保护已提交；事务保存失败抛异常，由 updateAction 返回提示。
      */
     public static function update(int $vid, int $uid = 0): bool
     {
@@ -274,14 +274,9 @@ class VodEditService
             'uptime' => date('Y-m-d H:i:s'),
         );
 
-        $result = \App\Service\Content\VideoService::update($vid, $update);
+        $result = \App\Service\Collection\VideoOriginService::saveManual($vid, $update);
         if (FALSE === $result) {
             return FALSE;
-        }
-
-        // 同步 vod_vid 索引的 cid（前台分类页/计数按 vod_vid 走；此前改分类只写主表，视频滞留旧分类，审计修复）
-        if (!empty($update['cid'])) {
-            \App\Repository\RepositoryFactory::vodVid()->update(array('vid' => intval($vid)), array('cid' => intval($update['cid'])));
         }
 
         if (1 == intval($update['sticky'])) {
@@ -303,7 +298,11 @@ class VodEditService
      */
     public static function updateAction(int $vid, int $uid = 0): array
     {
-        $result = self::update($vid, $uid);
+        try {
+            $result = self::update($vid, $uid);
+        } catch (\RuntimeException $e) {
+            message(-1, xn_h($e instanceof \PDOException ? '保存失败，请重试；本次修改已回滚' : $e->getMessage()));
+        }
         FALSE === $result and message(-1, lang('update_failed'));
         admin_audit_log('vod_update', array('vid' => $vid));
         return array('code' => 0, 'message' => jump('更新成功', url('vod-list', array(), TRUE), 3));

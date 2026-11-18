@@ -511,3 +511,19 @@ CREATE TABLE `niuniucms_scheduler_tasks` (
   KEY `status_id` (`status`,`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='采集任务队列表';
 
+# 采集来源身份与人工分类保护；存量站点由 VideoOriginService 自动补表。
+DROP TABLE IF EXISTS `niuniucms_vod_origin`;
+CREATE TABLE `niuniucms_vod_origin` (
+  source VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  remote_id BIGINT UNSIGNED NOT NULL, vid INT UNSIGNED NOT NULL, alias VARCHAR(32) NOT NULL,
+  type_id INT UNSIGNED NOT NULL DEFAULT 0, type_name VARCHAR(255) NOT NULL DEFAULT '',
+  type_path VARCHAR(1000) NOT NULL DEFAULT '', suggested_cid INT UNSIGNED NOT NULL DEFAULT 0,
+  mismatch TINYINT UNSIGNED NOT NULL DEFAULT 0, verified TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  checked_at INT UNSIGNED NOT NULL, PRIMARY KEY(source,remote_id,vid), KEY vid(vid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+DROP TABLE IF EXISTS `niuniucms_vod_category_guard`;
+CREATE TABLE `niuniucms_vod_category_guard` (
+  vid INT UNSIGNED NOT NULL PRIMARY KEY, alias VARCHAR(32) NOT NULL,
+  cid INT UNSIGNED NOT NULL, updated_at INT UNSIGNED NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
