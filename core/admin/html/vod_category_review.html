@@ -4,7 +4,7 @@
         <div class="card-header"><h3 class="card-title">历史分类核对</h3><a class="btn btn-secondary btn-sm ms-auto" href="<?php echo xn_h(url('vod-list','',true)); ?>">返回视频管理</a></div>
         <div class="card-body">
             <p>核对资源站与已有影片的分类，列出可能串类的记录。核对只保存来源信息，不自动改类或导入新影片。</p>
-            <p class="text-muted">确认后，本片保持您选择的分类，重采继续更新原记录和播放地址。其他影片仍按资源站分类绑定采集，请同时检查采集配置。</p>
+            <p class="text-muted">请对照来源和本地的年份、分类及豆瓣编号。待确认的资源会跳过采集。确认后，重采将更新这部影片，保留所选分类和已有播放线路。</p>
             <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
                 <label for="review-source">资源站</label>
                 <select id="review-source" class="form-control" style="width:auto;max-width:100%"><option value="">全部来源（查看结果）</option>
@@ -22,7 +22,7 @@
             <p class="text-muted">每次只处理一页，进度自动保存。暂停或关闭页面后，当前页会保存，重新打开可继续。结果每页最多显示 20 条。</p>
             <div id="review-message" class="text-danger mb-3" role="alert"></div>
             <div class="table-responsive"><table class="table table-striped">
-                <thead><tr><th>影片</th><th>资源站与分类</th><th>当前分类</th><th>核对结果</th><th>确认分类</th></tr></thead>
+                <thead><tr><th>影片</th><th>来源资料</th><th>本地资料</th><th>核对结果</th><th>确认分类</th></tr></thead>
                 <tbody id="review-rows"></tbody>
             </table></div>
             <div class="d-flex align-items-center gap-2"><button id="review-prev" class="btn btn-secondary" type="button">上一页</button><span id="review-pages"></span><button id="review-next" class="btn btn-secondary" type="button">下一页</button></div>
@@ -66,15 +66,22 @@
             function cell(text) { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; }
             const title = cell(''); const link = document.createElement('a');
             link.href = initial.edit + (initial.edit.includes('?') ? '&' : '?') + 'vid=' + Number(row.vid); link.textContent = '#' + row.vid + ' ' + row.name; title.appendChild(link);
-            cell(row.source_name + ' · 资源 ' + row.remote_id + '\n' + (row.type_path || row.type_name) + '（分类 ' + row.type_id + '）').style.whiteSpace = 'pre-line';
-            cell(row.local_path); cell(row.status);
-            const actions = cell(''); const select = document.createElement('select'); select.className = 'form-control mb-2'; select.setAttribute('aria-label', '为' + row.name + '选择分类');
+            function metadata(year, category, douban) {
+                return (category || '分类未提供') + '\n年份 ' + (year && year !== '0' ? year : '未提供') + '\n豆瓣编号 ' + (Number(douban) > 0 ? douban : '未提供');
+            }
+            const sourceInfo = metadata(row.source_year, row.type_path || row.type_name, row.source_douban_id);
+            const localInfo = metadata(row.year, row.local_path, row.douban_id);
+            cell(row.source_name + ' · 资源 ' + row.remote_id + '\n' + sourceInfo).style.whiteSpace = 'pre-line';
+            cell(localInfo).style.whiteSpace = 'pre-line'; cell(row.status).className = 'text-nowrap';
+            const actions = cell('');
+            if (!row.can_confirm) { actions.textContent = '请重新核对'; el('rows').appendChild(tr); return; }
+            const select = document.createElement('select'); select.className = 'form-control mb-2'; select.setAttribute('aria-label', '为' + row.name + '选择分类');
             initial.cats.forEach(c => { const opt = document.createElement('option'); opt.value = c.cid; opt.textContent = path(c.cid); select.appendChild(opt); });
             select.value = Number(row.pending) && Number(row.suggested_cid) ? row.suggested_cid : row.cid;
             const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-primary btn-sm'; button.textContent = '确认此片及分类';
             button.addEventListener('click', async () => {
                 if (busy || running) return;
-                if (!window.confirm('确认资源 ' + row.remote_id + ' 对应《' + row.name + '》，并将本片分类设为“' + path(select.value) + '”？原播放地址会保留。')) return;
+                if (!window.confirm(row.source_name + ' · 资源 ' + row.remote_id + '\n' + sourceInfo + '\n\n本地 #' + row.vid + '《' + row.name + '》\n' + localInfo + '\n\n确认是同一部影片，并将分类设为“' + path(select.value) + '”？')) return;
                 await action({operation:'confirm', source:row.source, remote_id:row.remote_id, vid:row.vid, cid:select.value});
                 if (row.source !== el('source').value) await action({operation:'list'});
             });

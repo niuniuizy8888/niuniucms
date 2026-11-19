@@ -378,7 +378,13 @@ function bull_session_is_empty()
 function bull_token_failure_kind($safe_key, $token, $uid = 0)
 {
     if (!$safe_key || !is_string($token) || '' === $token) return 'illegal';
-    if (bull_session_token_has($safe_key, $token)) return 'stale_token';
+    if (bull_session_token_has($safe_key, $token)) {
+        if ($safe_key === 'admin_login') {
+            bull_token_validate($uid, $token, 3600, $reason);
+            if ($reason === 'ip_changed') return 'ip_changed';
+        }
+        return 'stale_token';
+    }
     $name = session_name();
     if (empty($_COOKIE[$name]) && empty($_COOKIE['nncms_sid'])) return 'session_expired';
     // 环里没有、cookie 也带了：解密一把看这枚令牌本身合不合法。合法 =>
@@ -409,6 +415,10 @@ function admin_bull_token_guard($uid, $scene = '', $token = '', $read_only = FAL
     }
     if (FALSE !== $next_token) return $next_token;
     $kind = bull_token_failure_kind($scene, $token, $uid);
+    if ('ip_changed' === $kind) {
+        if (function_exists('admin_audit_log')) admin_audit_log('admin_login_ip_changed', array('scene' => $scene, 'target_uid' => $uid));
+        message(1, '登录请求的 IP 与领取令牌时不同。使用 CDN 时，请在源站正确设置受信回源节点，确保两次请求都识别到同一个访客 IP 后重试。');
+    }
     if ('session_expired' === $kind) {
         if (function_exists('admin_audit_log')) admin_audit_log('admin_session_expired', array('scene' => $scene, 'target_uid' => $uid));
         message(-1, '登录会话已失效（浏览器会话 Cookie 未保存或已过期）：刷新页面后重试，若仍失败请重新登录后台');
@@ -582,8 +592,9 @@ function bull_token_gen($uid, $salt = '')
  * @param int $life 有效期秒数；⚠ 传值小于 10 会被就地改成 1800（防误传 0 变成「永久有效」）
  * @return bool TRUE = 令牌自身完全合法；FALSE = 伪造/跨上下文/过期/前置数据缺失
  */
-function bull_token_validate($uid, $token, $life = 3600)
+function bull_token_validate($uid, $token, $life = 3600, &$reason = null)
 {
+    $reason = null;
     if (empty($token)) return FALSE;
     $ip = ip();
     $time = time();
@@ -603,7 +614,9 @@ function bull_token_validate($uid, $token, $life = 3600)
     if (count($arr) != 4) return FALSE;
     list($_ip, $_uid, $_time, $ua_md5) = $arr;
     $life < 10 and $life = 1800;
-    return !(!hash_equals((string)$ua_md5, md5((string)$useragent)) || $time - $_time > $life || $uid != $_uid || $ip != $_ip); // S-2：UA 指纹恒时比较
+    if (!hash_equals((string)$ua_md5, md5((string)$useragent)) || $time - $_time > $life || $uid != $_uid) return FALSE;
+    if ($ip != $_ip) { $reason = 'ip_changed'; return FALSE; }
+    return TRUE;
 }
 
 /**

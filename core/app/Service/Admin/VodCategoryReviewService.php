@@ -50,19 +50,21 @@ class VodCategoryReviewService
         $v=Origin::table('vod'); $o=Origin::table('vod_origin'); $g=Origin::table('vod_category_guard');
         $join=" FROM $o o JOIN $v v ON v.vid=o.vid AND BINARY v.alias=BINARY o.alias LEFT JOIN $g g ON g.vid=v.vid ";
         $protected='(BINARY g.alias=BINARY v.alias AND g.cid=v.cid)';
-        $pending="(o.verified=0 OR ((o.mismatch=1 OR (o.suggested_cid>0 AND o.suggested_cid<>v.cid)) AND NOT COALESCE($protected,0)))";
-        $where=' WHERE 1=1'; $args=[];
+        $pending=Origin::pendingCondition();
+        $where=' WHERE o.excluded=0'; $args=[];
         if ($code!=='') { $where.=' AND o.source=?'; $args[]=$code; }
         if (!$all) $where.=' AND '.$pending;
         $total=(int)Origin::sql('SELECT COUNT(*)'.$join.$where,$args)->fetchColumn();
         $pages=max(1,(int)ceil($total/20)); $page=max(1,min($pages,$page));
-        $rows=Origin::sql("SELECT o.source,o.remote_id,o.vid,o.type_id,o.type_name,o.type_path,o.suggested_cid,o.verified,v.name,v.cid,COALESCE($protected,0) AS protected,$pending AS pending".$join.$where.' ORDER BY o.vid,o.source,o.remote_id LIMIT 20 OFFSET '.(($page-1)*20),$args)->fetchAll(\PDO::FETCH_ASSOC);
+        $rows=Origin::sql("SELECT o.source,o.remote_id,o.vid,o.type_id,o.type_name,o.type_path,o.suggested_cid,o.verified,o.source_year,o.source_douban_id,v.name,v.cid,v.year,v.douban_id,COALESCE($protected,0) AS protected,$pending AS pending".$join.$where.' ORDER BY o.vid,o.source,o.remote_id LIMIT 20 OFFSET '.(($page-1)*20),$args)->fetchAll(\PDO::FETCH_ASSOC);
         $cats=CollectionCategoryService::targets(0); $sources=self::sources();
         foreach ($rows as &$row) {
             $row['name']=htmlspecialchars_decode($row['name'],ENT_QUOTES);
             $row['local_path']=self::localPath((int)$row['cid'],$cats);
             $row['source_name']=$sources[$row['source']]['name'] ?? $row['source'];
             $row['status']=!(int)$row['verified'] ? '同名来源待确认' : ((int)$row['protected'] ? '已人工确认' : ((int)$row['pending'] ? '分类待核对' : '分类一致'));
+            $row['can_confirm']=$row['source_year']!==null && Origin::compatible((int)$row['source_year'],(int)$row['source_douban_id'],$row);
+            if (!$row['can_confirm']) $row['status']=$row['source_year']===null ? '旧记录，请重新核对来源资料' : '影片资料冲突，请重新核对';
         }
         return compact('rows','total','pages','page');
     }
@@ -115,16 +117,32 @@ class VodCategoryReviewService
                 $cats=CollectionCategoryService::targets(0); $types=self::typeInfo($catalog,$cats);
                 $context=Origin::context($data['data'],$code); $matched=0;
                 foreach ($data['data'] as $item) {
-                    if ((int)($item['vod_id'] ?? 0)<1) continue;
+                    $id=(int)($item['vod_id'] ?? 0);
+                    if ($id<1) continue;
+                    $item=Origin::withEvidence($item,$context);
                     $resolved=Origin::resolve($item,$context); $row=$resolved['row'];
-                    $candidates=$row ? [$row['vid']=>$row['vid']] : ($context['byName'][Origin::name((string)($item['vod_name'] ?? ''))] ?? []);
-                    foreach ($candidates as $vid) {
+                    $previous=($context['known'][$id] ?? [])+($context['pending'][$id] ?? [])+($context['excluded'][$id] ?? []);
+                    $possible=($context['byName'][Origin::name((string)($item['vod_name'] ?? ''))] ?? [])+$previous;
+                    $candidates=$row ? [$row['vid']=>$row['vid']] : array_filter(
+                        $possible,
+                        static fn($vid)=>Origin::compatible((int)($item['vod_year'] ?? 0),(int)($item['vod_douban_id'] ?? 0),$context['rows'][$vid])
+                    );
+                    // 全是不同作品时记住已排除的影片编号，宽松的普通查重也不能重新选中它们。
+                    $excluded=!$candidates;
+                    $keep=$excluded ? $possible : $candidates;
+                    $obsolete=array_diff($previous,$keep);
+                    if ($obsolete) {
+                        $marks=implode(',',array_fill(0,count($obsolete),'?'));
+                        Origin::sql('DELETE FROM '.Origin::table('vod_origin')." WHERE source=? AND remote_id=? AND vid IN ($marks)",[$code,$id,...array_values($obsolete)]);
+                    }
+                    $type=$types[$item['type_id'] ?? 0] ?? ['path'=>(string)($item['type_name'] ?? ''),'cid'=>0];
+                    $type['excluded']=$excluded;
+                    foreach ($keep as $vid) {
                         $candidate=$context['rows'][$vid];
-                        $type=$types[$item['type_id'] ?? 0] ?? ['path'=>(string)($item['type_name'] ?? ''),'cid'=>0];
                         $type['mismatch']=(int)($type['path']!==self::localPath((int)$candidate['cid'],$cats));
                         Origin::remember($code,$item,$candidate,$row!==null,$type);
-                        ++$matched;
                     }
+                    $matched+=count($candidates);
                 }
                 $state['checked']+=count($data['data']); $state['matched']+=$matched;
                 $state['pages']=(int)$data['page']['pagecount']; $state['next']=$page+1;
@@ -138,9 +156,12 @@ class VodCategoryReviewService
     public static function confirm(string $source, int $remoteId, int $vid, int $cid): void
     {
         Origin::saveManual($vid,['cid'=>$cid],true,static function($video) use ($source,$remoteId,$vid) {
-            $origin=Origin::sql('SELECT source,remote_id,vid,alias,type_id,type_name FROM '.Origin::table('vod_origin').' WHERE source=? AND remote_id=? AND vid=? FOR UPDATE',[$source,$remoteId,$vid])->fetch(\PDO::FETCH_ASSOC);
+            $origin=Origin::sql('SELECT alias,type_id,type_name,source_year,source_douban_id FROM '.Origin::table('vod_origin').' WHERE source=? AND remote_id=? AND vid=? AND excluded=0 FOR UPDATE',[$source,$remoteId,$vid])->fetch(\PDO::FETCH_ASSOC);
             if (!$origin || $origin['alias']!==$video['alias']) throw new \RuntimeException('核对记录已失效，请重新核对');
-            Origin::remember($source,['vod_id'=>$remoteId,'type_id'=>$origin['type_id'],'type_name'=>$origin['type_name']],$video,true);
+            if ($origin['source_year']===null) throw new \RuntimeException('请重新核对该资源站，取得来源资料后再确认');
+            if (!Origin::compatible((int)$origin['source_year'],(int)$origin['source_douban_id'],$video)) throw new \RuntimeException('来源与本地影片资料冲突，请重新核对年份和豆瓣编号');
+            Origin::remember($source,['vod_id'=>$remoteId,'type_id'=>$origin['type_id'],'type_name'=>$origin['type_name'],
+                'vod_year'=>$origin['source_year'],'vod_douban_id'=>$origin['source_douban_id']],$video,true);
         });
     }
 }

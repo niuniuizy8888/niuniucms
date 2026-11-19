@@ -83,8 +83,24 @@
         jform.reset();
         var jsubmit = jform.find('#submit');
         jsubmit.button('loading');
-        var postdata = jform.serializeObject();
-        $.xpost(jform.attr('action'), postdata, function(code, message, res) {
+        // 单独从当前会话取令牌，避免 CDN 返回旧表单；只有取到令牌才提交账号密码。
+        $.ajax({url: jform.attr('action'), method: 'POST', data: {refresh_login_token: '1'}, dataType: 'json', timeout: 15000})
+        .done(function(data) {
+            if (data && typeof data.safe_token === 'string' && data.safe_token) {
+                jform.find('[name=safe_token]').val(data.safe_token);
+                submitLogin(jsubmit);
+            } else {
+                tokenRequestFailed(jsubmit);
+            }
+        }).fail(function() { tokenRequestFailed(jsubmit); });
+        return false;
+    });
+    function tokenRequestFailed(jsubmit) {
+        jsubmit.button('reset');
+        $.alert('未能取得当前登录会话的校验令牌，请重试。使用 CDN 时，请让实际后台入口及其所有参数直接回源，并透传会话 Cookie。');
+    }
+    function submitLogin(jsubmit) {
+        $.xpost(jform.attr('action'), jform.serializeObject(), function(code, message, res) {
             if(code == 0) {
                 jsubmit.button(message);
                 /* 登录成功后的跳转：服务端 message(jump()) 把跳转脚本放在 res.jump_script
@@ -99,8 +115,7 @@
             }
             else { $.alert(message); jsubmit.button('reset'); }
         });
-        return false;
-    });
+    }
     </script>
 </body>
 </html>

@@ -21,15 +21,17 @@ class VideoOriginService
     public static function ensureReady(): void
     {
         if (self::$ready) return;
-        if (self::sql('SELECT v FROM ' . self::table('kv') . ' WHERE k=?', ['vod_origin_schema_v1'])->fetchColumn() === '1') {
+        if (self::sql('SELECT v FROM ' . self::table('kv') . ' WHERE k=?', ['vod_origin_schema_v2'])->fetchColumn() === '1') {
             self::$ready = true; return;
         }
         if (_SERVER('db')->inTransaction()) throw new \RuntimeException('请先打开视频管理完成来源记录升级');
-        self::sql('CREATE TABLE IF NOT EXISTS ' . self::table('vod_origin') . ' (
+        $origin = self::table('vod_origin');
+        self::sql('CREATE TABLE IF NOT EXISTS ' . $origin . ' (
             source VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
             remote_id BIGINT UNSIGNED NOT NULL, vid INT UNSIGNED NOT NULL, alias VARCHAR(32) NOT NULL,
             type_id INT UNSIGNED NOT NULL DEFAULT 0, type_name VARCHAR(255) NOT NULL DEFAULT \'\',
             type_path VARCHAR(1000) NOT NULL DEFAULT \'\', suggested_cid INT UNSIGNED NOT NULL DEFAULT 0,
+            source_year VARCHAR(10) DEFAULT NULL, source_douban_id INT UNSIGNED DEFAULT NULL, excluded TINYINT UNSIGNED NOT NULL DEFAULT 0,
             mismatch TINYINT UNSIGNED NOT NULL DEFAULT 0, verified TINYINT UNSIGNED NOT NULL DEFAULT 0,
             checked_at INT UNSIGNED NOT NULL, PRIMARY KEY(source,remote_id,vid), KEY vid(vid)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
@@ -37,7 +39,18 @@ class VideoOriginService
             vid INT UNSIGNED NOT NULL PRIMARY KEY, alias VARCHAR(32) NOT NULL,
             cid INT UNSIGNED NOT NULL, updated_at INT UNSIGNED NOT NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
-        self::sql('INSERT INTO ' . self::table('kv') . ' (k,v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)', ['vod_origin_schema_v1','1']);
+        $lock = 'vod_origin_upgrade_' . substr(hash('sha256', self::sql('SELECT DATABASE()')->fetchColumn() . $origin), 0, 32);
+        if ((int)self::sql('SELECT GET_LOCK(?,30)', [$lock])->fetchColumn() !== 1) throw new \RuntimeException('影片来源记录正在升级，请稍后重试');
+        try {
+            $columns = self::sql("SHOW COLUMNS FROM $origin")->fetchAll(\PDO::FETCH_COLUMN);
+            $add = [];
+            if (!in_array('source_year', $columns, true)) $add[] = 'ADD source_year VARCHAR(10) DEFAULT NULL';
+            if (!in_array('source_douban_id', $columns, true)) $add[] = 'ADD source_douban_id INT UNSIGNED DEFAULT NULL';
+            if (!in_array('excluded', $columns, true)) $add[] = 'ADD excluded TINYINT UNSIGNED NOT NULL DEFAULT 0';
+            if ($add) self::sql("ALTER TABLE $origin " . implode(', ', $add));
+            self::sql('INSERT INTO ' . self::table('kv') . ' (k,v) VALUES (?,?),(?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)',
+                ['vod_origin_schema_v1','1','vod_origin_schema_v2','1']);
+        } finally { self::sql('SELECT RELEASE_LOCK(?)', [$lock]); }
         self::$ready = true;
     }
 
@@ -81,15 +94,22 @@ class VideoOriginService
             $remoteId=self::remoteId($item['vod_id'] ?? 0);
             if ($remoteId) $ids[$remoteId] = $remoteId;
         }
-        $known = $rows = $byName = [];
+        $known = $pending = $excluded = $evidence = $rows = $byName = [];
         $v = self::table('vod'); $o = self::table('vod_origin'); $g = self::table('vod_category_guard');
         $fields=array_unique(array_merge(['vid','alias','cid','name','year','douban_id','remarks','play_from','play_url','play_server','play_note'],array_keys(ApiImportService::fastDbDiffLabels())));
         $columns=implode(',',array_map(static fn($field)=>'v.'._SERVER('db')->qi($field),$fields));
         $select = "SELECT $columns,IF(BINARY g.alias=BINARY v.alias AND g.cid=v.cid,g.cid,0) AS _manual_cid FROM $v v LEFT JOIN $g g ON g.vid=v.vid ";
         foreach (array_chunk(array_values($ids), 500) as $chunk) {
             $marks = implode(',', array_fill(0,count($chunk),'?'));
-            $origins = self::sql("SELECT o.remote_id,o.vid FROM $o o JOIN $v v ON v.vid=o.vid AND BINARY v.alias=BINARY o.alias WHERE o.source=? AND o.verified=1 AND o.remote_id IN ($marks)", array_merge([$code],$chunk))->fetchAll(\PDO::FETCH_ASSOC);
-            foreach ($origins as $r) $known[(int)$r['remote_id']][(int)$r['vid']] = (int)$r['vid'];
+            $awaiting = self::pendingCondition();
+            $origins = self::sql("SELECT o.remote_id,o.vid,o.verified,o.excluded,o.source_year,o.source_douban_id,$awaiting AS pending FROM $o o JOIN $v v ON v.vid=o.vid AND BINARY v.alias=BINARY o.alias LEFT JOIN $g g ON g.vid=v.vid WHERE o.source=? AND o.remote_id IN ($marks) ORDER BY o.checked_at,o.vid", array_merge([$code],$chunk))->fetchAll(\PDO::FETCH_ASSOC);
+            foreach ($origins as $r) {
+                $id=(int)$r['remote_id']; $vid=(int)$r['vid'];
+                if ($r['source_year']!==null) $evidence[$id]=['vod_year'=>$r['source_year'],'vod_douban_id'=>$r['source_douban_id']];
+                if ($r['excluded']) { $excluded[$id][$vid]=$vid; continue; }
+                if ($r['verified']) $known[$id][$vid]=$vid;
+                if ($r['pending']) $pending[$id][$vid]=$vid;
+            }
         }
         foreach (array_chunk(array_values($names), 250) as $chunk) {
             $marks = implode(',', array_fill(0,count($chunk),'?'));
@@ -97,12 +117,43 @@ class VideoOriginService
             if (count($found)>2000) throw new \RuntimeException('同名历史影片过多，请先处理重复视频后重试');
             foreach ($found as $r) { $rows[(int)$r['vid']]=$r; $byName[self::name(htmlspecialchars_decode($r['name'],ENT_QUOTES))][(int)$r['vid']] = (int)$r['vid']; }
         }
-        $missing=[]; foreach ($known as $vids) foreach ($vids as $vid) if (!isset($rows[$vid])) $missing[$vid]=$vid;
+        $missing=[];
+        foreach ([$known,$pending,$excluded] as $links) foreach ($links as $vids) foreach ($vids as $vid) {
+            if (!isset($rows[$vid])) $missing[$vid]=$vid;
+        }
         foreach (array_chunk(array_values($missing),500) as $chunk) {
             $marks=implode(',',array_fill(0,count($chunk),'?'));
             foreach (self::sql($select . "WHERE v.vid IN ($marks)",$chunk)->fetchAll(\PDO::FETCH_ASSOC) as $r) $rows[(int)$r['vid']]=$r;
         }
-        return compact('known','rows','byName');
+        return compact('known','pending','excluded','evidence','rows','byName');
+    }
+
+    /** 增量详情有时省略作品资料。只有新旧依据相容时才沿用同一来源编号的上次资料。 */
+    public static function withEvidence(array $item, array $context): array
+    {
+        $previous=$context['evidence'][self::remoteId($item['vod_id'] ?? 0)] ?? null;
+        if (!$previous) return $item;
+        $year=(int)($item['vod_year'] ?? 0); $id=(int)($item['vod_douban_id'] ?? 0);
+        if (!self::compatible($year,$id,['year'=>$previous['vod_year'],'douban_id'=>$previous['vod_douban_id']])) return $item;
+        if (!$year) $item['vod_year']=$previous['vod_year'];
+        if (!$id) $item['vod_douban_id']=$previous['vod_douban_id'];
+        return $item;
+    }
+
+    /** 核对列表、采集和快速预览使用相同的待确认条件。 */
+    public static function pendingCondition(): string
+    {
+        $conflict='CASE WHEN o.source_douban_id>0 AND v.douban_id>0 THEN o.source_douban_id<>v.douban_id
+            ELSE CAST(o.source_year AS UNSIGNED)>0 AND CAST(v.year AS UNSIGNED)>0 AND CAST(o.source_year AS UNSIGNED)<>CAST(v.year AS UNSIGNED) END';
+        return "(o.verified=0 OR COALESCE(($conflict),0) OR ((o.mismatch=1 OR (o.suggested_cid>0 AND o.suggested_cid<>v.cid)) AND NOT COALESCE(BINARY g.alias=BINARY v.alias AND g.cid=v.cid,0)))";
+    }
+
+    /** 相同有效豆瓣编号可解释年份差异；无此依据时不把已知的不同年份当成同一部影片。 */
+    public static function compatible(int $year, int $douban, array $row): bool
+    {
+        $localId=(int)$row['douban_id']; $localYear=(int)$row['year'];
+        if ($douban>0 && $localId>0) return $douban===$localId;
+        return $year<=0 || $localYear<=0 || $year===$localYear;
     }
 
     private static function addresses(array $row, string $prefix): array
@@ -119,17 +170,27 @@ class VideoOriginService
 
     public static function resolve(array $item, array $context): array
     {
-        $known=$context['known'][self::remoteId($item['vod_id'] ?? 0)] ?? [];
-        if (count($known)===1) return ['row'=>$context['rows'][reset($known)],'blocked'=>false];
-        if ($known) return ['row'=>null,'blocked'=>true];
+        $item=self::withEvidence($item,$context);
+        $id=self::remoteId($item['vod_id'] ?? 0);
+        $known=$context['known'][$id] ?? [];
+        $pending=!empty($context['pending'][$id]);
+        $year=(int)($item['vod_year'] ?? 0); $douban=(int)($item['vod_douban_id'] ?? 0);
+        if (count($known)===1) {
+            $row=$context['rows'][reset($known)];
+            if (self::compatible($year,$douban,$row)) return ['row'=>$row,'blocked'=>$pending];
+        }
+        if ($known || $pending) return ['row'=>null,'blocked'=>true];
+        foreach ($context['excluded'][$id] ?? [] as $vid) {
+            if (self::compatible($year,$douban,$context['rows'][$vid])) return ['row'=>null,'blocked'=>true];
+        }
         $exact=$protected=[]; $incoming=self::addresses($item,'vod_');
         foreach ($context['byName'][self::name((string)($item['vod_name'] ?? ''))] ?? [] as $vid) {
             $row=$context['rows'][$vid];
-            if (!empty($item['vod_douban_id']) && !empty($row['douban_id']) && (int)$item['vod_douban_id']!==(int)$row['douban_id']) continue;
+            if (!self::compatible($year,$douban,$row)) continue;
             $same=false;
             foreach (self::addresses($row,'') as $line=>$urls) if (array_intersect_key($urls,$incoming[$line] ?? [])) { $same=true; break; }
             if ($same) $exact[$vid]=$row;
-            if (!empty($row['_manual_cid']) && (empty($item['vod_year']) || !$row['year'] || (int)$item['vod_year']===(int)$row['year'])) $protected[$vid]=$row;
+            if (!empty($row['_manual_cid'])) $protected[$vid]=$row;
         }
         if (count($exact)===1) return ['row'=>reset($exact),'blocked'=>false];
         if ($exact) {
@@ -147,19 +208,25 @@ class VideoOriginService
         $id=self::remoteId($item['vod_id'] ?? 0); if ($id<1 || (int)$row['vid']<1) return;
         $table=self::table('vod_origin');
         if ($verified) self::sql("DELETE FROM $table WHERE source=? AND remote_id=? AND vid<>?",[$code,$id,$row['vid']]);
-        self::sql("INSERT INTO $table (source,remote_id,vid,alias,type_id,type_name,type_path,suggested_cid,mismatch,verified,checked_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
-            verified=IF(BINARY alias=BINARY VALUES(alias),GREATEST(verified,VALUES(verified)),VALUES(verified)),alias=VALUES(alias),
-            type_id=VALUES(type_id),type_name=VALUES(type_name),checked_at=VALUES(checked_at)" . ($type!==null ? ',type_path=VALUES(type_path),suggested_cid=VALUES(suggested_cid),mismatch=VALUES(mismatch)' : ''),
+        $year=VideoService::fitColumns(['year'=>(string)($item['vod_year'] ?? '')])['year'];
+        $douban=max(0,min(4294967295,(int)($item['vod_douban_id'] ?? 0)));
+        self::sql("INSERT INTO $table (source,remote_id,vid,alias,type_id,type_name,type_path,suggested_cid,mismatch,verified,checked_at,source_year,source_douban_id,excluded)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+            verified=IF(VALUES(excluded)=1,0,IF(BINARY alias=BINARY VALUES(alias),GREATEST(verified,VALUES(verified)),VALUES(verified))),alias=VALUES(alias),excluded=VALUES(excluded),
+            type_id=VALUES(type_id),type_name=VALUES(type_name),checked_at=VALUES(checked_at),source_year=VALUES(source_year),source_douban_id=VALUES(source_douban_id)" . ($type!==null ? ',type_path=VALUES(type_path),suggested_cid=VALUES(suggested_cid),mismatch=VALUES(mismatch)' : ''),
             [$code,$id,$row['vid'],$row['alias'],max(0,(int)($item['type_id'] ?? 0)),VideoService::fitText((string)($item['type_name'] ?? ''),255),
-                $type['path'] ?? '',$type['cid'] ?? 0,$type['mismatch'] ?? 0,(int)$verified,time()]);
+                $type['path'] ?? '',$type['cid'] ?? 0,$type['mismatch'] ?? 0,(int)$verified,time(),$year,$douban,(int)($type['excluded'] ?? false)]);
     }
 
     public static function rememberContext(array &$context, array $item, array $row): void
     {
         $vid=(int)$row['vid']; $context['rows'][$vid]=$row;
         $context['byName'][self::name(htmlspecialchars_decode($row['name'],ENT_QUOTES))][$vid]=$vid;
-        if ($id=self::remoteId($item['vod_id'] ?? 0)) $context['known'][$id]=[$vid=>$vid];
+        if ($id=self::remoteId($item['vod_id'] ?? 0)) {
+            unset($context['pending'][$id],$context['excluded'][$id]);
+            $context['known'][$id]=[$vid=>$vid];
+            $context['evidence'][$id]=['vod_year'=>$item['vod_year'] ?? '', 'vod_douban_id'=>$item['vod_douban_id'] ?? 0];
+        }
     }
 
     public static function purgeOrphans(): void
@@ -176,7 +243,7 @@ class VideoOriginService
     {
         $result=self::locked(static function() use ($vid,$update,$confirm,$after) {
             $v=self::table('vod'); $g=self::table('vod_category_guard');
-            $old=self::sql("SELECT v.vid,v.alias,v.cid,IF(BINARY g.alias=BINARY v.alias AND g.cid=v.cid,g.cid,0) AS _manual_cid FROM $v v LEFT JOIN $g g ON g.vid=v.vid WHERE v.vid=? FOR UPDATE",[$vid])->fetch(\PDO::FETCH_ASSOC);
+            $old=self::sql("SELECT v.vid,v.alias,v.cid,v.year,v.douban_id,IF(BINARY g.alias=BINARY v.alias AND g.cid=v.cid,g.cid,0) AS _manual_cid FROM $v v LEFT JOIN $g g ON g.vid=v.vid WHERE v.vid=? FOR UPDATE",[$vid])->fetch(\PDO::FETCH_ASSOC);
             if (!$old) throw new \RuntimeException('影片不存在，请刷新后重试');
             $cid=(int)($update['cid'] ?? $old['cid']);
             if (!isset(CollectionCategoryService::targets(0,[$cid])[$cid])) throw new \RuntimeException('请选择有效的视频分类');

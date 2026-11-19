@@ -26,6 +26,10 @@ function admin_cookie_opt(int $expires): array
 function admin_token_check(): void
 {
     global $longip, $time, $useragent, $conf;
+    // 匿名访问任何后台地址都可能返回带会话令牌的登录页，改名入口也走这里。
+    header('Cache-Control: private, no-store, max-age=0');
+    header('CDN-Cache-Control: no-store');
+    header('Pragma: no-cache');
     $useragent_md5 = md5($useragent);
     $key = md5((XN_ADMIN_BIND_IP ? $longip : '') . $useragent_md5 . xn_key());
     // 仅从 Cookie 读取（GET/POST 参数可伪造覆盖导致已登录管理员被强制登出）

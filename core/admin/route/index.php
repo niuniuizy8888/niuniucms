@@ -9,6 +9,14 @@ switch ($action) {
             extract(\App\Service\Admin\AdminIndexService::loginPage(intval($uid ?: 0)), EXTR_SKIP);
             include _include(ADMIN_PATH . "html/index_login.html");
         } elseif ('POST' == $method) {
+            if (($_POST['refresh_login_token'] ?? '') === '1') {
+                if (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') !== 'XMLHttpRequest' || \App\Service\Admin\AdminIndexService::entryMismatch()) {
+                    message(1, lang('illegal_operation'));
+                }
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['safe_token'=>bull_token_set(intval($uid ?: 0), 'admin_login')]);
+                break;
+            }
             $result = \App\Service\Admin\AdminIndexService::login($uid, intval($longip), intval($time));
             message($result['code'], $result['message']);
         }
