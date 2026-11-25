@@ -71,7 +71,8 @@ class PdoDriver
     {
         $this->conf = $conf;
         $this->tablepre = $conf['master']['tablepre'] ?? '';
-        $this->type = $conf['type'] ?? 'mysql';
+        $rawType = strtolower((string)($conf['type'] ?? 'mysql'));
+        $this->type = ('postgres' === $rawType) ? 'pgsql' : $rawType;
         $this->rwSplit = !empty($conf['rw_split']);
         $this->rwShadow = !empty($conf['rw_shadow']);
         $this->rwStickySeconds = max(0, (int)($conf['rw_sticky_seconds'] ?? 0));
@@ -112,14 +113,15 @@ class PdoDriver
     public function primaryKeys(string $table): array
     {
         static $cache = array();
-        $key = $this->type . ':' . $this->tablepre . $table;
+        $fullTable = ($this->tablepre !== '' && 0 === strpos($table, $this->tablepre)) ? $table : ($this->tablepre . $table);
+        $key = $this->type . ':' . $fullTable;
         if (isset(self::$pkOverride[$key])) return self::$pkOverride[$key];
         if (isset($cache[$key])) return $cache[$key];
         $pk = array();
         if ($this->type === 'pgsql' && $this->wlink) {
             try {
                 $stmt = $this->wlink->prepare("SELECT a.attname FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey) WHERE i.indisprimary AND c.relname = ?");
-                $stmt->execute(array($this->tablepre . $table));
+                $stmt->execute(array($fullTable));
                 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
                     $pk[] = $r['attname'];
                 }
@@ -216,7 +218,11 @@ class PdoDriver
         $opts = self::connOptions((string)$this->type, !empty($this->conf['persistent']) || !empty($cfg['persistent']));
         try {
             $link = new PDO($dsn, $user, $pass, $opts);
-            $this->wlink = $this->rlink = $link;
+            $this->wlink = $link;
+            // 仅在未配置从库时把读句柄指向主库，避免写后建连永久钉死 rlink 导致读写分离失效
+            if (empty($this->conf['slaves'])) {
+                $this->rlink = $link;
+            }
             return $link;
         } catch (PDOException $e) {
             $this->error($e->getCode(), '连接数据库失败:' . $e->getMessage());
@@ -682,7 +688,7 @@ class PdoDriver
      */
     public function truncate($table)
     {
-        return FALSE !== $this->exec("TRUNCATE TABLE `$table`");
+        return FALSE !== $this->exec('TRUNCATE TABLE ' . $this->qi((string)$table));
     }
 
     /**

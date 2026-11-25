@@ -102,18 +102,19 @@ function xn_html_safe($doc, $arg = array())
     $conf = include nncms_runtime_path('config.php');
     empty($arg['table_max_width']) and $arg['table_max_width'] = 746; // 这个宽度为 回帖宽度
     $pattern = array(
-        //'img_url'=>'#^(https?://[^\'"\\\\<>:\s]+(:\d+)?)?([^\'"\\\\<>:\s]+?)*$#is',
-        'img_url' => '#^(((https?://[^\'"\\\\<>:\s]+(:\d+)?)?([^\'"\\\\<>:\s]+?)*)|(data:image/jpg;base64,[\w/+=\/+]+)|(data:image/gif;base64,[\w/+=\/+]+)|(data:image/jpeg;base64,[\w/+=\/+]+)|(data:image/png;base64,[\w/+=\/+]+))$#is',
-        'url' => '#^(https?://[^\'"\\\\<>:\s]+(:\d+)?)?([^\'"\\\\<>:\s]+?)*$#is', // '#https?://[\w\-/%?.=]+#is'
-        'mailto' => '#^mailto:([\w%\-\.]+)@([\w%\-\.]+)(\.[\w%\-\.]+?)+$#is',
-        'ftp_url' => '#^ftp:([\w%\-\.]+)@([\w%\-\.]+)(\.[\w%\-\.]+?)+$#is',
-        'ed2k_url' => '#^(?:ed2k|thunder|qvod|magnet)://[^\s\'\"\\\\<>]+$#is',
-        'color' => '#^(\#\w{3,6})|(rgb\(\d+,\s*\d+,\s*\d+\)|(\w{3,10}))$#is',
+        'img_url' => '#^(?:https?://[^\'"\\\\<>:\s]+(?::\d+)?(?:/[^\'"\\\\<>\s]*)?|/[^\'"\\\\<>\s]*|data:image/(?:jpg|jpeg|gif|png|webp);base64,[A-Za-z0-9+/=]+)$#i',
+        'url' => '#^(?:https?://[^\'"\\\\<>:\s]+(?::\d+)?(?:/[^\'"\\\\<>\s]*)?|/[^\'"\\\\<>\s]*|\#[^\'"\\\\<>\s]*)$#i',
+        'mailto' => '#^mailto:[\w%.\-]+@[\w.\-]+\.[a-z]{2,24}$#i',
+        'ftp_url' => '#^ftp://[^\'"\\\\<>\s]+$#i',
+        'ed2k_url' => '#^(?:ed2k|thunder|qvod|magnet)://[^\s\'"\\\\<>]+$#i',
+        'color' => '#^(?:\#[0-9a-f]{3,6}|rgb\(\d{1,3},\s*\d{1,3},\s*\d{1,3}\)|[a-z]{3,20})$#i',
         'safe' => '#^[\w\-:;\.\s\x7f-\xff]+$#is',
         'css' => '#^[\(,\)\#;\w\-\.\s\x7f-\xff]+$#is',
         'word' => '#^[\w\-\x7f-\xff]+$#is',
     );
-    if (1 == array_value($conf, 'img_base64')) $pattern['img_url'] = '#^(((https?://[^\'"\\\\<>:\s]+(:\d+)?)?([^\'"\\\\<>:\s]+?)*)|(data:image/jpg;base64,[\w/+=\/+]+)|(data:image/gif;base64,[\w/+=\/+]+)|(data:image/jpeg;base64,[\w/+=\/+]+)|(data:image/png;base64,[\w/+=\/+]+))$#is';
+    if (1 == array_value($conf, 'img_base64')) {
+        $pattern['img_url'] = '#^(?:https?://[^\'"\\\\<>:\s]+(?::\d+)?(?:/[^\'"\\\\<>\s]*)?|/[^\'"\\\\<>\s]*|data:image/(?:jpg|jpeg|gif|png|webp);base64,[A-Za-z0-9+/=]+)$#i';
+    }
     $white_tag = array(
         'a',
         'b',
@@ -152,10 +153,8 @@ function xn_html_safe($doc, $arg = array())
         'br',
         'img',
         'area',
-        'embed',
         'code',
         'blockquote',
-        'iframe',
         'section',
         'fieldset',
         'legend'
@@ -201,7 +200,7 @@ function xn_html_safe($doc, $arg = array())
         'max-height' => array('range', 80000, array(1, 80000)),
         'line-height' => array('range', '14px', array(1, 50)),
         'color' => array('pcre', '#000000', array($pattern['color'])),
-        'background' => array('pcre', 'none', array($pattern['color'], '#url\((https?://[^\'"\\\\<>]+?:?\d?)?([^\'"\\\\<>:]+?)*\)[\w\s\-]*$#')),
+        'background' => array('pcre', 'none', array($pattern['color'], '#^url\(https?://[^\'"\\\\<>\s\)]+\)[\w\s\-]*$#i')),
         'background-color' => array('pcre', 'none', array($pattern['color'])),
         'background-image' => array('pcre', 'none', array($pattern['img_url'])),
         'background-position' => array('pcre', 'none', array($pattern['safe'])),
@@ -262,12 +261,40 @@ function xn_html_safe($doc, $arg = array())
  *
  * @return string|false
  */
-function bull_token_reuse_get($uid, $pwd)
+/**
+ * 高敏感单次场景清单：与普通场景令牌彻底隔离（独立密钥派生 + 独立会话槽 + 校验成功后立即消费防重放），
+ * 防止 URL 或普通页面泄漏的 safe_token 被跨场景用于登出、改密、清库或密钥轮换。
+ */
+function bull_token_is_isolated_scene($safe_key): bool
 {
-    $row = isset($_SESSION['_bull_token']) ? $_SESSION['_bull_token'] : NULL;
+    static $isolated = array(
+        'admin_authkey' => true,
+        'admin_rm' => true,
+        'admin_login' => true,
+        'admin_logout' => true,
+        'user_login' => true,
+        'user_logout' => true,
+        'user_passwd' => true,
+        'member_passwd' => true,
+    );
+    return is_string($safe_key) && isset($isolated[$safe_key]);
+}
+
+function bull_token_scene_salt($pwd, $safe_key = '')
+{
+    return bull_token_is_isolated_scene($safe_key) ? md5($pwd . '|' . $safe_key) : $pwd;
+}
+
+function bull_token_reuse_get($uid, $pwd, $safe_key = '')
+{
+    $salt = bull_token_scene_salt($pwd, $safe_key);
+    if (bull_token_is_isolated_scene($safe_key)) {
+        $row = isset($_SESSION['_bull_token_isolated'][$safe_key]) ? $_SESSION['_bull_token_isolated'][$safe_key] : NULL;
+    } else {
+        $row = isset($_SESSION['_bull_token']) ? $_SESSION['_bull_token'] : NULL;
+    }
     if (!is_array($row) || empty($row['token']) || empty($row['sig'])) return FALSE;
-    // 盐（密码哈希）/IP/UA 任一变化都必须重新派生：token 明文里绑了这三项
-    if ($row['sig'] !== bull_token_reuse_sig($uid, $pwd)) return FALSE;
+    if ($row['sig'] !== bull_token_reuse_sig($uid, $salt)) return FALSE;
     if (time() - (int)$row['time'] > XN_BULL_TOKEN_REUSE) return FALSE;
     return (string)$row['token'];
 }
@@ -275,13 +302,22 @@ function bull_token_reuse_get($uid, $pwd)
 /**
  * 记录会话内活跃 token
  */
-function bull_token_reuse_set($uid, $pwd, $token)
+function bull_token_reuse_set($uid, $pwd, $token, $safe_key = '')
 {
-    $_SESSION['_bull_token'] = array(
+    $salt = bull_token_scene_salt($pwd, $safe_key);
+    $entry = array(
         'token' => $token,
-        'sig'   => bull_token_reuse_sig($uid, $pwd),
+        'sig'   => bull_token_reuse_sig($uid, $salt),
         'time'  => time(),
     );
+    if (bull_token_is_isolated_scene($safe_key)) {
+        if (!isset($_SESSION['_bull_token_isolated']) || !is_array($_SESSION['_bull_token_isolated'])) {
+            $_SESSION['_bull_token_isolated'] = array();
+        }
+        $_SESSION['_bull_token_isolated'][$safe_key] = $entry;
+    } else {
+        $_SESSION['_bull_token'] = $entry;
+    }
 }
 
 /**
@@ -380,7 +416,7 @@ function bull_token_failure_kind($safe_key, $token, $uid = 0)
     if (!$safe_key || !is_string($token) || '' === $token) return 'illegal';
     if (bull_session_token_has($safe_key, $token)) {
         if ($safe_key === 'admin_login') {
-            bull_token_validate($uid, $token, 3600, $reason);
+            bull_token_validate($uid, $token, 3600, $reason, $safe_key);
             if ($reason === 'ip_changed') return 'ip_changed';
         }
         return 'stale_token';
@@ -390,7 +426,7 @@ function bull_token_failure_kind($safe_key, $token, $uid = 0)
     // 环里没有、cookie 也带了：解密一把看这枚令牌本身合不合法。合法 =>
     // 令牌是从另一个会话的页面拿来的（当前会话没有它的指纹环），归 other_session；
     // 不合法（伪造/过期/跨 IP-UA/别的 uid）=> 原 illegal。纯只读，不写会话。
-    if (TRUE !== bull_token_validate($uid, $token)) return 'illegal';
+    if (TRUE !== bull_token_validate($uid, $token, 3600, $reason, $safe_key)) return 'illegal';
     // 合法但当前会话里一个环都没有 => 不是「别的会话的令牌」，而是「当前会话什么都没存下来」
     return bull_session_is_empty() ? 'session_empty' : 'other_session';
 }
@@ -407,7 +443,8 @@ function admin_bull_token_guard($uid, $scene = '', $token = '', $read_only = FAL
     if (NULL === $token || '' === $token) $token = param('safe_token');
     if ($read_only) {
         $next_token = FALSE;
-        if (is_string($token) && bull_session_token_has($scene, $token) && bull_token_validate($uid, $token)) {
+        $reason = null;
+        if (is_string($token) && bull_session_token_has($scene, $token) && bull_token_validate($uid, $token, 3600, $reason, $scene)) {
             $next_token = bull_token_get($uid, $scene);
         }
     } else {
@@ -496,11 +533,10 @@ function bull_token_get($uid = 0, $safe_key = '')
  */
 function bull_token_set($uid = 0, $safe_key = '')
 {
-    $key = 'safe_token_' . $uid;
+    $isolated = bull_token_is_isolated_scene($safe_key);
+    $key = $isolated ? ('safe_token_' . $uid . '_scene_' . $safe_key) : ('safe_token_' . $uid);
     static $cache = array();
     if (isset($cache[$key])) {
-        // 同一请求内复用 token；但仍要为本 $safe_key 写入 session，
-        // 否则一个页面渲染多个不同 KEY 的表单时，只有首个 KEY 会写 session，其余表单校验必失败。
         $safe_key and bull_session_token_push($safe_key, $cache[$key]);
         return $cache[$key];
     }
@@ -512,10 +548,10 @@ function bull_token_set($uid = 0, $safe_key = '')
         $useragent = _SERVER('HTTP_USER_AGENT');
         $pwd = md5($useragent);
     }
-    // 会话内复用活跃 token（见 bull_token_reuse_get 注释的失效根因），窗口外才重新派生
-    $reuse = bull_token_reuse_get($uid, $pwd);
-    $cache[$key] = ($reuse !== FALSE && $reuse !== '') ? $reuse : bull_token_gen($uid, $pwd);
-    if ($reuse === FALSE || $reuse === '') bull_token_reuse_set($uid, $pwd, $cache[$key]);
+    $salt = bull_token_scene_salt($pwd, $safe_key);
+    $reuse = bull_token_reuse_get($uid, $pwd, $safe_key);
+    $cache[$key] = ($reuse !== FALSE && $reuse !== '') ? $reuse : bull_token_gen($uid, $salt);
+    if ($reuse === FALSE || $reuse === '') bull_token_reuse_set($uid, $pwd, $cache[$key], $safe_key);
     $safe_key and bull_session_token_push($safe_key, $cache[$key]);
     return $cache[$key];
 }
@@ -592,7 +628,7 @@ function bull_token_gen($uid, $salt = '')
  * @param int $life 有效期秒数；⚠ 传值小于 10 会被就地改成 1800（防误传 0 变成「永久有效」）
  * @return bool TRUE = 令牌自身完全合法；FALSE = 伪造/跨上下文/过期/前置数据缺失
  */
-function bull_token_validate($uid, $token, $life = 3600, &$reason = null)
+function bull_token_validate($uid, $token, $life = 3600, &$reason = null, $safe_key = '')
 {
     $reason = null;
     if (empty($token)) return FALSE;
@@ -602,11 +638,12 @@ function bull_token_validate($uid, $token, $life = 3600, &$reason = null)
     if ($uid) {
         $user = user_read_cache($uid);
         if (empty($user)) return FALSE;
-        $salt = md5($user['password']);
+        $pwd = md5($user['password']);
     } else {
         if (empty($useragent)) return FALSE;
-        $salt = md5($useragent);
+        $pwd = md5($useragent);
     }
+    $salt = bull_token_scene_salt($pwd, $safe_key);
     $token_key = md5(xn_key() . $salt);
     $s = xn_decrypt($token, $token_key);
     if (empty($s)) return FALSE;
@@ -619,28 +656,28 @@ function bull_token_validate($uid, $token, $life = 3600, &$reason = null)
     return TRUE;
 }
 
-/**
- * 解密校验 + 一次性轮换（写操作校验的实际执行体）：token 合法则**当场派生一枚新 token 顶替它**，
- * 非法则返回 FALSE。原「解密 token，正确则返回新 token，错误返回 FALSE」的语义即此。
- *
- * 校验部分完全委托 bull_token_validate()（解密 + ip/uid/UA/时效），本函数只加两件事：
- *  1) 轮换：$uid 通过校验后立即 gen 新令牌 ⇒ 同一枚 token 用第二次就不在场景环里了（一次性语义）；
- *  2) 登记：$safe_key 非空时把新 token 的 md5 推入会话场景环（bull_session_token_push，12 条窗口）。
- * 注意 $salt **只用于生成新 token 的密钥碎片**，校验用的密钥碎片由 validate 内部按 $uid 重新取；
- * 两者必须是同一口径（调用方 bull_token_verify 传的都是 md5(密码散列) 或 md5(UA)），
- * 传错会得到「旧 token 校验通过、新 token 下一次解不开」的隐蔽故障。
- * 调用方只应判 `!== FALSE`，不要把返回的 token 串再回填给本次表单（它是下一次请求的凭据）。
- * @param string $token 待校验的密文 token（注意本函数参数顺序与 gen/verify 不同，token 在前）
- * @param int $uid 绑定用户 UID（0 = 匿名访客）
- * @param string $salt 新 token 的密钥碎片（md5 摘要串，须与签发侧同口径）
- * @param string $safe_key 会话场景键名；留空 = 只轮换不登记场景环（则新 token 无法通过后续环校验）
- * @param int $life 有效期秒数，透传给 bull_token_validate（小于 10 按 1800 处理）
- * @return string|false 通过 = 轮换出的新 token 串；任何校验环节失败 = FALSE
- */
 function bull_token_decrypt($token, $uid, $salt = '', $safe_key = '', $life = 3600)
 {
-    if (FALSE === bull_token_validate($uid, $token, $life)) return FALSE;
-    $new_token = bull_token_gen($uid, $salt);
+    $reason = null;
+    if (FALSE === bull_token_validate($uid, $token, $life, $reason, $safe_key)) return FALSE;
+    $sceneSalt = bull_token_scene_salt($salt, $safe_key);
+    // 高敏感隔离场景严格单次消费：移除已用指纹并清空复用槽，杜绝重放
+    if ($safe_key && bull_token_is_isolated_scene($safe_key)) {
+        $hash = md5((string)$token);
+        if (isset($_SESSION[$safe_key])) {
+            if (is_array($_SESSION[$safe_key])) {
+                $_SESSION[$safe_key] = array_values(array_filter($_SESSION[$safe_key], static function ($v) use ($hash) {
+                    return !hash_equals((string)$v, $hash);
+                }));
+            } elseif (hash_equals((string)$_SESSION[$safe_key], $hash)) {
+                $_SESSION[$safe_key] = array();
+            }
+        }
+        if (isset($_SESSION['_bull_token_isolated'][$safe_key])) {
+            unset($_SESSION['_bull_token_isolated'][$safe_key]);
+        }
+    }
+    $new_token = bull_token_gen($uid, $sceneSalt);
     if ($safe_key) bull_session_token_push($safe_key, $new_token);
     return $new_token;
 }

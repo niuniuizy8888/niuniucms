@@ -52,6 +52,7 @@ switch ($action) {
             $data = \App\Service\Front\UserService::buildPasswdView($uid);
             $safe_token = $data['safe_token'];
             $nncms['safe_token'] = $safe_token;
+            $user_foot_script = $path_tpl . 'js/user-passwd.js';
             include _file(view_load('user_passwd'));
         } elseif ('POST' == $method) {
             \App\Service\Front\UserService::handlePasswd($uid, $user);

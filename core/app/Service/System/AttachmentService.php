@@ -207,10 +207,11 @@ class AttachmentService
 
     public static function uploaded(string $path): array
     {
-        $c = AttachmentStorage::settings(true);
+        $publicCfg = AttachmentStorage::settings(false);
         $info = AttachmentStorage::imageInfo(AttachmentStorage::absolute($path));
         self::record('/'.$path, '', $path, 'local', $info);
-        if ($c['backend'] === 'ftp') {
+        if (($publicCfg['backend'] ?? 'local') === 'ftp') {
+            $c = AttachmentStorage::settings(true);
             // The editor has not saved its reference yet: keep the local copy here.
             $asset = self::transfer('/'.$path, 'ftp', $c);
             return ['path'=>$path, 'url'=>$asset['url']];

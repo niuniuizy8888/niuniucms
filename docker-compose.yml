@@ -39,6 +39,8 @@ services:
     depends_on:
       app:
         condition: service_started
+      db:
+        condition: service_healthy
     environment:
       NN_ROLE: worker
       TZ: Asia/Shanghai
@@ -61,7 +63,7 @@ services:
     volumes:
       - nncms_mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${NN_DB_ROOT_PASSWORD:-nncms_root_change_me}"]
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot"]
       interval: 5s
       timeout: 5s
       retries: 20

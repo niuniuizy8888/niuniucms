@@ -5,7 +5,7 @@
                     <div class="d-flex align-items-center">
                         <a aria-label="Hide Sidebar" class="app-sidebar__toggle" data-bs-toggle="sidebar" href="javascript:void(0)"></a>
                         <a class="logo-horizontal" href="/">
-                            <img src="/template/default/images/logo.png" class="header-brand-img desktop-logo" alt="{$nncms.site_name}" style="height:28px;">
+                            <img src="/template/default/images/logo.png" class="header-brand-img desktop-logo" alt="{h:$nncms.site_name}" style="height:28px;">
                         </a>
                         <div class="main-header-center ms-3 d-none d-lg-block">
                             <div class="input-group" style="max-width:320px;">
@@ -20,7 +20,7 @@
                             <div class="dropdown d-flex profile-1">
                                 <a href="javascript:void(0)" data-bs-toggle="dropdown" class="nav-link leading-none d-flex align-items-center" style="gap:8px;">
                                     <div style="width:32px;height:32px;border-radius:50%;background:var(--nn-color-primary);display:flex;align-items:center;justify-content:center;color:var(--nn-bg-base);font-weight:700;font-size:14px;">
-                                        {if:!empty($user['username'])}{$user['username|0']}{else}U{/if}
+                                        {if:!empty($user['avatar_char'])}{$user['avatar_char']}{else}U{/if}
                                     </div>
                                     <span class="d-none d-md-inline" style="color:var(--nn-text-primary);font-size:14px;">{$user['username']}</span>
                                 </a>

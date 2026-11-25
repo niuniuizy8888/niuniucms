@@ -20,28 +20,7 @@
 <div id="artplayer" class="nn-artplayer" style="margin-top:15px"></div>
   
         <script>
-        window.__DANMU_CONFIG__ = {
-            danmu_toggle: {$conf['danmu']['danmu_toggle']},
-            pause_ad: {$conf['danmu']['pause_ad']},
-            select_col: {$conf['danmu']['selec_col']},
-            ep: {$ep},
-            vid: "{$vid}",
-            danmu_list: "{$danmu_list}",
-            danmu_send: "{$danmu_send}",
-            danmu_token: "{$danmu_token}",
-            // 令牌现签端点（POST）：匿名访客命中的是 L0 缓存页、拿不到会话 Cookie，
-            // 页面内嵌令牌对其浏览器那份会话无效 —— 播放器首次发弹幕前需在此端点取一次
-            danmu_token_api: "{$danmu_token_api}",
-            start_ad_on: {$conf['danmu']['start_ad_on']},
-            start_ad: {$conf['danmu']['start_ad']},
-            start_img_ad: "{$conf['danmu']['start_img_ad']}",
-            start_mp4_ad: "{$conf['danmu']['start_mp4_ad']}",
-            start_ad_url: "{$conf['danmu']['start_ad_url']}",
-            start_close_time: {$conf['danmu']['start_close_time']},
-            start_all_time: {$conf['danmu']['start_all_time']},
-            stop_ad: "{$conf.danmu.stop_ad}",
-            stop_ad_url: "{$conf.danmu.stop_ad_url}"
-        };
+        window.__DANMU_CONFIG__ = {$danmu_config_json};
     </script>
     <script type="text/javascript" src="/static/js/danmu-player.js"></script>
  

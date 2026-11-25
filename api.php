@@ -228,27 +228,27 @@ switch ($route) {
         $pushSig = isset($_SERVER['HTTP_X_STORE_SIG']) ? trim((string)$_SERVER['HTTP_X_STORE_SIG']) : '';
         if ('' === $pushSig && isset($_POST['sig'])) $pushSig = trim((string)$_POST['sig']);
         $pushExp = isset($_SERVER['HTTP_X_STORE_SIG_EXP']) ? intval($_SERVER['HTTP_X_STORE_SIG_EXP']) : (isset($_POST['sig_exp']) ? intval($_POST['sig_exp']) : 0);
+        if ($pushExp <= 0 || $pushExp < time() || $pushExp > time() + 86400 * 7) {
+            http_response_code(403);
+            echo json_encode(array('code' => 1, 'msg' => 'store_push signature expiry missing, expired, or out of range'));
+            exit;
+        }
         $payloadSha = hash('sha256', $pushPayload);
         $pushMsg = 'store_push|' . $payloadSha . '|' . $pushExp;
         $pushChk = \App\Service\System\CloudOpsService::verifyStoreSignature($pushMsg, $pushSig);
-        if (!$pushChk['ok'] && $pushExp > 0) {
-            // 兼容无过期字段的清单
-            $pushChk = \App\Service\System\CloudOpsService::verifyStoreSignature('store_push|' . $payloadSha, $pushSig);
-        }
         if (!$pushChk['ok']) {
             http_response_code(403);
             echo json_encode(array('code' => 1, 'msg' => 'store_push signature rejected: ' . $pushChk['msg']));
             exit;
         }
-        if ($pushExp > 0 && $pushExp < time()) {
-            http_response_code(403);
-            echo json_encode(array('code' => 1, 'msg' => 'store_push signature expired'));
+        // 重放防护：同一已签名推送摘要在有效期内拒绝重复应用
+        $replayKey = 'store_push_seen_' . $payloadSha;
+        if (function_exists('cache_shared_get') && cache_shared_get($replayKey)) {
+            http_response_code(409);
+            echo json_encode(array('code' => 1, 'msg' => 'store_push payload already processed'));
             exit;
         }
         $pushData = json_decode($pushPayload, TRUE);
-        // 兼容未升级站点：旧入口未置 XSS_SKIP，全局 XSS 过滤把 payload 里的
-        // `"` 转成 `&quot;` ⇒ json_decode 失败。此处还原实体后重试一次（域名仍由下方 $okDomain
-        // 白名单正则复核，还原不会放宽任何校验）。
         if (!is_array($pushData) && '' !== $pushPayload) {
             $pushData = json_decode(htmlspecialchars_decode($pushPayload, ENT_QUOTES), TRUE);
         }
@@ -258,23 +258,15 @@ switch ($route) {
             echo json_encode(array('code' => 1, 'msg' => 'bad payload'));
             exit;
         }
-        $okDomain = function ($d) {
-            return is_string($d) && '' !== $d && 1 === preg_match('#^[A-Za-z0-9.-]+(:\d+)?$#', $d);
-        };
-        $pushDb = _SERVER('db');
-        $pushVod = $pushDb->tablepre . 'vod';
-        $pushDone = 0;
-        foreach ($pushReps as $pr) {
-            $pushType = isset($pr['type']) && 'pic' === $pr['type'] ? 'pic' : 'play';
-            $pushOld = isset($pr['old_domain']) ? trim((string)$pr['old_domain']) : '';
-            $pushNew = isset($pr['new_domain']) ? trim((string)$pr['new_domain']) : '';
-            if (!$okDomain($pushOld) || !$okDomain($pushNew) || $pushOld === $pushNew) continue;
-            $pushCol = 'play' === $pushType ? 'play_url' : 'pic';   // 白名单列，插值安全
-            $pushStmt = $pushDb->prepare_execute(
-                "UPDATE `{$pushVod}` SET `{$pushCol}` = REPLACE(`{$pushCol}`, ?, ?) WHERE `{$pushCol}` LIKE ?",
-                array($pushOld, $pushNew, '%' . $pushOld . '%')
-            );
-            if ($pushStmt) $pushDone += $pushStmt->rowCount();
+        if (count($pushReps) > 100) {
+            http_response_code(400);
+            echo json_encode(array('code' => 1, 'msg' => 'too many replacements (max 100)'));
+            exit;
+        }
+        $batchRes = \App\Service\Content\DomainReplaceService::runBatch($pushReps, 300);
+        $pushDone = intval($batchRes['changed'] ?? 0);
+        if (function_exists('cache_shared_set')) {
+            cache_shared_set($replayKey, 1, max(60, $pushExp - time() + 60));
         }
         // 发布前检查修复（A-5）：敏感批量替换审计留痕——'_audit' 后缀通道按 LoggerService
         // 永久结论恒落盘（isAuditChannel），补「谁在何时替换了什么」的溯源面

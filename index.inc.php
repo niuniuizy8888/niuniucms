@@ -217,6 +217,13 @@ $grouplist = group_list_cache();
 $user = user_rest();
 $uid = array_value($user, 'uid', 0);
 $gid = array_value($user, 'gid', 0);
+if (is_array($user)) {
+    $rawUsername = isset($user['username']) ? html_entity_decode((string)$user['username'], ENT_QUOTES | ENT_HTML5, 'UTF-8') : '';
+    $firstChar = $rawUsername !== ''
+        ? (function_exists('mb_substr') ? mb_substr($rawUsername, 0, 1, 'UTF-8') : substr($rawUsername, 0, 1))
+        : 'U';
+    $user['avatar_char'] = htmlspecialchars($firstChar !== '' ? $firstChar : 'U', ENT_QUOTES, 'UTF-8');
+}
 // 前台会员会话 Cookie 滑动续期（与后台入口共用 SessionService::slideCookie()）。
 // 症状与后台第十五轮同源：nncms_token 一次性写 30 天（UserAuthService::tokenSet），
 // 而承载 bull_token 指纹环的 PHP 会话只活 24h 且从不续发 → 会员「看着还是登录的」，
@@ -243,20 +250,21 @@ $runtime = runtime_init();
 check_runlevel();
 
 // hook index_inc_cate_after.php
-$txt_len = strpos($_SERVER['REQUEST_URI'], '.txt');
-if (str_contains($_SERVER['REQUEST_URI'], 'sitemap') && $txt_len) {
-    $request_url = mb_substr($_SERVER['REQUEST_URI'], 0, $txt_len, 'UTF-8');
-    $request_url = trim($request_url, '/');
-    if ($request_url) {
-        $request_url = str_replace('/', '-', $request_url);
-        $requestlist = explode('-', $request_url);
-        if (empty($requestlist) || !is_array($requestlist)) exit('Access Error.');
-        // Preserve existing query params; only map route segments
-        foreach ($requestlist as $k => $v) {
-            $_REQUEST[$k] = $v;
-        }
-        $_REQUEST[0] = 'sitemap';
+// 仅匹配路径形态 /sitemap*.txt 或模式 0 的 ?sitemap*.txt，避免 ?search.html&keyword=sitemap.txt 劫持路由
+$reqRawUri = (string)($_SERVER['REQUEST_URI'] ?? '');
+$reqPathOnly = (string)(parse_url($reqRawUri, PHP_URL_PATH) ?: '');
+$sitemapTxtPath = '';
+if (preg_match('#^/(sitemap(?:[-/][A-Za-z0-9_-]+)*)\.txt$#i', $reqPathOnly, $_smm)) {
+    $sitemapTxtPath = $_smm[1];
+} elseif (preg_match('#^\?(sitemap(?:-[A-Za-z0-9_-]+)*)\.txt(?:&|$)#i', (string)strstr($reqRawUri, '?'), $_smm)) {
+    $sitemapTxtPath = $_smm[1];
+}
+if ($sitemapTxtPath !== '') {
+    $requestlist = explode('-', str_replace('/', '-', $sitemapTxtPath));
+    foreach ($requestlist as $k => $v) {
+        $_REQUEST[$k] = $v;
     }
+    $_REQUEST[0] = 'sitemap';
 }
 // /sitemap.xml → sitemap 路由的 xml 分支（index.php 已放行该路径，不走静态文件通道）
 if ('/sitemap.xml' === strtolower((string)parse_url((string)($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH))) {
@@ -278,30 +286,35 @@ $route = param(0, 'index');
 // 别名路由解析（伪静态 ≥2 时按分类别名映射路由）
 // 'page' 必须在列（复核修正）：单页路由前缀若被分类别名占用，别名解析（本文件下方）会先于路由
 // 分发把它改写成 list/vod 路由，整条单页路由被劫持（/page-about.html → list.php 404）。
-$alias_reservation = array('index', 'admin', 'user', 'search', 'sitemap', 'page');
-if ($conf['url_rewrite_on'] > 1 && !in_array($route, $alias_reservation)) {
+$alias_reservation = array_unique(array_merge(
+    array('index', 'admin', 'user', 'member', 'danmu', 'search', 'sitemap', 'page'),
+    is_array($conf['route'] ?? null) ? array_values($conf['route']) : array()
+));
+if ($conf['url_rewrite_on'] > 1 && !in_array($route, $alias_reservation, true)) {
     $aliaslist = cate_alias_cache();
     $alias_cid = array_value($aliaslist, xn_urldecode($route), 0); // 别名 URL 经 xn_urlencode 编码（_ → _5f），此处解码回原始 alias（审计修复）
     if ($alias_cid) {
         $alias_cate = cate_read($alias_cid);
-        $alias_param1 = param(1);
-        $alias_param = explode('_', $alias_param1);
-        if (!$alias_param1 || ('list'  == $alias_param[0] && is_numeric($alias_param[1]))) {
-            $route = $_REQUEST[0] = 1 == $alias_cate['category'] ? $route_cate : $route_list;
-            $_REQUEST[1] = $alias_cid;
-            isset($alias_param[1]) and $_REQUEST[2] = $alias_param[1];
-        } else {
-            if ($alias_cate['model'] == 1) {
-                $route = $_REQUEST[0] = $route_art;
+        if (is_array($alias_cate) && !empty($alias_cate)) {
+            $alias_param1 = param(1);
+            $alias_param = explode('_', $alias_param1);
+            if (!$alias_param1 || ('list' == $alias_param[0] && isset($alias_param[1]) && is_numeric($alias_param[1]))) {
+                $route = $_REQUEST[0] = 1 == $alias_cate['category'] ? $route_cate : $route_list;
+                $_REQUEST[1] = $alias_cid;
+                isset($alias_param[1]) and $_REQUEST[2] = $alias_param[1];
             } else {
-                $param2 = param(2, '');
-                $param3 = param(3, '');
-                if (str_contains($param2, '_')) {
-                    $route = $_REQUEST[0] = $route_type;
-                } elseif ($param3 == '') {
-                    $route = $_REQUEST[0] = $route_vod;
+                if ($alias_cate['model'] == 1) {
+                    $route = $_REQUEST[0] = $route_art;
                 } else {
-                    $route = $_REQUEST[0] = $route_play;
+                    $param2 = param(2, '');
+                    $param3 = param(3, '');
+                    if (str_contains($param2, '_')) {
+                        $route = $_REQUEST[0] = $route_type;
+                    } elseif ($param3 == '') {
+                        $route = $_REQUEST[0] = $route_vod;
+                    } else {
+                        $route = $_REQUEST[0] = $route_play;
+                    }
                 }
             }
         }
@@ -335,7 +348,7 @@ $user_favorite = url('member-favorite');
 $user_login = url('user-login');
 $user_create = url('user-create');
 $user_index = url('member-index');
-$user_logout = url('user-logout', array('safe_token' => bull_token_set($uid, 'user_logout')));
+$user_logout = $uid > 0 ? url('user-logout', array('safe_token' => bull_token_set($uid, 'user_logout'))) : '';
 $sitemap_url = url('sitemap-list');
 $danmu_list = url('danmu-list');
 $danmu_send = url('danmu-send');
@@ -344,9 +357,8 @@ $danmu_send = url('danmu-send');
 $danmu_token_api = url('danmu-token');
 // 手机端底部导航「片库」链接（修复：此前 $pku_url 从未被赋值 → href 恒空）
 $pku_url = url($conf['route']['type'] . '-' . intval(\App\Service\Front\TypeService::defaultCid($catelist)) . '___', '', FALSE);
-// 后台入口模板变量：前台模板编译期剥离原生 PHP（tpl_allow_php=0，view.php 编译规则），
-// 「后台管理」等入口链接统一走模板变量（修复：此前模板内裸写 PHP 输出指令，编译后被清空导致链接为空）
-$admin_entry = !empty($conf['admin_entry']) ? $conf['admin_entry'] : 'admin.php';
+// 后台入口模板变量：仅向具备后台权限的用户暴露真实入口名，防第三方模板意外泄露改名后的后台路径
+$admin_entry = group_access($gid, 'intoadmin') ? (!empty($conf['admin_entry']) ? $conf['admin_entry'] : 'admin.php') : '';
 if (isset($domain['site'][$hosts]) && is_array($domain['site'][$hosts])) {
     if (!empty($siteconf['path'])) {
         $config['theme'] = $siteconf['path'];

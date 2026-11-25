@@ -493,13 +493,12 @@ class CloudOpsService
         $msg = 'cms|upgrade|' . $version . '|' . $sha256Hex . '|' . $expiry;
         $chk = self::verifyStoreSignature($msg, $sigB64);
         if ($chk['ok']) return $chk;
-        // 兼容：cms|upgrade|<version>|<sha256>（无过期字段）
-        $msg2 = 'cms|upgrade|' . $version . '|' . $sha256Hex;
-        $chk2 = self::verifyStoreSignature($msg2, $sigB64);
-        if ($chk2['ok']) return $chk2;
-        // 一版兼容：旧主题同款「只签 sha256」——防现网未重签时整站无法升级；新签包请用清单格式
-        $legacy = self::verifyStoreSignature($sha256Hex, $sigB64);
-        if ($legacy['ok']) return $legacy;
+        // 兼容无过期字段的 CMS 专属清单（仍绑定 cms|upgrade|version 域分离，拒绝主题/插件纯 sha256 跨制品重放）
+        if ($expiry <= 0) {
+            $msg2 = 'cms|upgrade|' . $version . '|' . $sha256Hex;
+            $chk2 = self::verifyStoreSignature($msg2, $sigB64);
+            if ($chk2['ok']) return $chk2;
+        }
         return array('ok' => FALSE, 'msg' => '升级包清单签名校验未通过（包可能被篡改、类型不匹配或密钥不符），已拒绝安装');
     }
 
@@ -556,12 +555,21 @@ class CloudOpsService
             self::upgradeLogError('update_down error: download host not allowed');
             return false;
         }
-        $cloud_version = basename($cloud_version);
-        $save_path = APP_PATH . "runtime/cache/" . $cloud_version . ".zip";
-        // 代码审查 #1 修复：流式下载（原 https_request 整包入内存后才 strlen 判 200MB ⇒
-        // 上限在内存维度无效；且 fwrite(fopen()) 无错误检查会静默留空包）。
-        // 现在传输过程中按块累计、超限即中止；写临时文件 + 成功后 rename。
-        // 包体下限 4 字节（zip 最小长度）与 PK 前缀一并在此校验，替代原 strlen($zip)<4。
+        $cloud_version = trim(basename((string)$cloud_version));
+        if ('' === $cloud_version || !preg_match('/^[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9._-]+)?$/D', $cloud_version)) {
+            self::upgradeLogError('update_down error: invalid cloud_version format');
+            return false;
+        }
+        $upgradeLock = 'cms_upgrade';
+        if (function_exists('xn_lock_start') && !xn_lock_start($upgradeLock, 120)) {
+            self::upgradeLogError('update_down error: another upgrade is already in progress');
+            return false;
+        }
+        $save_path = APP_PATH . 'runtime/cache/upgrade_' . $cloud_version . '_' . getmypid() . '_' . bin2hex(random_bytes(4)) . '.zip';
+        $releaseLock = static function () use ($upgradeLock) {
+            if (function_exists('xn_lock_end')) xn_lock_end($upgradeLock);
+        };
+        try {
         $dl = http_download_to_file($url, $save_path, 200 * 1048576, 60, 5, 'PK', 0, 'cloud');
         if (!$dl['ok'] || $dl['bytes'] < 4) {
             self::upgradeLogError('update_down error: download failed (' . $dl['error'] . ', ' . $dl['bytes'] . 'B)');
@@ -640,18 +648,23 @@ class CloudOpsService
                 return false;
             }
         }
-        // 解压到临时目录 → 删除符号链接条目（防 symlink 逃逸写任意路径）→ 再复制回站点根
-        $tmpdir = APP_PATH . "runtime/cache/upgrade_tmp_" . $cloud_version . "/";
-        rmdir_recusive($tmpdir, 1);
-        @mkdir($tmpdir, 0777, true);
+        // 解压到唯一临时目录 → 删除符号链接条目 → 校验提取结果 → 再复制回站点根
+        $tmpdir = APP_PATH . 'runtime/cache/upgrade_tmp_' . $cloud_version . '_' . getmypid() . '_' . bin2hex(random_bytes(4)) . '/';
+        @mkdir($tmpdir, 0755, true);
         if (!is_dir($tmpdir)) {
             $zip->close();
             @unlink($save_path);
             self::upgradeLogError('ZipArchive error: cannot create tmp dir');
             return false;
         }
-        $zip->extractTo($tmpdir);
+        $extracted = $zip->extractTo($tmpdir);
         $zip->close();
+        if (!$extracted) {
+            @unlink($save_path);
+            rmdir_recusive($tmpdir, 1);
+            self::upgradeLogError('ZipArchive error: extractTo failed');
+            return false;
+        }
         // 扫描解压产物，删除符号链接（文件与目录）——发布前检查修复（B-6）：
         // glob 不匹配点前缀条目（.x 软链可存活到 copy_recusive 被跟随复制），
         // 改 scandir 栈式遍历（含点条目；is_link 先于 is_dir 判定，不跟链下钻）。
@@ -719,7 +732,9 @@ class CloudOpsService
         // 版本号属启动期配置：入口与云版本展示在 KV 注入前即读取，保留物理写 config/config.php
         $replace = array();
         $replace['version'] = $cloud_version;
-        file_replace_var(\nncms_runtime_path_w('config.php'), $replace);
+        if (!file_replace_var(\nncms_runtime_path_w('config.php'), $replace)) {
+            self::upgradeLogError('update_down warning: failed to write version into config.php');
+        }
         $config['name'] = 'NiuNIUCms';
         $config['version'] = $cloud_version;
         $config['official_version'] = $cloud_version;
@@ -727,26 +742,43 @@ class CloudOpsService
         $config['upgrade'] = 0;
         setting_set('conf', $config);
         $upgradefile = APP_PATH . 'runtime/upgrade_sql.php';
-        if (is_file($upgradefile)) include _include($upgradefile);
+        if (is_file($upgradefile)) {
+            include _include($upgradefile);
+            // 迁移脚本执行完毕后清理，防止下次升级重复执行历史 SQL
+            @unlink($upgradefile);
+        }
         // 精确清编译产物（对齐「不要清掉熔断/锁状态」的硬性规定，见 AddonService::clearTmpDir 注释）
         \App\Service\System\AddonService::clearTmpDir($conf['cache_path']);
         return TRUE;
+        } finally {
+            $releaseLock();
+        }
     }
 
     /**
      * 升级包条目路径安全校验（M1 加固）
-     * 规范化后逐段检查：拒绝 `..` 段 / 绝对路径 / Windows 盘符 / 空名（防路径穿越逃逸站点根）
+     * 规范化后逐段检查：拒绝 `..` 段 / 绝对路径 / Windows 盘符 / NUL / 空名及 data/ 运行时配置覆盖
      * @param \ZipArchive $zip 已打开的 zip
      * @return bool true=全部条目安全
      */
     public static function validateUpgradeZip(\ZipArchive $zip)
     {
         for ($i = 0; $i < $zip->numFiles; $i++) {
-            $entry = $zip->getNameIndex($i);
+            $entry = (string)$zip->getNameIndex($i);
+            if ($entry === '' || str_contains($entry, "\0")) {
+                self::upgradeLogError('ZipArchive error: illegal path in entry ' . $entry);
+                return false;
+            }
             $norm = str_replace('\\', '/', $entry);
             // 拒绝绝对路径（前导 / 或 Windows 盘符）与空名——Zip 条目必须为相对路径
             if ($norm === '' || $norm[0] === '/' || str_contains($norm, ':')) {
                 self::upgradeLogError('ZipArchive error: illegal path in entry ' . $entry);
+                return false;
+            }
+            // 禁止升级包覆盖运行时配置数据目录 data/ 下的敏感配置文件
+            $lowerNorm = strtolower($norm);
+            if (preg_match('#^data/(?:config|database|domain|throttle)\.php$#', $lowerNorm)) {
+                self::upgradeLogError('ZipArchive error: runtime config overwrite blocked: ' . $entry);
                 return false;
             }
             foreach (explode('/', $norm) as $seg) {

@@ -33,7 +33,7 @@ if (!($data['found'] ?? false)) {
     if (($data['reason'] ?? '') === 'forbidden') {
         http_response_code(403);
         $header['title'] = '无权限';
-        $message = '您无权访问此内容，请登录或升级会员';
+        $msg = $message = '您无权访问此内容，请登录或升级会员';
         include _file(view_load('message'));
         return;
     }
@@ -42,16 +42,30 @@ if (!($data['found'] ?? false)) {
     return;
 }
 extract($data);
-$art_pic_json = json_encode(html_entity_decode((string)($art['pic'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE);
 \App\Service\Front\SeoService::apply($conf['seo']['art'], [
     'name' => $art['name'],
     'des' => xn_html_safe(filter_all_html(xn_substr($art['content'], 0, 120))),
     'cate_name' => $cate['name'],
     'sitename' => $conf['sitename'],
 ], [
-    'url' => \App\Service\Front\SeoService::currentUrl(),
+    'url' => \App\Service\Front\SeoService::canonicalUrl((string)($art['url'] ?? '')),
     'image' => (strncasecmp((string)($art['pic'] ?? ''), 'http', 4) === 0 ? $art['pic'] : http_url_path() . ltrim((string)($art['pic'] ?? ''), '/')),
 ]);
+$artLd = array(
+    '@context' => 'https://schema.org',
+    '@type' => 'Article',
+    'headline' => html_entity_decode((string)($art['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+    'description' => html_entity_decode((string)($seo['d'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+    'image' => html_entity_decode((string)($art['pic'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+    'publisher' => array(
+        '@type' => 'Organization',
+        'name' => html_entity_decode((string)($nncms['site_name'] ?? $conf['sitename'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+    ),
+);
+if (!empty($cate['name'])) $artLd['articleSection'] = html_entity_decode((string)$cate['name'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+if (!empty($seo['url'])) $artLd['url'] = html_entity_decode((string)$seo['url'], ENT_QUOTES | ENT_HTML5, 'UTF-8');
+if (!empty($art['create_date'])) $artLd['datePublished'] = date('c', intval($art['create_date']));
+$art_jsonld = json_encode($artLd, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}';
 $_SESSION['cid'] = $cid;
 if ($json) {
     $api_json['cid'] = $cid;

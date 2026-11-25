@@ -329,8 +329,11 @@ class TemplateService
         $conf = _SERVER('conf');         global $config;
 
         $dir = trim($dir);
+        if ('' === $dir || !preg_match('#^[A-Za-z0-9_-]{1,64}$#', $dir)) {
+            message(1, lang('data_malformation'));
+        }
         !empty($config['theme']) and $config['theme'] != $dir and self::uninstall($config['theme']);
-        $path = self::templateRoot() . $dir;
+        $path = rtrim(self::themeBase($dir), '/');
         $conffile = $path . '/conf.json';
         !is_file($conffile) and message(1, lang('not_exists'));
         $arr = xn_json_decode(file_get_contents($conffile));
@@ -340,13 +343,9 @@ class TemplateService
         $config['theme'] = $dir;
         setting_set('conf', $config);
         $installfile = $path . '/install.php';
-        // 上线前审计修复（M-A4）：主题包来自商店/第三方，install.php 是 download 闸唯一放行的可执行
-        // php 条目（「安装→卸载」两步即可任意代码执行）——执行前高危构造闸，拒绝则跳过并记日志（fail-closed）。
         if (is_file($installfile) && self::themeExecHookSafe((string)file_get_contents($installfile), $dir)) {
             include _include($installfile);
         }
-        // 精确清编译产物（AddonService::clearTmpDir 跳过点文件与 lock_*）：rmdir_recusive($cache_path)
-        // 会连坐删掉 .breaker_state.php 等跨请求状态，见该方法 docblock。
         \App\Service\System\AddonService::clearTmpDir($conf['cache_path']);
         return TRUE;
     }
@@ -362,7 +361,11 @@ class TemplateService
     {
         $conf = _SERVER('conf');         global $config;
 
-        $path = self::templateRoot() . $dir;
+        $dir = trim($dir);
+        if ('' === $dir || !preg_match('#^[A-Za-z0-9_-]{1,64}$#', $dir)) {
+            message(1, lang('data_malformation'));
+        }
+        $path = rtrim(self::themeBase($dir), '/');
         $conffile = $path . '/conf.json';
         FALSE === is_file($conffile) and message(1, lang('not_exists'));
         $arr = xn_json_decode(file_get_contents($conffile));
@@ -372,8 +375,6 @@ class TemplateService
         $config['theme'] = '';
         setting_set('conf', $config);
         $uninstallfile = $path . '/uninstall.php';
-        // 上线前审计修复（M-A4）：与 install.php 同口径——主题卸载钩子执行前高危构造闸，
-        // 拒绝则跳过执行并记日志（kv_*/db_* 等清理类钩子不受影响）。
         if (is_file($uninstallfile) && self::themeExecHookSafe((string)file_get_contents($uninstallfile), $dir)) {
             include _include($uninstallfile);
         }
@@ -426,13 +427,17 @@ class TemplateService
      */
     public static function download(string $url, string $dir)
     {
-        $dir = basename($dir);
+        $dir = basename(trim($dir));
+        if ('' === $dir || !preg_match('#^[A-Za-z0-9_-]{1,64}$#', $dir)) {
+            self::templateLogError('ZipArchive error: invalid theme dir name');
+            return false;
+        }
         // PHP 未启用 zip 扩展：ZipArchive 不存在，new 即 Fatal。先拦，提示站长启用扩展
         if (!class_exists('ZipArchive')) {
             self::templateLogError('ZipArchive error: PHP zip extension not loaded');
             return false;
         }
-        $savePath = \APP_PATH . 'runtime/cache/' . $dir . '.zip';
+        $savePath = \APP_PATH . 'runtime/cache/theme_' . $dir . '_' . getmypid() . '_' . bin2hex(random_bytes(4)) . '.zip';
         // 修复：商店 downurl 是**明文**（且主机可能是商店 site_url，需归一为可达地址），
         // 原先的 core_decrypt 在 store 模式下返空 ⇒ 主题包下载必然失败。统一走 cloudUrl()。
         $downurl = \App\Service\System\CloudOpsService::cloudUrl($url);
@@ -533,12 +538,20 @@ class TemplateService
                     return false;
                 }
             }
-            // 软链条目（external attrs 高 16 位 S_IFLNK）：可把 extractTo 写成指向任意位置的链接
-            $stat = $zip->statIndex($i);
-            if (is_array($stat) && isset($stat['external']) && (((intval($stat['external']) >> 16) & 0120000) === 0120000)) {
+            // 软链条目（getExternalAttributesIndex 高 16 位 S_IFMT === S_IFLNK）及点目录/NUL 拒绝
+            $opsys = 0; $attr = 0;
+            if ($zip->getExternalAttributesIndex($i, $opsys, $attr)
+                && (($opsys & 0xFF) === \ZipArchive::OPSYS_UNIX)
+                && ((($attr >> 16) & 0170000) === 0120000)) {
                 $zip->close();
                 @unlink($savePath);
                 self::templateLogError('ZipArchive error: symlink entry blocked: ' . $entry);
+                return false;
+            }
+            if (str_contains($entry, "\0") || preg_match('#(^|/)\.#', ltrim($norm, './'))) {
+                $zip->close();
+                @unlink($savePath);
+                self::templateLogError('ZipArchive error: hidden/NUL entry blocked: ' . $entry);
                 return false;
             }
             // 发布前检查修复（B-1 High）：.html/.htm 条目解压前过与模板编辑器同口径的内容闸。
@@ -587,11 +600,55 @@ class TemplateService
                 return false;
             }
         }
-        $zip->extractTo($destpath);
+        $stageDir = \APP_PATH . 'runtime/cache/theme_stage_' . $dir . '_' . getmypid() . '_' . bin2hex(random_bytes(4)) . '/';
+        if (!@mkdir($stageDir, 0755, TRUE)) {
+            $zip->close();
+            @unlink($savePath);
+            self::templateLogError('ZipArchive error: cannot create stage dir');
+            return false;
+        }
+        $extracted = $zip->extractTo($stageDir);
         $zip->close();
-        if (is_file($savePath)) unlink($savePath);
-        $conffile = $destpath . $dir . '/conf.json';
-        !is_file($conffile) and message(-1, 'conf.json ' . lang('not_exists'));
+        if (is_file($savePath)) @unlink($savePath);
+        if (!$extracted) {
+            rmdir_recusive($stageDir);
+            self::templateLogError('ZipArchive error: extractTo failed for ' . $dir);
+            return false;
+        }
+        // 解压后复检符号链接，防止非 UNIX 属性或特殊归档绕过预检
+        $stageIter = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($stageDir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ($stageIter as $sf) {
+            if ($sf->isLink()) {
+                rmdir_recusive($stageDir);
+                self::templateLogError('ZipArchive error: symlink found after extract in ' . $dir);
+                return false;
+            }
+        }
+        if (!is_dir($stageDir . $dir) || !is_file($stageDir . $dir . '/conf.json')) {
+            rmdir_recusive($stageDir);
+            message(-1, 'conf.json ' . lang('not_exists'));
+        }
+        $targetDir = $destpath . $dir;
+        $backupDir = '';
+        if (is_dir($targetDir)) {
+            $backupDir = \APP_PATH . 'runtime/backup/theme_' . $dir . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(4));
+            @mkdir(dirname($backupDir), 0755, TRUE);
+            if (!@rename($targetDir, $backupDir)) {
+                rmdir_recusive($stageDir);
+                self::templateLogError('ZipArchive error: failed to backup existing theme ' . $dir);
+                return false;
+            }
+        }
+        if (!@rename($stageDir . $dir, $targetDir)) {
+            if ('' !== $backupDir) @rename($backupDir, $targetDir);
+            rmdir_recusive($stageDir);
+            self::templateLogError('ZipArchive error: failed to install theme ' . $dir);
+            return false;
+        }
+        rmdir_recusive($stageDir);
         return TRUE;
     }
 
@@ -682,7 +739,7 @@ class TemplateService
     {
         static $list = null;
         if ($list !== null) return $list;
-        $list = array('CUrl','ListUrl','Pic','Rand','__PAGING__','__tplconf','__tplnull','_arr','_bull_token','_pg','action','admin_entry','aid','alias','api_json','arrlistall','art','art_pic_json','artlist','body','c','cate','cate_linkarea','cate_nav','catelist','child','chip_n','chips','cid','cid_count','cloud_version','conf','config','content','cup','danmu_list','danmu_send','danmu_token','danmu_token_api','data','ep','errno','errstr','favorite_state','footer','form_action','fsCfg','fsEt','fsIsForum','fsIsHome','fsIsMy','fsIsPost','fsName','fsPostOpen','fsSub','gid','grouplist','h','header','hit_name','hits_url','i','index_page','ip','item','json','k','key','keyword','lang','lfarrlis','like_state','likelist','linklist','list','longip','maccms','method','msg','my','n','name','nav_active','nav_home','nav_pku','nav_route','nnLogged','nncms','num','obj','p','page','page_url','pagesize','pagination','param','passwd_url','path','path_tpl','path_tplstatics','pku_url','play_from','play_json_safe','play_list','play_name','play_urls','player','player_local','referer','req_area','req_lang','req_sort','req_year','request_filename','route','row','runtime','s','safe_token','search_url','seo','sitemap_url','sonlist','st','starttime','sticky_list','stickylist','t','taglist','theme','time','total','type_more','type_parent','type_reset','type_urls','uid','url','user','user_access','user_create','user_favorite','user_index','user_like','user_login','user_logout','user_passwd','useragent','v','v2','version','vid','video','video_jsonld','videolist','vo','vo2','vod','wait');
+        $list = array('CUrl','ListUrl','Pic','Rand','__PAGING__','__tplconf','__tplnull','_arr','_bull_token','_pg','action','admin_entry','aid','alias','api_json','arrlistall','art','art_jsonld','art_pic_json','artlist','body','c','cate','cate_linkarea','cate_nav','catelist','child','chip_n','chips','cid','cid_count','cloud_version','conf','config','content','cup','danmu_config_json','danmu_list','danmu_send','danmu_token','danmu_token_api','data','ep','errno','errstr','favorite_state','footer','form_action','fsCfg','fsEt','fsIsForum','fsIsHome','fsIsMy','fsIsPost','fsName','fsPostOpen','fsSub','gid','grouplist','h','header','hit_name','hits_url','i','index_page','ip','item','json','k','key','keyword','lang','lfarrlis','like_state','likelist','linklist','list','longip','maccms','method','msg','my','n','name','nav_active','nav_home','nav_pku','nav_route','nnLogged','nncms','num','obj','p','page','page_url','pagesize','pagination','param','passwd_url','path','path_tpl','path_tplstatics','pku_url','play_from','play_json_safe','play_list','play_name','play_urls','player','player_local','referer','req_area','req_lang','req_sort','req_year','request_filename','route','row','runtime','s','safe_token','search_url','seo','sitemap_url','sonlist','st','starttime','sticky_list','stickylist','t','taglist','tags','theme','time','total','type_more','type_parent','type_reset','type_urls','uid','url','user','user_access','user_create','user_favorite','user_foot_script','user_index','user_like','user_login','user_logout','user_passwd','useragent','v','v2','version','vid','video','video_jsonld','videolist','vo','vo2','vod','wait');
         return $list;
     }
     public static function safeTemplateCallAllowlist(): array
@@ -876,9 +933,21 @@ class TemplateService
      */
     private static function themeBase(string $theme): string
     {
+        $theme = trim($theme);
+        if ('' === $theme || !preg_match('#^[A-Za-z0-9_-]{1,64}$#', $theme)) {
+            message(-1, lang('data_malformation'));
+        }
+        $root = realpath(self::templateRoot());
         $base = realpath(self::templateRoot() . $theme);
-        empty($base) and message(-1, lang('data_malformation'));
-        return rtrim($base, '/') . '/';
+        if (empty($root) || empty($base)) {
+            message(-1, lang('data_malformation'));
+        }
+        $rootNorm = rtrim(str_replace('\\', '/', $root), '/') . '/';
+        $baseNorm = rtrim(str_replace('\\', '/', $base), '/') . '/';
+        if (!str_starts_with($baseNorm, $rootNorm)) {
+            message(-1, lang('data_malformation'));
+        }
+        return $baseNorm;
     }
 
     /**

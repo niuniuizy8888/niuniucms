@@ -37,7 +37,20 @@ class DomainReplaceService
      */
     public static function validDomain($d): bool
     {
-        return is_string($d) && '' !== $d && 1 === preg_match('#^[A-Za-z0-9.-]+(:\d+)?$#', $d);
+        if (!is_string($d) || '' === $d || strlen($d) > 259) return false;
+        // 要求有效域名（含至少一个点且每段符合 DNS 标签规则）或合法 IPv4，允许可选 :1-65535 端口
+        $host = $d;
+        if (preg_match('/^([^:]+):(\d{1,5})$/D', $d, $m)) {
+            $host = $m[1];
+            $port = (int)$m[2];
+            if ($port < 1 || $port > 65535) return false;
+        } elseif (str_contains($d, ':')) {
+            return false;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return true;
+        }
+        return 1 === preg_match('/^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/D', $host);
     }
 
     /**
@@ -92,6 +105,12 @@ class DomainReplaceService
                 'updated' => 0, 'col' => $col, 'old' => $old, 'new' => $new, 'timeout' => $timeout);
         }
         $updated = intval($stmt->rowCount());
+        if ($updated > 0) {
+            // 同步推进单行读缓存版本，避免 vod_{vid} 详情/播放缓存继续返回旧域名长达 1800s
+            if (function_exists('cache_shared_set')) {
+                try { cache_shared_set('vod_read_ver', bin2hex(random_bytes(8)), 0); } catch (\Throwable $e) {}
+            }
+        }
         if (function_exists('page_cache_bump')) {
             try { \page_cache_bump(); } catch (\Throwable $e) {}
         }

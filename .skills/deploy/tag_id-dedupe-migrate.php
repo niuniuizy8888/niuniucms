@@ -42,9 +42,12 @@ $RECOUNT = in_array('--recount', $argv, true);
 $PRINT   = in_array('--print-sql', $argv, true);
 $YES     = in_array('--yes', $argv, true);
 
-/* ============================== 配置装载（与 index.php + core/core.php 同口径） ============================== */
+/* ============================== 配置装载（与 index.php + core/paths.php 同口径） ============================== */
 $appPath = dirname(__DIR__, 2) . '/';           // 站点根（本文件在 .skills/deploy/ 下）
-$configFile = $appPath . 'core/config/config.php';
+if (!defined('APP_PATH')) define('APP_PATH', $appPath);
+if (!defined('CORE_PATH')) define('CORE_PATH', $appPath . 'core/');
+require_once $appPath . 'core/paths.php';
+$configFile = nncms_runtime_path('config.php');
 if ($PRINT) {
     // 离线审阅模式不需要配置，直接打印 SQL 形态
     print_sql_templates('<前缀>');
@@ -58,7 +61,7 @@ if (!is_array($conf) || empty($conf['db'])) {
     exit("config.php 里没有 db 配置段。\n");
 }
 // 独立数据库配置存在则整体覆盖（与 core/core.php 的处理一致）
-$dbConfigFile = $appPath . 'core/config/database.php';
+$dbConfigFile = nncms_runtime_path('database.php');
 if (is_file($dbConfigFile)) {
     $dbConf = include $dbConfigFile;
     if (is_array($dbConf) && !empty($dbConf['master'])) {
@@ -138,10 +141,27 @@ if ($dupGroups > 0) {
     }
 }
 
+$hasTagArt = (bool) q($pdo, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?", array($pre . 'tag_art'));
+$T_ART_LINK = '`' . $pre . 'tag_art' . '`';
+$countExpr = $hasTagArt
+    ? "(SELECT COUNT(DISTINCT r.vid) FROM {$T_LINK} r WHERE r.tagid = t.tagid) + (SELECT COUNT(*) FROM {$T_ART_LINK} a WHERE a.tagid = t.tagid)"
+    : "(SELECT COUNT(DISTINCT r.vid) FROM {$T_LINK} r WHERE r.tagid = t.tagid)";
+
 /* ============================== 2) 幂等早退 ============================== */
 if ($hasUk) {
-    echo "\n索引 {$UK} 已存在 ⇒ 迁移已完成过，本脚本不做任何修改，直接退出。\n";
+    echo "\n索引 {$UK} 已存在 ⇒ 去重与加索引步骤已跳过。\n";
     if ($dupGroups > 0) { echo "⚠ 但仍有重复组，说明索引是被绕过建的（不应发生）——请人工核查。\n"; }
+    if ($APPLY && $RECOUNT) {
+        if (!$YES) {
+            echo "将仅执行 tag.count 重算（含 tag_id" . ($hasTagArt ? " + tag_art" : "") . "）。输入 yes 继续：";
+            $in = trim((string)fgets(STDIN));
+            if (strtolower($in) !== 'yes') { exit("已取消。\n"); }
+        }
+        $before = q($pdo, "SELECT COUNT(*) AS s FROM {$T_TAG} t WHERE t.count <> ({$countExpr})");
+        $mismatch = (int)($before[0]['s'] ?? 0);
+        $pdo->exec("UPDATE {$T_TAG} t SET t.count = ({$countExpr}) WHERE t.count <> ({$countExpr})");
+        echo "[recount] 已按实际绑定重算 tag.count（修正 {$mismatch} 个标签的计数）\n";
+    }
     exit(0);
 }
 
@@ -199,12 +219,12 @@ echo "[3/4] 已加唯一索引 {$UK}(tagid, vid)\n";
 
 /* ============================== 7) 可选：按实际行数重算 tag.count ============================== */
 if ($RECOUNT) {
-    $before = q($pdo, "SELECT COUNT(*) AS s FROM {$T_TAG} WHERE count <> (SELECT COUNT(*) FROM {$T_LINK} r WHERE r.tagid = {$T_TAG}.tagid)");
+    $before = q($pdo, "SELECT COUNT(*) AS s FROM {$T_TAG} t WHERE t.count <> ({$countExpr})");
     $mismatch = (int)($before[0]['s'] ?? 0);
-    $pdo->exec("UPDATE {$T_TAG} t SET t.count = (SELECT COUNT(*) FROM {$T_LINK} r WHERE r.tagid = t.tagid) WHERE t.count <> (SELECT COUNT(*) FROM {$T_LINK} r WHERE r.tagid = t.tagid)");
-    echo "[4/4] 已按实际绑定行数重算 tag.count（修正 {$mismatch} 个标签的计数）\n";
+    $pdo->exec("UPDATE {$T_TAG} t SET t.count = ({$countExpr}) WHERE t.count <> ({$countExpr})");
+    echo "[4/4] 已按实际绑定重算 tag.count（修正 {$mismatch} 个标签的计数）\n";
 } else {
-    echo "[4/4] 未做 tag.count 重算（如需，重跑时加 --recount；注意本脚本不重复备份，因为已无重复行）\n";
+    echo "[4/4] 未做 tag.count 重算（如需，重跑时加 --apply --recount）\n";
 }
 
 /* ============================== 8) 收尾报告 ============================== */

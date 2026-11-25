@@ -15,8 +15,10 @@ namespace App\Service\System;
 class ThumbnailService
 {
     const REL_DIR = 'upload/thumb/';
-    const MAX_BYTES = 3145728;   // 源图体积上限 3MB
-    const MAX_WIDTH = 300;       // 缩略最大宽度
+    const MAX_BYTES = 3145728;     // 源图体积上限 3MB
+    const MAX_PIXELS = 25000000;   // 像素上限 25MP，防止压缩像素炸弹 OOM
+    const MAX_DIM = 10000;         // 单边最大像素
+    const MAX_WIDTH = 300;         // 缩略最大宽度
     const JPEG_QUALITY = 82;
 
     /** 渲染期：本地有缩略图用本地，否则回退原图（远程）；相对/站内地址原样返回 */
@@ -24,6 +26,7 @@ class ThumbnailService
     {
         $src = trim($src);
         if ($src === '' || 0 !== stripos($src, 'http')) return $src;
+        $w = max(60, min(intval($w), 600));
         $rel = self::cacheRel($src, $w);
         return is_file(\APP_PATH . $rel) ? self::publicUrl($rel) : $src;
     }
@@ -41,7 +44,7 @@ class ThumbnailService
         // 统一出站 SSRF 网关（scheme + 全记录 DNS + 内网段 + IP 固定）；不通过直接放弃
         if (!function_exists('outbound_url_safe') || !function_exists('https_request')) return null;
         if (!outbound_url_safe($src)) return null;
-        $data = @https_request($src, '', '', 8, 0, 8 * 1048576); // 批量场景 8s 足够（图床通常在 1s 内响应）
+        $data = @https_request($src, '', '', 8, 0, self::MAX_BYTES); // 批量场景 8s 足够，直接按上限截断
         if (!is_string($data) || $data === '' || strlen($data) > self::MAX_BYTES) return null;
 
         // 真实 MIME（fileinfo 必需；缺失 fail-closed）
@@ -49,14 +52,26 @@ class ThumbnailService
         $fi = finfo_open(FILEINFO_MIME_TYPE);
         $mime = $fi ? (string)finfo_buffer($fi, $data) : '';
         $fi and (PHP_VERSION_ID < 80500) and finfo_close($fi);
-        if (strpos($mime, 'image/') !== 0) return null;
+        if (strpos($mime, 'image/') !== 0 || stripos($mime, 'image/svg') === 0) return null;
+
+        // 解码前验证像素尺寸上限，防止超高分辨率图片触发 GD OOM
+        $dim = @getimagesizefromstring($data);
+        if (!is_array($dim) || empty($dim[0]) || empty($dim[1])) return null;
+        $iw = (int)$dim[0];
+        $ih = (int)$dim[1];
+        if ($iw < 1 || $ih < 1 || $iw > self::MAX_DIM || $ih > self::MAX_DIM || ((float)$iw * (float)$ih) > self::MAX_PIXELS) {
+            return null;
+        }
 
         // GD 解码 + 缩放（imagescale 优先，回退 imagecopyresampled）
         if (!function_exists('imagecreatefromstring')) return null;
         $img = @imagecreatefromstring($data);
         if (!$img) return null;
         $ow = imagesx($img); $oh = imagesy($img);
-        if ($ow < 1 || $oh < 1) { imagedestroy($img); return null; }
+        if ($ow < 1 || $oh < 1) {
+            if (PHP_VERSION_ID < 80500) imagedestroy($img);
+            return null;
+        }
         if ($ow > $w) {
             $nh = max(1, (int)round($oh * $w / $ow));
             $scaled = function_exists('imagescale') ? @imagescale($img, $w, $nh) : null;
@@ -64,12 +79,25 @@ class ThumbnailService
                 $scaled = imagecreatetruecolor($w, $nh);
                 if ($scaled) imagecopyresampled($scaled, $img, 0, 0, 0, 0, $w, $nh, $ow, $oh);
             }
-            if ($scaled) { imagedestroy($img); $img = $scaled; }
+            if ($scaled) {
+                if (PHP_VERSION_ID < 80500) imagedestroy($img);
+                $img = $scaled;
+            }
         }
         $dir = dirname($dest);
-        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) { imagedestroy($img); return null; }
-        $ok = @imagejpeg($img, $dest, self::JPEG_QUALITY);
-        imagedestroy($img);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+            if (PHP_VERSION_ID < 80500) imagedestroy($img);
+            return null;
+        }
+        $tmp = $dest . '.tmp.' . getmypid() . '.' . mt_rand(100000, 999999);
+        $ok = @imagejpeg($img, $tmp, self::JPEG_QUALITY);
+        if (PHP_VERSION_ID < 80500) imagedestroy($img);
+        if ($ok && !@rename($tmp, $dest)) {
+            @unlink($tmp);
+            $ok = false;
+        } elseif (!$ok) {
+            @unlink($tmp);
+        }
         return $ok ? $rel : null;
     }
 

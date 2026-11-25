@@ -66,7 +66,10 @@ class VodBlockService
         $res = array();
         if (empty($cids) || $n <= 0) return $res;
         $n = min(intval($n), 100); // 上限保护：block 参数可控时防过大窗口
-        $cids = array_slice(array_values(array_map('intval', $cids)), 0, 50); // cids 数量上限：防窗口 n*count 放大
+        $cids = \App\Service\Content\ContentVisibilityService::intersectCategories(
+            array_slice(array_values(array_map('intval', $cids)), 0, 50)
+        ); // 仅允许读取当前用户组可见分类 + 数量上限防窗口放大
+        if (empty($cids)) return $res;
         // 窗口 3 倍余量：全局排序下冷门分类可能被热门占满窗口，不足部分按 cid 补查保证每组 n 条
         $vidrows = video_vid__find(array('cid' => array_values($cids)), array('vid' => -1), 1, $n * count($cids) * 3, 'vid', array('vid', 'cid'));
         $grouped = array();
@@ -91,8 +94,10 @@ class VodBlockService
             // 窗口不足时按 cid 补查，严格保证每组 n 条（与 single() 语义一致）
             if (count($items) < $n) {
                 $extra = \App\Service\Content\VideoService::listByCid($cid, 1, $n, true, true);
-                foreach ($extra as $vid => $video) {
-                    if (!isset($items[$vid])) $items[$vid] = $video;
+                if (is_array($extra)) {
+                    foreach ($extra as $vid => $video) {
+                        if (!isset($items[$vid])) $items[$vid] = $video;
+                    }
                 }
             }
             $res[$cid] = array(
@@ -229,11 +234,18 @@ class VodBlockService
         $ranked = \App\Repository\RepositoryFactory::contentQuery()->hitRankIds('vod_top', 'vid', $cid, $hitType, 1, $n);
         if (empty($ranked['ids'])) return array();
         $list = \App\Service\Content\VideoService::findAsc($ranked['ids'], $n, true);
-        if ($list) {
-            global $gid;
-            video_list_access_filter($list, $gid); // 与主列表口径一致（审计修复）
+        $list = \App\Service\Content\ContentVisibilityService::filter(is_array($list) ? $list : array());
+        if (empty($list)) return array();
+        $byId = array();
+        foreach ($list as $it) {
+            if (isset($it['vid'])) $byId[intval($it['vid'])] = $it;
         }
-        return $list ?: array();
+        $ordered = array();
+        foreach ($ranked['ids'] as $rid) {
+            $rid = intval($rid);
+            if (isset($byId[$rid])) $ordered[] = $byId[$rid];
+        }
+        return $ordered;
     }
 
     /**
@@ -245,31 +257,48 @@ class VodBlockService
      */
     public static function posterRand($cid, int $n)
     {
-        $arrlist = \App\Service\Content\VideoService::stickyFindCacheRand($cid, 1, $n);
+        $visibleCids = \App\Service\Content\ContentVisibilityService::intersectCategories($cid);
+        if (empty($visibleCids) || $n <= 0) return array();
+        $visibleMap = array_flip($visibleCids);
+        // 有分类过滤且单分类时传该 cid，否则先取全量置顶缓存并按可见分类过滤，避免受限分类挤占前 $n 个名额
+        $queryCid = ($cid !== '' && $cid !== null && $cid !== 0 && $cid !== '0') ? (count($visibleCids) === 1 ? $visibleCids[0] : '') : '';
+        $arrlist = $queryCid !== ''
+            ? \App\Service\Content\VideoService::stickyFindCacheRand($queryCid, 1, $n)
+            : \App\Service\Content\VideoService::stickyFindCache();
         if (empty($arrlist)) return NULL;
         $arr2 = array();
         foreach ($arrlist as $val) {
-            if (1 == $val['sticky']) {
+            if (1 == ($val['sticky'] ?? 0) && isset($visibleMap[intval($val['cid'] ?? 0)])) {
                 $arr2[$val['vid']] = $val;
             }
         }
         if (empty($arr2)) return array();
         $arr2 = array_multisort_key($arr2, 'create_date', FALSE, 'vid');
+        $arr2 = array_slice($arr2, 0, $n, true);
         return \App\Service\Content\VideoService::stickyVideoItems($arr2, true);
     }
 
     /**
-     * 首页整站推荐区块：取 stickyIndexMap（sticky==1、create_date DESC 映射）前 $n 条，
+     * 首页整站推荐区块：取 stickyIndexMap（sticky==1、create_date DESC 映射）并按当前用户组可见分类过滤后取前 $n 条，
      * 经 stickyVideoItems 轻量装配。
-     * @param int $n 取前 N 条（array_slice 保序截断）
+     * @param int $n 取前 N 条（先过滤可读分类再 array_slice，防受限分类挤占名额）
      * @return array 视频条目数组；无置顶数据返回空数组
      */
     public static function stickyIndex(int $n): array
     {
+        if ($n <= 0) return array();
         $arrlist = \App\Service\Content\VideoService::stickyIndexMap();
         if (empty($arrlist)) return array();
-        $arrlist = array_slice($arrlist, 0, $n, true);
-        return \App\Service\Content\VideoService::stickyVideoItems($arrlist, true);
+        $visibleMap = array_flip(\App\Service\Content\ContentVisibilityService::categoryIds());
+        $filtered = array();
+        foreach ($arrlist as $k => $row) {
+            if (isset($visibleMap[intval($row['cid'] ?? 0)])) {
+                $filtered[$k] = $row;
+            }
+        }
+        if (empty($filtered)) return array();
+        $filtered = array_slice($filtered, 0, $n, true);
+        return \App\Service\Content\VideoService::stickyVideoItems($filtered, true);
     }
 
     /**

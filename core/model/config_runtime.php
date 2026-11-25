@@ -34,8 +34,10 @@ function config_runtime_all()
  */
 function config_runtime_set($key, $value)
 {
-    $conf = config_runtime_all();
-    $conf[$key] = $value;
+    $filtered = config_runtime_strip_forbidden(array($key => $value), TRUE);
+    if (empty($filtered)) return FALSE;
+    $conf = config_runtime_strip_forbidden(config_runtime_all(), FALSE);
+    $conf[$key] = $filtered[$key];
     return kv_cache_set(config_runtime_cache_key(), $conf);
 }
 
@@ -47,7 +49,9 @@ function config_runtime_set($key, $value)
 function config_runtime_set_values($values)
 {
     if (!is_array($values) || empty($values)) return FALSE;
-    $conf = config_runtime_all();
+    $values = config_runtime_strip_forbidden($values, TRUE);
+    if (empty($values)) return FALSE;
+    $conf = config_runtime_strip_forbidden(config_runtime_all(), FALSE);
     $conf = array_replace_recursive($conf, $values);
     return kv_cache_set(config_runtime_cache_key(), $conf);
 }
@@ -84,7 +88,7 @@ function config_runtime_apply($conf)
  * 剥除不允许经缓存层覆盖的配置键（顶层精确匹配 + 嵌套键路径，大小写不敏感）
  * 涵盖：主密钥/入口/模板引擎开关/DB/缓存层自身/会话 Cookie 参数/URL 规则/后台 API 桥接参数
  */
-function config_runtime_strip_forbidden($values)
+function config_runtime_strip_forbidden($values, $audit = TRUE)
 {
     if (!is_array($values)) return array();
     // 顶层禁覆盖键
@@ -99,6 +103,11 @@ function config_runtime_strip_forbidden($values)
         'api', 'db', 'database', 'cache', 'session', 'cache_path', 'log_path', 'upload_path',
         'cookie_pre', 'cookie_domain', 'cookie_path', 'ssl_verify', 'url_rewrite_on', 'cloud_api',
         'install', 'path', 'theme', 'template', 'path_tpl', 'debug',
+        // 安全边界/出网/认证/主机白名单键禁止经缓存/KV 覆盖
+        'outbound_block_private', 'outbound_allow_private_override', 'store_report_token',
+        'store_push_on', 'api_legacy_token', 'cdn_on', 'cdn_trusted_ips', 'cdn_ip_header',
+        'admin_bind_ip', 'login_ip', 'login_ua', 'login_only', 'allowed_hosts', 'site_host',
+        'disabled_addons', 'cloud_host', 'upload_url', 'view_url', 'log_max_size',
     );
     // 嵌套键仅对「无合法运行时写入方」的组生效（es.* 由后台 saveEsConfig 合法写入，不能在读侧拦截；
     // 其出网安全由 ElasticService 统一过 outbound_url_safe 兜底——见 VULN-H03 修复）
@@ -109,7 +118,7 @@ function config_runtime_strip_forbidden($values)
         $lk = strtolower((string) $k);
         if (in_array($lk, $forbidden_top, TRUE)) {
             unset($values[$k]);
-            config_runtime_audit_forbidden($k);
+            if ($audit) config_runtime_audit_forbidden($k);
             continue;
         }
         if (isset($forbidden_nested[$lk]) && is_array($v)) {
@@ -117,7 +126,7 @@ function config_runtime_strip_forbidden($values)
                 foreach ($v as $sk => $sv) {
                     if (strtolower((string) $sk) === $fk) {
                         unset($values[$k][$sk]);
-                        config_runtime_audit_forbidden($k . '.' . $sk);
+                        if ($audit) config_runtime_audit_forbidden($k . '.' . $sk);
                     }
                 }
             }

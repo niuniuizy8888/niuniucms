@@ -32,8 +32,8 @@ if (empty($lvCfg['on'])) {
 /* ---- 播放器地址：留空=插件自带；自定义仅允许站内路径或 http(s) 绝对地址（属性注入防护） ---- */
 $lvPlayerRaw = trim((string)(isset($lvCfg['player_url']) ? $lvCfg['player_url'] : ''));
 if ('' !== $lvPlayerRaw) {
-    // '\evil.com' 形态被浏览器按协议相对（//evil.com）解析，反斜杠必须一并拦截
-    $lvPathOk = (str_starts_with($lvPlayerRaw, '/') && FALSE === strpos($lvPlayerRaw, '//', 1) && !str_contains($lvPlayerRaw, '\\'))
+    // 站内路径仅允许单斜杠起头（拒绝 //host、/\host、\host 等协议相对绕过）
+    $lvPathOk = (str_starts_with($lvPlayerRaw, '/') && !str_starts_with($lvPlayerRaw, '//') && !str_contains($lvPlayerRaw, '//') && !str_contains($lvPlayerRaw, '\\'))
         || 1 === preg_match('#^https?://#i', $lvPlayerRaw);
     if (!$lvPathOk
         || str_contains($lvPlayerRaw, '<')

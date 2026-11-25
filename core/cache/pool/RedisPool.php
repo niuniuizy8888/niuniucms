@@ -100,13 +100,21 @@ class RedisPool
     {
         try {
             $redis = new Redis();
-            if ($this->persistentId) {
-                $redis->pconnect($this->host, $this->port, $this->timeout, $this->persistentId);
-            } else {
-                $redis->connect($this->host, $this->port, $this->timeout);
+            $connected = $this->persistentId
+                ? $redis->pconnect($this->host, $this->port, $this->timeout, $this->persistentId)
+                : $redis->connect($this->host, $this->port, $this->timeout);
+            if (true !== $connected) {
+                $this->discard($redis);
+                return null;
             }
-            if ($this->auth) $redis->auth($this->auth);
-            if ($this->db > 0) $redis->select($this->db);
+            if ($this->auth !== '' && true !== $redis->auth($this->auth)) {
+                $this->discard($redis);
+                return null;
+            }
+            if ($this->db > 0 && true !== $redis->select($this->db)) {
+                $this->discard($redis);
+                return null;
+            }
             self::$lastCheck[$this->bucketKey] = time();
             return $redis;
         } catch (\Throwable $e) {

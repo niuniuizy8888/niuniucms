@@ -288,10 +288,94 @@ class ApiBatchItemService
     /** 批次「跳过」明细的构成分析（unchanged/skipped_update/unbound 各自的条数与占比、summary 文案、主导项 dominant_key/label）。老库没有 result_status 列或 $batch_id 为空时返回 supported=FALSE 的骨架且不发起查询 ⇒ 视图须先判 supported。取数复用 filterResult()，受 $fetch_limit 截断。@param int $batch_id @param int $fetch_limit 最多扫描条数（默认 5000） @return array {supported,total,summary,items,dominant_key,dominant_label,unchanged,skipped_update,unbound} */
     public static function skipBreakdown($batch_id, $fetch_limit = 5000)
     {
-        $stats = array(
-            'supported' => FALSE,
+        $batch_id = intval($batch_id);
+        if ($batch_id <= 0 || !api_import_batch_item_supports_field('result_status')) {
+            return self::emptySkipBreakdown(FALSE);
+        }
+        $map = self::skipBreakdownBatch(array($batch_id));
+        return $map[$batch_id] ?? self::emptySkipBreakdown(TRUE);
+    }
+
+    /**
+     * 批量 SQL GROUP BY 聚合多个批次的跳过原因分布（替代逐批拉取 5000 行明细的 N+1 扫描）。
+     * @param array $batch_ids 批次 ID 列表
+     * @return array<int, array> batch_id => skipBreakdown 结构
+     */
+    public static function skipBreakdownBatch(array $batch_ids): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $batch_ids), static function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids) || !api_import_batch_item_supports_field('result_status')) {
+            return array();
+        }
+        $counters = array();
+        foreach ($ids as $id) {
+            $counters[$id] = array('unchanged' => 0, 'skipped_update' => 0, 'unbound' => 0);
+        }
+        $db = _SERVER('db');
+        if ($db && method_exists($db, 'prepare_execute')) {
+            $table = api_import_batch_item_table();
+            $statuses = array('unchanged', 'skipped_update', 'unbound');
+            foreach (array_chunk($ids, 200) as $chunk) {
+                $idMarks = implode(',', array_fill(0, count($chunk), '?'));
+                $stMarks = implode(',', array_fill(0, count($statuses), '?'));
+                $sql = "SELECT `batch_id`, `result_status`, COUNT(*) AS `cnt` FROM `{$table}` WHERE `batch_id` IN ({$idMarks}) AND `result_status` IN ({$stMarks}) GROUP BY `batch_id`, `result_status`";
+                $stmt = $db->prepare_execute($sql, array_merge($chunk, $statuses));
+                if ($stmt) {
+                    foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                        $bid = intval($row['batch_id'] ?? 0);
+                        $st = (string)($row['result_status'] ?? '');
+                        if (isset($counters[$bid][$st])) {
+                            $counters[$bid][$st] = intval($row['cnt'] ?? 0);
+                        }
+                    }
+                }
+            }
+        }
+        $result = array();
+        foreach ($counters as $bid => $counter) {
+            $stats = self::emptySkipBreakdown(TRUE);
+            $total = $counter['unchanged'] + $counter['skipped_update'] + $counter['unbound'];
+            $stats['total'] = $total;
+            if ($total <= 0) {
+                $stats['summary'] = '暂无跳过明细';
+                $result[$bid] = $stats;
+                continue;
+            }
+            $summary_parts = array();
+            $dominant_key = '';
+            $dominant_count = -1;
+            foreach ($counter as $status => $count) {
+                $stats[$status] = $count;
+                if ($count <= 0) continue;
+                if ($count > $dominant_count) {
+                    $dominant_count = $count;
+                    $dominant_key = $status;
+                }
+                $ratio = round($count / max(1, $total) * 100, 1);
+                $stats['items'][] = array(
+                    'key' => $status,
+                    'label' => api_import_batch_item_action_label($status),
+                    'count' => $count,
+                    'ratio' => $ratio,
+                );
+                $summary_parts[] = api_import_batch_item_action_label($status) . ' ' . $count . '（' . $ratio . '%）';
+            }
+            $stats['summary'] = !empty($summary_parts) ? implode(' / ', $summary_parts) : '暂无跳过明细';
+            $stats['dominant_key'] = $dominant_key;
+            $stats['dominant_label'] = $dominant_key !== '' ? api_import_batch_item_action_label($dominant_key) : '';
+            $result[$bid] = $stats;
+        }
+        return $result;
+    }
+
+    private static function emptySkipBreakdown(bool $supported): array
+    {
+        return array(
+            'supported' => $supported,
             'total' => 0,
-            'summary' => '',
+            'summary' => $supported ? '暂无跳过明细' : '',
             'items' => array(),
             'dominant_key' => '',
             'dominant_label' => '',
@@ -299,60 +383,6 @@ class ApiBatchItemService
             'skipped_update' => 0,
             'unbound' => 0,
         );
-        if (empty($batch_id) || !api_import_batch_item_supports_field('result_status')) {
-            return $stats;
-        }
-
-        $items = api_import_batch_item_filter_result($batch_id, array(
-            'action_type' => 'skip',
-            'field_group' => 'all',
-            'keyword' => '',
-        ), $fetch_limit);
-        $stats['supported'] = TRUE;
-        $stats['total'] = count($items);
-        if (empty($items)) {
-            $stats['summary'] = '暂无跳过明细';
-            return $stats;
-        }
-
-        $counter = array(
-            'unchanged' => 0,
-            'skipped_update' => 0,
-            'unbound' => 0,
-        );
-        foreach ($items as $item) {
-            $status = $item['result_status'] ?? '';
-            if (isset($counter[$status])) {
-                $counter[$status]++;
-            }
-        }
-
-        $summary_parts = array();
-        $dominant_key = '';
-        $dominant_count = -1;
-        foreach ($counter as $status => $count) {
-            $stats[$status] = $count;
-            if ($count <= 0) {
-                continue;
-            }
-            if ($count > $dominant_count) {
-                $dominant_count = $count;
-                $dominant_key = $status;
-            }
-            $ratio = round($count / max(1, $stats['total']) * 100, 1);
-            $stats['items'][] = array(
-                'key' => $status,
-                'label' => api_import_batch_item_action_label($status),
-                'count' => $count,
-                'ratio' => $ratio,
-            );
-            $summary_parts[] = api_import_batch_item_action_label($status) . ' ' . $count . '（' . $ratio . '%）';
-        }
-
-        $stats['summary'] = !empty($summary_parts) ? implode(' / ', $summary_parts) : '暂无跳过明细';
-        $stats['dominant_key'] = $dominant_key;
-        $stats['dominant_label'] = $dominant_key !== '' ? api_import_batch_item_action_label($dominant_key) : '';
-        return $stats;
     }
 
     /** 给批次行追加 _skip_breakdown 字段（skipBreakdown(intval($batch['id']))）后**返回新数组**——值传递不回写入参，调用方必须接住返回值；入参为空或非数组时原样返回。@param array $batch 批次行 @param int $fetch_limit 透传给 skipBreakdown() @return array|mixed 追加派生键的批次行；非数组入参为原值（类型不定） */

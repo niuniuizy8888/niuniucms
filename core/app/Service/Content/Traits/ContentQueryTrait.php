@@ -251,7 +251,8 @@ trait ContentQueryTrait
      */
     private static function indexPageByCid(string $cachePrefix, $cid, int $page, int $pagesize, $queryFn)
     {
-        $key = $cachePrefix . $cid . '_' . $page . '_' . $pagesize;
+        $cidKey = is_array($cid) ? md5(implode(',', array_map('intval', $cid))) : (string)$cid;
+        $key = $cachePrefix . $cidKey . '_' . $page . '_' . $pagesize;
         static $cache = array();
         if (isset($cache[$key])) return $cache[$key];
         $rows = cache_get($key);
@@ -265,8 +266,12 @@ trait ContentQueryTrait
         if ($page > 100) {
             // 发布前检查修复（C-12）：COUNT 移入 >100 分支——常态分页不再白付一次计数查询
             $total = self::countByCid($cid);
-            $totalpage = ceil($total / $pagesize);
-            $halfpage = ceil($totalpage / 2);
+            $totalpage = $pagesize > 0 ? (int)ceil($total / $pagesize) : 0;
+            // 越界页直接返回 NULL，禁止折返第 1 页并按原始越界页码写入无界缓存键
+            if ($total <= 0 || $page > $totalpage) {
+                return NULL;
+            }
+            $halfpage = (int)ceil($totalpage / 2);
             if ($halfpage > $limitpage && $page < ($totalpage - $limitpage)) {
                 $page = $limitpage;
             }
@@ -465,9 +470,13 @@ trait ContentQueryTrait
     {
         if (empty($id)) return NULL;
         $key = self::queryCachePrefix() . intval($id);
-        // 站群修复：缓存的是格式化后的行（含按伪静态档位生成的 url/cate_url/tag_url），站群站点的
-        // site_rewrite 与主站不同时不能共用主站的键，否则链接形态串站。主站档位键名不变；
-        // 其他档位另起键 {prefix}{id}_rw0.._rw3 并缩短 TTL；内容更新/删除经 content_cache_delete() 同删主键与 _rw0-3（第 2 轮 U-4），短 TTL 仅作兜底。
+        // 批量域名替换（DomainReplaceService）推进 vod_read_ver，使单行 vod_{vid} 立即换代
+        if (self::queryCachePrefix() === 'vod_' && function_exists('cache_shared_get')) {
+            $readVer = cache_shared_get('vod_read_ver');
+            if (is_string($readVer) && '' !== $readVer) {
+                $key .= '_rv' . $readVer;
+            }
+        }
         $conf = (array)_SERVER('conf');
         $rw = intval($conf['url_rewrite_on'] ?? 0);
         $variant = isset($conf['url_rewrite_base']) && $rw !== intval($conf['url_rewrite_base']);

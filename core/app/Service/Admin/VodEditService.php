@@ -177,8 +177,8 @@ class VodEditService
         !in_array($ext, $allowed_types, TRUE) and message(-1, '仅支持 jpg/jpeg/png/webp/gif 格式的图片');
 
         $vid = intval(param('vid', 0));
-        // 统一存储抽象：校验（真实 MIME）+ 保存 upload/poster/{Ym}/{rand}.{ext}
-        $stored = \App\Service\System\StorageService::saveUploadedFile($file, 'poster');
+        // 统一存储抽象：校验（真实 MIME + 图片头）+ 保存 upload/poster/{Ym}/{rand}.{ext}（透传推断出的 $ext）
+        $stored = \App\Service\System\StorageService::saveUploadedFile($file, 'poster', 5242880, true, $ext);
         empty($stored) and message(-1, lang('upload_failed'));
 
         return array(
@@ -202,6 +202,12 @@ class VodEditService
         empty($vid) and message(1, lang('data_malformation'));
         $video = \App\Service\Content\VideoService::read($vid);
         empty($video) and message(1, lang('video_not_exists'));
+        // 入库时已 htmlspecialchars 的纯文本字段回显前解码一次，与 vod_update.html 的 htmlspecialchars 形成无损往返（防止保存后双重转义）
+        foreach (array('name', 'sub', 'area', 'lang', 'year', 'version', 'en', 'actor', 'director', 'writer', 'behind', 'blurb', 'remarks') as $f) {
+            if (isset($video[$f]) && is_string($video[$f])) {
+                $video[$f] = htmlspecialchars_decode($video[$f], ENT_QUOTES);
+            }
+        }
 
         bull_token_set($uid, 'admin_vod_uploadposter');
         return array(
@@ -240,6 +246,15 @@ class VodEditService
         $safe_token = param('safe_token');
         admin_bull_token_guard($uid, 'admin_vod_update', $safe_token);
 
+        $cleanPic = static function (string $key): string {
+            $v = trim(admin_param_text($key, '', 1024));
+            if ($v === '') return '';
+            $probe = preg_replace('/[\x00-\x20\x7F]/', '', $v);
+            if (!preg_match('#^(https?://|/)#i', (string)$probe) || preg_match('#^//#', (string)$probe)) {
+                message(-1, '图片地址仅支持 http://、https:// 或站内 / 相对路径');
+            }
+            return xn_url_strip($v);
+        };
         $update = array(
             // 纯文本展示字段入库转义（与采集导入面同口径，防管理端输入 → 前台存储型 XSS；审计修复）
             'name' => htmlspecialchars(admin_param_text('name', '', 255), ENT_QUOTES, 'UTF-8'),
@@ -254,17 +269,17 @@ class VodEditService
             'version' => htmlspecialchars(admin_param_text('version', '', 30), ENT_QUOTES, 'UTF-8'),
             'en' => htmlspecialchars(admin_param_text('en', '', 255), ENT_QUOTES, 'UTF-8'),
             'letter' => admin_param_text('letter', '', 1),
-            'views' => admin_param_int('views', 0),
-            'favorites' => admin_param_int('favorites', 0),
-            'likes' => admin_param_int('likes', 0),
-            'douban_id' => admin_param_int('douban_id', 0),
+            'views' => admin_param_int('views', 0, 0),
+            'favorites' => admin_param_int('favorites', 0, 0),
+            'likes' => admin_param_int('likes', 0, 0),
+            'douban_id' => admin_param_int('douban_id', 0, 0),
             'douban_score' => min(9.9, max(0, floatval(param('douban_score', 0)))),
             'actor' => htmlspecialchars(admin_param_text('actor', '', 255), ENT_QUOTES, 'UTF-8'),
             'director' => htmlspecialchars(admin_param_text('director', '', 255), ENT_QUOTES, 'UTF-8'),
             'writer' => htmlspecialchars(admin_param_text('writer', '', 100), ENT_QUOTES, 'UTF-8'),
             'behind' => htmlspecialchars(admin_param_text('behind', '', 100), ENT_QUOTES, 'UTF-8'),
-            'pic' => htmlspecialchars(admin_param_text('pic', '', 1024), ENT_QUOTES, 'UTF-8'),
-            'pic_slide' => htmlspecialchars(admin_param_text('pic_slide', '', 1024), ENT_QUOTES, 'UTF-8'),
+            'pic' => $cleanPic('pic'),
+            'pic_slide' => $cleanPic('pic_slide'),
             'play_from' => admin_param_text('play_from', '', 255),
             'blurb' => htmlspecialchars(admin_param_text('blurb', '', 255), ENT_QUOTES, 'UTF-8'),
             'remarks' => htmlspecialchars(admin_param_text('remarks', '', 100), ENT_QUOTES, 'UTF-8'),

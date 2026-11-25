@@ -44,6 +44,15 @@ class RedisDriver implements CacheInterface
         }
     }
 
+    /** 安全反序列化：禁止类实例化并过滤损坏载荷，避免 warning 或误返回 false */
+    private function safeUnserialize($raw)
+    {
+        if (!is_string($raw) || $raw === '') return null;
+        $val = @unserialize($raw, ['allowed_classes' => false]);
+        if ($val === false && $raw !== 'b:0;') return null;
+        return $val;
+    }
+
     // ==================== 基础接口 ====================
 
     /** @return mixed */
@@ -53,7 +62,7 @@ class RedisDriver implements CacheInterface
         try {
             $k = $this->prefix . $key;
             $val = $redis->get($k);
-            return $val === false ? null : unserialize($val, ['allowed_classes' => false]);
+            return $val === false ? null : $this->safeUnserialize($val);
         } finally { $this->release(); }
     }
 
@@ -146,7 +155,7 @@ class RedisDriver implements CacheInterface
             if (!is_array($vals)) $vals = array_fill(0, count($keys), false); // MGET 失败守卫，避免下标越界
             $result = [];
             foreach ($keys as $i => $k) {
-                $result[$k] = $vals[$i] === false ? null : unserialize($vals[$i], ['allowed_classes' => false]);
+                $result[$k] = $vals[$i] === false ? null : $this->safeUnserialize($vals[$i]);
             }
             return $result;
         } finally { $this->release(); }
@@ -228,7 +237,7 @@ class RedisDriver implements CacheInterface
     public function hGet(string $key, string $field)
     {
         $redis = $this->conn(); if (!$redis) return null;
-        try { $v = $redis->hGet($this->prefix . $key, $field); return $v === false ? null : unserialize($v, ['allowed_classes' => false]); } finally { $this->release(); }
+        try { $v = $redis->hGet($this->prefix . $key, $field); return $v === false ? null : $this->safeUnserialize($v); } finally { $this->release(); }
     }
 
     /**
@@ -257,7 +266,7 @@ class RedisDriver implements CacheInterface
             // 审查修复轮 C9：连接中途断开的 hGetAll 返回 false，array_map(false) 直接 TypeError——
             //   归一为空数组（与连接不可用同语义，fail-closed）。
             if (!is_array($raw)) return [];
-            return array_map(function($v) { return unserialize($v, ['allowed_classes' => false]); }, $raw);
+            return array_map(function($v) { return $this->safeUnserialize($v); }, $raw);
         } finally { $this->release(); }
     }
 
@@ -294,7 +303,7 @@ class RedisDriver implements CacheInterface
     public function rPop(string $key)
     {
         $redis = $this->conn(); if (!$redis) return null;
-        try { $v = $redis->rPop($this->prefix . $key); return $v === false ? null : unserialize($v, ['allowed_classes' => false]); } finally { $this->release(); }
+        try { $v = $redis->rPop($this->prefix . $key); return $v === false ? null : $this->safeUnserialize($v); } finally { $this->release(); }
     }
 
     /**
@@ -311,7 +320,7 @@ class RedisDriver implements CacheInterface
             $raw = $redis->lRange($this->prefix . $key, $start, $stop);
             // 审查修复轮 C9：同 hGetAll——中途断开返回 false 时 array_map(false) 会 TypeError，归一空数组
             if (!is_array($raw)) return [];
-            return array_map(function($v) { return unserialize($v, ['allowed_classes' => false]); }, $raw);
+            return array_map(function($v) { return $this->safeUnserialize($v); }, $raw);
         } finally { $this->release(); }
     }
 

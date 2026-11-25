@@ -9,6 +9,40 @@ namespace App\Service\System;
 class StorageService
 {
     const ALLOWED_EXT = array('jpg', 'jpeg', 'png', 'gif', 'webp');
+    const MAX_PIXELS = 25000000;
+    const MAX_DIM = 10000;
+    const ALLOWED_IMAGETYPES = array(IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_GIF, IMAGETYPE_WEBP);
+
+    /**
+     * 校验真实图片头与像素上限（不依赖 fileinfo，同时拦截非图/SVG/像素炸弹）
+     */
+    private static function isValidImageFile(string $path): bool
+    {
+        $info = @getimagesize($path);
+        if (!is_array($info) || empty($info[0]) || empty($info[1]) || empty($info[2])) {
+            return false;
+        }
+        $w = (int)$info[0];
+        $h = (int)$info[1];
+        if ($w < 1 || $h < 1 || $w > self::MAX_DIM || $h > self::MAX_DIM || ((float)$w * (float)$h) > self::MAX_PIXELS) {
+            return false;
+        }
+        return in_array((int)$info[2], self::ALLOWED_IMAGETYPES, true);
+    }
+
+    private static function isValidImageBinary(string $binary): bool
+    {
+        $info = @getimagesizefromstring($binary);
+        if (!is_array($info) || empty($info[0]) || empty($info[1]) || empty($info[2])) {
+            return false;
+        }
+        $w = (int)$info[0];
+        $h = (int)$info[1];
+        if ($w < 1 || $h < 1 || $w > self::MAX_DIM || $h > self::MAX_DIM || ((float)$w * (float)$h) > self::MAX_PIXELS) {
+            return false;
+        }
+        return in_array((int)$info[2], self::ALLOWED_IMAGETYPES, true);
+    }
 
     /**
      * 保存上传文件
@@ -16,9 +50,10 @@ class StorageService
      * @param string $subdir 子目录（如 poster）
      * @param int $maxBytes 大小上限（默认 5MB）
      * @param bool $isUpload true=move_uploaded_file（HTTP 上传）；false=copy（内部文件入库/测试）
+     * @param string $extOverride 文件名无后缀时允许调用方提供白名单扩展名
      * @return array|false ['path'=>相对路径,'url'=>访问URL]
      */
-    public static function saveUploadedFile(array $file, string $subdir = '', int $maxBytes = 5242880, bool $isUpload = true)
+    public static function saveUploadedFile(array $file, string $subdir = '', int $maxBytes = 5242880, bool $isUpload = true, string $extOverride = '')
     {
         if (empty($file['tmp_name']) || (isset($file['error']) && UPLOAD_ERR_OK !== (int)$file['error'])) {
             return false;
@@ -31,13 +66,13 @@ class StorageService
             return false;
         }
         $ext = strtolower(pathinfo($file['name'] ?? '', PATHINFO_EXTENSION));
+        if ($ext === '' && $extOverride !== '') {
+            $ext = strtolower($extOverride);
+        }
         if (!in_array($ext, self::ALLOWED_EXT, true)) {
             return false;
         }
-        // 真实 MIME 校验（防伪造扩展名）——发布前检查修复（B-3/B-4）：
-        // 统一 finfo 主口径；探测函数在位但结果为空=文件异常，fail-closed 拒绝；
-        // fileinfo 扩展缺失（本机 PHP 8.5 configure --disable-fileinfo）时降级为扩展名白名单并留痕
-        //（通道含 error 恒落盘），部署侧安装 fileinfo 后自动恢复强校验。
+        // 真实 MIME 校验（防伪造扩展名）
         $mime = '';
         $probeReady = false;
         if (function_exists('finfo_open')) {
@@ -45,26 +80,24 @@ class StorageService
             if ($finfo) {
                 $probeReady = true;
                 $mime = (string)finfo_file($finfo, $file['tmp_name']);
-                if (PHP_VERSION_ID < 80500) finfo_close($finfo);   // 8.5 起弃用（8.1+ 自动释放）
+                if (PHP_VERSION_ID < 80500) finfo_close($finfo);
             }
         } elseif (function_exists('mime_content_type')) {
             $probeReady = true;
             $mime = (string)mime_content_type($file['tmp_name']);
         }
         if ('' !== $mime) {
-            // 上线前审计修复（VULN-L09）：改为**前缀锚定**。
-            // 原 `false === strpos($mime, 'image/')` 只判「任意位置含 image/」，
-            // 形如 application/x-image/foo 或 text/image/svg 也会被放行。
-            // 上线前终检（N-04，Low）：`image/` 前缀锚定挡不住 `image/svg+xml`（SVG 内可嵌脚本），
-            // 而本站上传白名单不含 svg ⇒ 显式拒绝该类型（纵深：即使扩展名被绕过也不接受其内容）。
             if (0 !== strpos($mime, 'image/') || 0 === stripos($mime, 'image/svg')) {
                 return false;
             }
         } elseif ($probeReady) {
             return false;
         } else {
-            // error_log 口径与 Service 层诊断惯例一致（CloudOps/TemplateService 同款），零框架依赖
-            error_log('storage: mime probe unavailable (fileinfo missing), degraded to extension whitelist');
+            error_log('storage: mime probe unavailable (fileinfo missing), relying on getimagesize verification');
+        }
+        // 落盘前校验图片头与像素上限（独立于 fileinfo，且防止先落入 upload/ 再校验）
+        if (!self::isValidImageFile((string)$file['tmp_name'])) {
+            return false;
         }
 
         $time = intval(_SERVER('time')) ?: time();
@@ -83,7 +116,13 @@ class StorageService
             }
         }
         $path = $dir . '/' . $name;
-        return AttachmentService::uploaded($path);
+        try {
+            return AttachmentService::uploaded($path);
+        } catch (\Throwable $e) {
+            @unlink($dest);
+            if (function_exists('xn_log')) xn_log('storage upload finalize failed: ' . $e->getMessage(), 'attachment_error');
+            return false;
+        }
     }
 
     /**
@@ -103,20 +142,18 @@ class StorageService
         if (!in_array($ext, self::ALLOWED_EXT, true)) {
             return false;
         }
-        // 真实 MIME 校验——发布前检查修复（B-3）：fclose→finfo_close（PHP≥8.1 finfo_open 返回
-        // Finfo 对象，fclose 传对象必抛 TypeError=装上 fileinfo 后此链 100% 致命的潜伏缺陷）；
-        //（B-4）探测在位但结果为空=fail-closed 拒绝；扩展缺失时降级并留痕。
         if (function_exists('finfo_open')) {
             $finfo = finfo_open(FILEINFO_MIME_TYPE);
             $mime = $finfo ? (string)finfo_buffer($finfo, $binary) : '';
-            (PHP_VERSION_ID < 80500) and finfo_close($finfo);
-            // 上线前审计修复（VULN-L09）：前缀锚定（同上）
+            if ($finfo && PHP_VERSION_ID < 80500) finfo_close($finfo);
             if ('' === $mime || 0 !== strpos($mime, 'image/') || 0 === stripos($mime, 'image/svg')) {
                 return false;
             }
         } else {
-            // error_log 口径与 Service 层诊断惯例一致（CloudOps/TemplateService 同款），零框架依赖
-            error_log('storage: mime probe unavailable (fileinfo missing), degraded to extension whitelist');
+            error_log('storage: mime probe unavailable (fileinfo missing), relying on getimagesizefromstring verification');
+        }
+        if (!self::isValidImageBinary($binary)) {
+            return false;
         }
 
         $time = intval(_SERVER('time')) ?: time();
@@ -129,7 +166,13 @@ class StorageService
             return false;
         }
         $path = $dir . '/' . $name;
-        return AttachmentService::uploaded($path);
+        try {
+            return AttachmentService::uploaded($path);
+        } catch (\Throwable $e) {
+            @unlink($dest);
+            if (function_exists('xn_log')) xn_log('storage binary finalize failed: ' . $e->getMessage(), 'attachment_error');
+            return false;
+        }
     }
 
     /**
@@ -137,15 +180,20 @@ class StorageService
      */
     public static function delete(string $path): bool
     {
-        $path = ltrim($path, '/');
-        if (0 !== strpos($path, 'upload/')) {
+        $path = ltrim(str_replace('\\', '/', $path), '/');
+        if (0 !== strpos($path, 'upload/') || false !== strpos($path, '..') || false !== strpos($path, "\0")) {
             return false;
         }
-        if (false !== strpos($path, '..')) {
+        $uploadRoot = realpath(APP_PATH . 'upload');
+        $real = realpath(APP_PATH . $path);
+        if ($uploadRoot === false || $real === false) {
             return false;
         }
-        $abs = APP_PATH . $path;
-        return is_file($abs) && @unlink($abs);
+        $prefix = rtrim($uploadRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        if (0 !== strpos($real, $prefix) || !is_file($real)) {
+            return false;
+        }
+        return @unlink($real);
     }
 
     /**

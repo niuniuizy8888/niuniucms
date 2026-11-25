@@ -48,7 +48,7 @@ trait VideoStickyTrait
      */
     public static function stickyFindCacheRand($cid = '', int $page = 1, int $pagesize = 20)
     {
-        $ver = (int)cache_get('sticky_video_ver');
+        $ver = (int)cache_shared_get('sticky_video_ver');
         $key = 'sticky_video_list_' . $ver . '_' . $pagesize . '_' . $cid . '_' . $page;
         static $cache = array();
         if (isset($cache[$key])) return $cache[$key];
@@ -158,7 +158,7 @@ trait VideoStickyTrait
         $vids = array_unique(arrlist_values($stickyMap, 'vid'));
         if (empty($vids)) return array();
         $items = self::find($vids, count($vids), TRUE, $light);
-        return $items ?: array();
+        return ContentVisibilityService::filter(is_array($items) ? $items : array());
     }
 
     /**
@@ -181,7 +181,7 @@ trait VideoStickyTrait
             'create_date' => $time,
         ));
         cache_delete('sticky_video_list');
-        cache_set('sticky_video_ver', time(), 86400);
+        cache_shared_set('sticky_video_ver', time(), 86400);
         return $r;
     }
 
@@ -211,7 +211,7 @@ trait VideoStickyTrait
         if ($video['sticky']) {
             self::update($vid, array('sticky' => 0));
             cache_delete('sticky_video_list');
-            cache_set('sticky_video_ver', time(), 86400);
+            cache_shared_set('sticky_video_ver', time(), 86400);
         }
         return \App\Repository\RepositoryFactory::stickyVod()->delete(array('vid' => $vid));
     }

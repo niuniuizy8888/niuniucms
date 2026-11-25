@@ -6,34 +6,46 @@
 function ip()
 {
     $conf = _SERVER('conf');
+    $remote = (string)_SERVER('REMOTE_ADDR');
     if (empty($conf['cdn_on'])) {
-        $ip = _SERVER('REMOTE_ADDR');
-    } else {
-        // 仅当直连 IP 属于受信代理白名单（cdn_trusted_ips）时才采信 CDN 转发头，
-        // 否则回退 REMOTE_ADDR，防伪造 X-Forwarded-For 绕过登录限流/风控（审计修复）
-        $remote = (string)_SERVER('REMOTE_ADDR');
-        $trusted = array();
-        if (!empty($conf['cdn_trusted_ips'])) {
-            $raw = $conf['cdn_trusted_ips'];
-            $trusted = array_filter(array_map('trim', is_array($raw) ? $raw : explode(',', (string)$raw)));
+        return $remote;
+    }
+    // 仅当直连 IP 属于受信代理白名单（cdn_trusted_ips）时才采信转发头，
+    // 否则回退 REMOTE_ADDR，防伪造转发头绕过登录限流/风控
+    $trusted = array();
+    if (!empty($conf['cdn_trusted_ips'])) {
+        $raw = $conf['cdn_trusted_ips'];
+        $trusted = array_filter(array_map('trim', is_array($raw) ? $raw : explode(',', (string)$raw)));
+    }
+    if (empty($trusted) || !in_array($remote, $trusted, TRUE)) {
+        return $remote;
+    }
+    // 若站长显式指定了反代覆盖的单头（如 HTTP_CF_CONNECTING_IP / HTTP_X_REAL_IP / HTTP_CDN_SRC_IP），优先取之
+    $explicitHeader = !empty($conf['cdn_ip_header']) && is_string($conf['cdn_ip_header'])
+        ? strtoupper(trim($conf['cdn_ip_header'])) : '';
+    if ($explicitHeader !== '') {
+        if (!str_starts_with($explicitHeader, 'HTTP_')) {
+            $explicitHeader = 'HTTP_' . str_replace('-', '_', $explicitHeader);
         }
-        if (empty($trusted) || !in_array($remote, $trusted, TRUE)) {
-            $ip = $remote;
-        } elseif (isset($_SERVER['HTTP_CDN_SRC_IP'])) {
-            $ip = $_SERVER['HTTP_CDN_SRC_IP'];
-        } elseif (isset($_SERVER['HTTP_CLIENTIP'])) {
-            $ip = $_SERVER['HTTP_CLIENTIP'];
-        } elseif (isset($_SERVER['HTTP_CLIENT_IP'])) {
-            $ip = $_SERVER['HTTP_CLIENT_IP'];
-        } elseif (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
-            $arr = array_filter(explode(',', $ip));
-            $ip = trim(reset($arr));
-        } else {
-            $ip = _SERVER('REMOTE_ADDR');
+        $cand = trim((string)($_SERVER[$explicitHeader] ?? ''));
+        if ($cand !== '' && false !== filter_var($cand, FILTER_VALIDATE_IP)) {
+            return $cand;
         }
     }
-    return $ip;
+    // 默认仅采信 X-Forwarded-For，并从右向左跳过 cdn_trusted_ips 取首个非受信代理的合法 IP，
+    // 不再无条件信任易被普通反代透传的客户端伪造头（CDN-Src-IP / Client-IP）或 XFF 最左端。
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR']) && is_string($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $parts = array_reverse(array_map('trim', explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])));
+        foreach ($parts as $cand) {
+            if ($cand === '' || false === filter_var($cand, FILTER_VALIDATE_IP)) {
+                continue;
+            }
+            if (!in_array($cand, $trusted, TRUE)) {
+                return $cand;
+            }
+        }
+    }
+    return $remote;
 }
 /**
  * 把库里存的「IP 长整型」还原成可显示的 IP 串，IPv4 / IPv6 通吃（原注释「转IP格式，支持IPV4 IPV6」）。

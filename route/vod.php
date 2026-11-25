@@ -56,7 +56,7 @@ if ('' === $_vod_des) {
     'cate_name' => $cate['name'],
     'sitename' => $conf['sitename'],
 ], [
-    'url' => \App\Service\Front\SeoService::currentUrl(),
+    'url' => \App\Service\Front\SeoService::canonicalUrl((string)($video['url'] ?? '')),
     'image' => (strncasecmp((string)($video['pic'] ?? ''), 'http', 4) === 0 ? $video['pic'] : http_url_path() . ltrim((string)($video['pic'] ?? ''), '/')),
 ]);
 // JSON-LD：PHP 侧 json_encode 生成（多集 = TVSeries，否则 Movie；不输出无真实评分来源的 aggregateRating）

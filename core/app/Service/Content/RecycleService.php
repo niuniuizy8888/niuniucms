@@ -68,17 +68,17 @@ class RecycleService
      * 回收站列表（分页）
      * @param string $type 空=全部
      */
-    public static function list(string $type = '', int $page = 1, int $pagesize = 20): array
+    public static function list(string $type = '', int $page = 1, int $pagesize = 20, array $allowedTypes = array()): array
     {
         $cond = array();
         if ('' !== $type) {
+            if (!empty($allowedTypes) && !in_array($type, $allowedTypes, true)) {
+                return array();
+            }
             $cond['type'] = $type;
+        } elseif (!empty($allowedTypes)) {
+            $cond['type'] = count($allowedTypes) === 1 ? reset($allowedTypes) : array_values($allowedTypes);
         }
-        // SQL 专项审计修复（R10）：列表排除 data(text)（回收站快照可达数十 KB/行）
-        // ⚠ `find()` 第 5 参 $key 的语义：'' = 返回**顺序数组**（调用方按 $rows[0] 取值，
-        // 是本方法的既有对外契约）；传列名 = 返回**以该列为键的关联数组**。
-        // 故此处 $key 必须保持 ''，显式列只能走第 6 参——首版误把 'id' 放到第 5 参，
-        // 使返回结构由顺序数组变为 id 键关联数组，调用方 $rows[0]['id'] 直接取空。
         return self::repo()->find($cond, array('id' => -1), $page, $pagesize, '', array('id', 'type', 'target_id', 'uid', 'create_date'));
     }
 
@@ -108,11 +108,16 @@ class RecycleService
      * @param string $type ''=全部类型；'art'/'vod'=按类型过滤
      * @return int 匹配行数（查询失败同为 0，无法区分空表/库错）
      */
-    public static function count(string $type = ''): int
+    public static function count(string $type = '', array $allowedTypes = array()): int
     {
         $cond = array();
         if ('' !== $type) {
+            if (!empty($allowedTypes) && !in_array($type, $allowedTypes, true)) {
+                return 0;
+            }
             $cond['type'] = $type;
+        } elseif (!empty($allowedTypes)) {
+            $cond['type'] = count($allowedTypes) === 1 ? reset($allowedTypes) : array_values($allowedTypes);
         }
         return self::repo()->count($cond);
     }
@@ -188,9 +193,9 @@ class RecycleService
         if (\App\Repository\RepositoryFactory::art()->findOne(array('aid' => $aid))) {
             return false;
         }
-        // 重建主行（保持原 aid）与 art_aid 关联
-        // 重建主行（保持原 aid）与 art_aid 关联——insert($row) 直接按快照原 aid 落行
-        $ok = (bool)\App\Repository\RepositoryFactory::art()->insert($row);
+        // 重建主行（保持原 aid）与 art_aid 关联：MySQL 显式插入主键时 lastInsertId()=0，必须用 false !== 判成功
+        $res = \App\Repository\RepositoryFactory::art()->insert($row);
+        $ok = (false !== $res);
         if ($ok) {
             \App\Repository\RepositoryFactory::artAid()->replace(array('aid' => $aid, 'cid' => intval($row['cid'] ?? 0)));
             // 重建文章专用绑定及共享标签计数，不改动同号视频的标签。
@@ -252,10 +257,21 @@ class RecycleService
         if (\App\Repository\RepositoryFactory::vod()->findOne(array('vid' => $vid))) {
             return false;
         }
-        // 重建主行（保持原 vid）与 vod_vid 关联——insert($row) 直接按快照原 vid 落行
-        $ok = (bool)\App\Repository\RepositoryFactory::vod()->insert($row); \App\Service\Front\TypeService::bumpFacets();
+        // 重建主行（保持原 vid）与 vod_vid 关联：MySQL 显式主键插入 lastInsertId()=0，用 false !== 判成功
+        $res = \App\Repository\RepositoryFactory::vod()->insert($row);
+        $ok = (false !== $res);
         if ($ok) {
+            \App\Service\Front\TypeService::bumpFacets();
             \App\Repository\RepositoryFactory::vodVid()->replace(array('vid' => $vid, 'cid' => intval($row['cid'] ?? 0)));
+            if (intval($row['sticky'] ?? 0) > 0) {
+                \App\Repository\RepositoryFactory::stickyVod()->replace(array(
+                    'cid' => intval($row['cid'] ?? 0),
+                    'vid' => $vid,
+                    'sticky' => intval($row['sticky']),
+                    'create_date' => intval($row['create_date'] ?? time()),
+                ));
+                cache_set('sticky_video_ver', time(), 86400);
+            }
             // 重建视频绑定，再按视频和文章索引重算共享标签计数。
             self::rebindTags($vid, (string)($row['tag'] ?? ''));
             content_cache_delete('vod_', $vid);

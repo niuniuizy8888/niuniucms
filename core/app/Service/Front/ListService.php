@@ -58,6 +58,15 @@ class ListService
     protected static function buildArt($cid, $page, $hit, $pagesize, $cate, $conf, $route_list, $sonlist, $cup)
     {
         $extra = array();
+        $visible = \App\Service\Content\ContentVisibilityService::categoryIds();
+        if (!in_array((int)$cid, $visible, true)) {
+            $page_url = self::listPageUrl($route_list, $cid, $cate, $extra, $conf, $hit);
+            return array(
+                'found' => true, 'type' => 'art', 'cid' => $cid, 'cate' => $cate,
+                'num' => 0, 'page' => 1, 'pagesize' => $pagesize, 'page_url' => $page_url,
+                'items' => array(), 'extra' => array('adlist' => array(), 'sonlist' => $sonlist, 'cup' => $cup),
+            );
+        }
         $allow_hits = array('hits', 'hits_day', 'hits_week', 'hits_month');
         if ($hit && in_array($hit, $allow_hits, true)) {
             $page_url = self::listPageUrl($route_list, $cid, $cate, $extra, $conf, $hit);
@@ -113,6 +122,30 @@ class ListService
         $allow_hits = array('hits', 'hits_day', 'hits_week', 'hits_month');
         $req_area = $req_year = $req_lang = '';
         $type_urls = \App\Service\Front\TypeService::typeUrls($cid, $conf, $areaarray, $yeararray, $langarray, $req_area, $req_lang, $req_year);
+        $visible = \App\Service\Content\ContentVisibilityService::categoryIds();
+        if (!in_array((int)$cid, $visible, true)) {
+            $page_url = self::listPageUrl($route_list, $cid, $cate, $extra, $conf, $hit);
+            return array(
+                'found' => true,
+                'type' => 'vod',
+                'cid' => $cid,
+                'cate' => $cate,
+                'num' => 0,
+                'page' => 1,
+                'pagesize' => $pagesize,
+                'page_url' => $page_url,
+                'items' => array(),
+                'extra' => array(
+                    'adlist' => array(),
+                    'type_urls' => $type_urls,
+                    'sonlist' => $sonlist,
+                    'cup' => $cup,
+                    'req_area' => $req_area,
+                    'req_lang' => $req_lang,
+                    'req_year' => $req_year,
+                ),
+            );
+        }
         if ($hit && in_array($hit, $allow_hits, true)) {
             $page_url = self::listPageUrl($route_list, $cid, $cate, $extra, $conf, $hit);
             $ranked = \App\Service\Content\QueryService::rankVideoByHit($hit, $cid, $page, $pagesize);

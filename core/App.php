@@ -159,7 +159,7 @@ class App
             $args = array();
             foreach ($ctor->getParameters() as $param) {
                 $type = $param->getType();
-                if ($type && !$type->isBuiltin()) {
+                if ($type instanceof \ReflectionNamedType && !$type->isBuiltin()) {
                     $args[] = self::make($type->getName());
                     continue;
                 }

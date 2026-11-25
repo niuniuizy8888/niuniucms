@@ -52,6 +52,8 @@ switch ($action) {
             $arr = xn_json_decode((string)https_request($base . '/index.php?api=sources', '', '', 30, 0, 8 * 1048576, 'cloud'));
             $list = (is_array($arr) && isset($arr['data']['list']) && is_array($arr['data']['list'])) ? $arr['data']['list'] : array();
             $n = 0;
+            $existingApi = kv_get('api');
+            if (!is_array($existingApi)) $existingApi = (array)($conf['api'] ?? array());
             foreach ($list as $s) {
                 $code = preg_replace('#[^A-Za-z0-9_-]#', '', (string)($s['code'] ?? ''));
                 // ：apiinfo 全字段契约——api=采集地址（旧数据回退 url）、player=播放器解析地址
@@ -59,10 +61,13 @@ switch ($action) {
                 if ('' === $api) $api = trim((string)($s['url'] ?? ''));
                 $name = (string)($s['name'] ?? $code);
                 $play = trim((string)($s['player'] ?? ''));
-                if ('' === $code || '' === $api) continue;
+                if ('' === $code || '' === $api || isset($existingApi[$code])) continue;
                 $model = in_array($s['model'] ?? null, [0, 1, '0', '1'], true) ? (int)$s['model'] : null;
                 $r = \App\Service\Collection\ApiSourceService::set($code, $api, $name, $play, $model);
-                if (!empty($r['success'])) $n++;
+                if (!empty($r['success'])) {
+                    $existingApi[$code] = true;
+                    $n++;
+                }
             }
             admin_audit_log('api_import_sources', array('total' => count($list), 'imported' => $n));
             message(0, jump("商店资源站导入完成：{$n} 个", url('api-list', array(), TRUE), 2));

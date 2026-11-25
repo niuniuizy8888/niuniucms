@@ -35,11 +35,14 @@ class IndexService
         $videolist = $vidlist = NULL;
         $videos = 0;
         $cids = array();
+        $visibleMap = array_flip(\App\Service\Content\ContentVisibilityService::categoryIds());
         if ($cid_count != 0) {
             foreach ($catelist as $key => $val) {
+                $vcid = intval($val['cid'] ?? 0);
+                if (!isset($visibleMap[$vcid])) continue;
                 if (1 == $val['type'] && 1 == $val['nav_display'] && 0 == $val['category']) {
-                    $cids[] = $val['cid'];
-                    $videos += $val['videos'];
+                    $cids[] = $vcid;
+                    $videos += intval($val['videos'] ?? 0);
                 }
             }
         }

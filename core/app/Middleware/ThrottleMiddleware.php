@@ -94,14 +94,29 @@ class ThrottleMiddleware implements MiddlewareInterface
      */
     public function process($request, RequestHandlerInterface $handler)
     {
-        // 限流未启用，直接放行
-        if (!$this->config['enable']) {
+        // 限流未启用或 CLI 脚本执行，直接放行
+        if (!$this->config['enable'] || PHP_SAPI === 'cli') {
             return $handler->handle($request);
         }
         
-        // 静态文件在 Web 服务器或入口静态服务层结束；抵达此处的请求一律按动态请求处理。
-        // REQUEST_URI 可由重写规则改变，不能用 admin/api 路径段或图片后缀豁免。
+        // 仅对已认证的后台管理员会话豁免前台限流；未登录请求访问 admin.php 仍走 IP 黑名单与基础 IP 限流，
+        // 防止攻击者高频无 Cookie GET /admin.php 刷爆会话表或擦除审计日志。
         if ($this->isAdminEntry()) {
+            $conf = _SERVER('conf') ?: [];
+            $cookiePre = (string)($conf['cookie_pre'] ?? '');
+            $hasAdminAuth = !empty($_COOKIE[$cookiePre . 'admin_token']) && 1 === intval(_SESSION('admin_ok'));
+            if ($hasAdminAuth) {
+                return $handler->handle($request);
+            }
+            $adminIp = $this->getClientIp();
+            if ($this->config['verify_blacklist'] && $this->inBlacklist($adminIp)) {
+                return $this->restrictAccess(0, $adminIp, 'admin_anon', time());
+            }
+            $adminIpLimit = max(30, (int)($this->config['ip_limit'] ?? 60));
+            $adminIpWindow = max(10, (int)($this->config['ip_window'] ?? 60));
+            if ($this->isOverLimit('throttle:adminip:' . $adminIp, $adminIpLimit, $adminIpWindow)) {
+                return $this->restrictAccess(5, $adminIp, 'admin_anon', time());
+            }
             return $handler->handle($request);
         }
 
@@ -315,27 +330,48 @@ class ThrottleMiddleware implements MiddlewareInterface
      */
     private function verifyBotDns(string $bot, string $ip): bool
     {
-        $host = gethostbyaddr($ip);
-        if ($host === $ip) return false; // 反查失败
-        
-        // 检查域名是否匹配
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) return false;
+        $host = @gethostbyaddr($ip);
+        if (!is_string($host) || $host === '' || $host === $ip) return false;
+        $host = strtolower(rtrim($host, '.'));
         $domains = [
-            'Googlebot' => 'googlebot.com',
-            'Baiduspider' => 'baidu.com',
-            'bingbot' => 'bing.com',
+            'googlebot'   => ['googlebot.com', 'google.com'],
+            'baiduspider' => ['baidu.com', 'baidu.jp'],
+            'bingbot'     => ['search.msn.com', 'bing.com'],
+            'yandexbot'   => ['yandex.ru', 'yandex.net', 'yandex.com'],
+            'sogou'       => ['sogou.com'],
+            '360spider'   => ['so.com', '360.cn'],
+            'duckduckbot' => ['duckduckgo.com'],
         ];
-        
-        $expected = $domains[$bot] ?? '';
-        if (empty($expected)) return true; // 未知爬虫不验证
-        
-        return substr($host, -strlen($expected)) === $expected;
+        $allowed = $domains[strtolower($bot)] ?? [];
+        if (empty($allowed)) return false; // 未登记反查域的爬虫 fail-closed
+        $matched = false;
+        foreach ($allowed as $expected) {
+            if ($host === $expected || str_ends_with($host, '.' . $expected)) {
+                $matched = true;
+                break;
+            }
+        }
+        if (!$matched) return false;
+        // 正向 DNS 复验（FCrDNS）：解析到的 A/AAAA 记录必须包含原请求 IP，防止伪造 PTR 记录
+        $forwardIps = function_exists('outbound_host_ips') ? outbound_host_ips($host) : @gethostbynamel($host);
+        if (!is_array($forwardIps) || empty($forwardIps)) return false;
+        $ipBin = @inet_pton($ip);
+        foreach ($forwardIps as $fip) {
+            $fBin = @inet_pton((string)$fip);
+            if ($ipBin !== false && $fBin !== false && $ipBin === $fBin) {
+                return true;
+            }
+        }
+        return false;
     }
     
     /**
-     * 检查是否为内网 IP
+     * 检查是否为内网 IP（非法 IP 串绝不误判为内网）
      */
     private function isPrivateIp(string $ip): bool
     {
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) return false;
         return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
     }
     

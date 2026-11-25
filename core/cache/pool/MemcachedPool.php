@@ -89,17 +89,12 @@ class MemcachedPool
     {
         try {
             $mem = new Memcached($this->persistentId);
-            // 上线前安全审计加固（反序列化面）：显式 JSON 序列化。
-            // php-memcached 默认 SERIALIZER_PHP 在读取时经扩展层 unserialize，
-            // 不施加 allowed_classes=false——缓存值若被投毒可触发对象注入（__wakeup/__destruct）。
-            // JSON 序列化彻底消除对象实例化面（切换后旧 PHP 序列化值按未命中处理，缓存层天然容错）。
-            // ⚠ 编译期能力判定（审查修复）：本机 php-memcached 3.4.0 **未编译 JSON 序列化器**
-            //   （SERIALIZER_JSON 常量在、HAVE_JSON_SERIALIZER 未定义，setOption 被拒并回落
-            //   SERIALIZER_PHP，且每次建连刷一条 Warning）——旧实现只判常量存在 ⇒ 硬化静默失效。
-            //   现按 HAVE_JSON_SERIALIZER 判定；不支持时如实退 SERIALIZER_PHP（本机现状）。
+            // 优先使用 SERIALIZER_JSON_ARRAY（保持关联数组，避免 SERIALIZER_JSON 把数组还原成 stdClass，
+            // 同时彻底消除 php-memcached 扩展层无 allowed_classes 限制的 PHP 反序列化面）。
+            // MemcachedDriver 也会在 PHP 侧对非整数值显式 serialize + allowed_classes=false 反序列化。
             if (defined('Memcached::HAVE_JSON_SERIALIZER') && constant('Memcached::HAVE_JSON_SERIALIZER')
-                && defined('Memcached::SERIALIZER_JSON')) {
-                $mem->setOption(Memcached::OPT_SERIALIZER, Memcached::SERIALIZER_JSON);
+                && defined('Memcached::SERIALIZER_JSON_ARRAY')) {
+                $mem->setOption(Memcached::OPT_SERIALIZER, Memcached::SERIALIZER_JSON_ARRAY);
             }
             // 检查是否已添加过服务器（持久连接可能已存在）
             $existing = $mem->getServerList();

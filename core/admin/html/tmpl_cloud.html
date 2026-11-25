@@ -19,14 +19,21 @@
                                 <h5 class="fw-bold mt-1"><?php echo xn_h($value['name']); ?></h5>
                             </div>
                             <div class="card-footer">
-                                <?php if (!is_dir(APP_PATH.'template/'.$value['path'])) { ?>
-                                <a data-href="<?php echo url('tmpl-down', array('dir'=>$value['path'],'downurl'=>$value['downurl']), TRUE);?>" href="javascript:void(0);" class="btn btn-primary w-100 down"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>立即下载</a>
+                                <?php
+                                    $_tplPath = (string)($value['path'] ?? '');
+                                    $_tplPathOk = (1 === preg_match('#^[A-Za-z0-9_-]{1,64}$#', $_tplPath));
+                                    $_tplInstalled = ($_tplPathOk && isset($tmpllist[$_tplPath]['installed'])) ? intval($tmpllist[$_tplPath]['installed']) : 0;
+                                ?>
+                                <?php if (!$_tplPathOk) { ?>
+                                <span class="text-muted small">模板路径无效</span>
+                                <?php } elseif (!is_dir(APP_PATH.'template/'.$_tplPath)) { ?>
+                                <a data-href="<?php echo xn_h(url('tmpl-down', array('dir'=>$_tplPath,'downurl'=>$value['downurl'] ?? ''), TRUE));?>" href="javascript:void(0);" class="btn btn-primary w-100 down"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>立即下载</a>
                                 <?php } else { ?>
-                                    <?php if(0==$tmpllist[$value['path']]['installed']) { ?>
-                                    <a data-href="<?php echo url('tmpl-post', array('dir'=>$value['path'],'type'=>1), TRUE);?>" href="javascript:void(0);" class="btn btn-info w-100 install">安装</a>
+                                    <?php if(0==$_tplInstalled) { ?>
+                                    <a data-href="<?php echo xn_h(url('tmpl-post', array('dir'=>$_tplPath,'type'=>1), TRUE));?>" href="javascript:void(0);" class="btn btn-info w-100 install">安装</a>
                                     <?php } ?>
-                                    <?php if(1==$tmpllist[$value['path']]['installed']) { ?>
-                                    <a data-href="<?php echo url('tmpl-post', array('dir'=>$value['path'],'type'=>2), TRUE);?>" href="javascript:void(0);" class="btn btn-danger w-100 uninstall">卸载</a>
+                                    <?php if(1==$_tplInstalled) { ?>
+                                    <a data-href="<?php echo xn_h(url('tmpl-post', array('dir'=>$_tplPath,'type'=>2), TRUE));?>" href="javascript:void(0);" class="btn btn-danger w-100 uninstall">卸载</a>
                                     <?php } ?>
                                 <?php } ?>
                             </div>

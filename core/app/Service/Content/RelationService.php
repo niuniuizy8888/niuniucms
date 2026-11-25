@@ -19,21 +19,29 @@ class RelationService
     {
         $relKey = 'video_related_v3_' . intval($vid) . '_' . md5((string)($video['tag'] ?? ''))
             . '_' . (function_exists('page_cache_version') ? page_cache_version() : '0')
-            . '_' . ContentVisibilityService::fingerprint() . '_' . max(1, min(100, (int)$limit));
+            . '_' . ContentVisibilityService::fingerprint()
+            . '_r' . intval(_SERVER('conf')['url_rewrite_on'] ?? 0)
+            . '_' . max(1, min(100, (int)$limit));
         $cachedRelated = cache_get($relKey);
         if (is_array($cachedRelated)) return ContentVisibilityService::filter($cachedRelated);
         if (empty($video['tag']) && \App\Service\System\ArticleTagSchema::ready()) {
             $tags = $video['area'] . ',' . $video['lang'] . ',' . $video['year'] . ',' . $video['cate_name'];
-            $tag_json = \App\Service\Content\TagFlowService::post($vid, $cid, $tags);
-            if (xn_strlen($tag_json) >= 120) {
-                $s = xn_substr($tag_json, -1, NULL);
-                if ('}' != $s) {
-                    $len = mb_strripos($tag_json, ',', 0, 'UTF-8');
-                    $tag_json = $len ? xn_substr($tag_json, 0, $len) . '}' : '';
+            // 前台惰性补种标签及回写 vod.tag 均不得触发全站页缓存版本旋转（防读请求导致全站缓存击穿）
+            $tag_json = \App\Repository\DbTableRepository::withoutPageCacheBump(static function () use ($vid, $cid, $tags) {
+                $json = \App\Service\Content\TagFlowService::post($vid, $cid, $tags, false);
+                if (xn_strlen($json) >= 120) {
+                    $s = xn_substr($json, -1, NULL);
+                    if ('}' != $s) {
+                        $len = mb_strripos($json, ',', 0, 'UTF-8');
+                        $json = $len ? xn_substr($json, 0, $len) . '}' : '';
+                    }
                 }
-            }
+                if (!empty($json)) {
+                    VideoService::update($vid, array('tag' => $json));
+                }
+                return $json;
+            });
             if (!empty($tag_json)) {
-                VideoService::update($vid, array('tag' => $tag_json));
                 $video['tag'] = $tag_json;
                 $video['tag_fmt'] = xn_json_decode($tag_json);
                 !is_array($video['tag_fmt']) and $video['tag_fmt'] = array();
@@ -43,7 +51,7 @@ class RelationService
         $likelist = array();
         if (!empty($video['tag']) && !empty($video['tag_fmt']) && is_array($video['tag_fmt'])) {
             $tagids = array_keys($video['tag_fmt']);
-            $likelist = ArticleTagService::relatedVideos($tagids, (int)$limit);
+            $likelist = ArticleTagService::relatedVideos($tagids, (int)$limit, intval($vid));
         }
 
         $likelist = $likelist ?: array();

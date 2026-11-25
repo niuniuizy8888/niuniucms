@@ -90,7 +90,7 @@ class CollectionScheduleService
         $data = $article ? ApiExecutionService::fetchArtJson($cfg['api'], '', $page, (string)$hours)
             : ApiExecutionService::fetchVideoJson($cfg['api'], '', $page, (string)$hours);
         if (!isset($data['page']['pagecount'])) throw new \RuntimeException('获取来源内容失败：' . $code . '，第 ' . $page . ' 页');
-        $total = (int)$data['page']['pagecount'];
+        $total = min(max(0, (int)$data['page']['pagecount']), 5000);
         if ($page <= $total) {
             $lines = $article ? ApiExecutionService::importArtData($data, $code, true) : ApiExecutionService::importVideoData($data, $code);
             \App::fire('addon.hook.collect.page', array('code' => $code, 'page' => $page, 'lines' => count((array)$lines)));

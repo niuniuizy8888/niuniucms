@@ -50,7 +50,7 @@ class RouteMetaService
         // throttle：限流
         if (!empty($rules['throttle']) && 'POST' === $method) {
             $t = $rules['throttle'];
-            $key = (string)(_SERVER('longip') ?: '');
+            $key = (string)(_SERVER('ip') ?: (function_exists('ip') ? ip() : ''));
             if (!\App\Service\System\ThrottleService::check(
                 (string)($t['scene'] ?? 'route'),
                 $key,

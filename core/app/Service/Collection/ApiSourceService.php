@@ -49,6 +49,11 @@ class ApiSourceService
     public static function set(string $code, string $api, string $name, string $play, ?int $model = null): array
     {
         $conf = _SERVER('conf');
+        // 读取最新 KV 态，避免同请求循环批量导入（import_sources）读到过期快照互相覆盖
+        $kvApi = kv_get('api');
+        if (is_array($kvApi)) $conf['api'] = $kvApi;
+        $kvPlayer = kv_get('vodplayer');
+        if (is_array($kvPlayer)) $conf['vodplayer'] = $kvPlayer;
 
         // 上线前审计修复（H-A1）：code 字符集白名单（缓存键与 KV 键共用此值，
         // 历史表单仅 htmlspecialchars 未限字符集；缓存键前缀 api_cls_ 已在读侧隔离，此为写入侧纵深）。
@@ -93,6 +98,8 @@ class ApiSourceService
         
         kv_set('api', $conf['api'] ?? array());
         kv_set('vodplayer', $conf['vodplayer'] ?? array());
+        if (class_exists('\App')) \App::set('conf', $conf);
+        $GLOBALS['conf'] = $conf;
         
         admin_audit_log('api_source_set', ['code' => $code]);
         

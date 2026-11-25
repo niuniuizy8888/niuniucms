@@ -68,7 +68,10 @@ class AdManageService
 
         $name = filter_all_html(admin_param_text('name', '', 100));
         list($url, $img_url) = self::validatedUrls();
-        $area = filter_all_html(admin_param_text('area', '', 32));
+        $area = filter_all_html(admin_param_text('area', 'all', 32));
+        if (!array_key_exists($area, self::AREA_OPTIONS)) {
+            $area = 'all';
+        }
         $days = admin_param_int('days', 30, 0, 3650);
         $arr = array(
             'name' => $name,
@@ -99,12 +102,17 @@ class AdManageService
         $update = array();
         $name = admin_param_text('name', '', 100);
         list($url, $img_url) = self::validatedUrls(); // 列宽 255；图片允许本地 upload/ 相对路径
-        $area = admin_param_text('area', '', 32);
+        $area = filter_all_html(admin_param_text('area', '', 32));
         $days = param('days', '');
         $name !== '' and $update['name'] = filter_all_html($name);
         $url !== '' and $update['url'] = $url;
         $img_url !== '' and $update['img_url'] = $img_url;
-        $area !== '' and $update['area'] = filter_all_html($area);
+        if ($area !== '') {
+            if (!array_key_exists($area, self::AREA_OPTIONS)) {
+                message('area', lang('parameter_error'));
+            }
+            $update['area'] = $area;
+        }
         $days !== '' and $update['end_time'] = intval($days) > 0 ? ($time + intval($days) * 86400) : 0;
         empty($update) and message(1, lang('data_is_empty'));
         FALSE === ad_update($id, $update) and message(-1, lang('update_failed'));

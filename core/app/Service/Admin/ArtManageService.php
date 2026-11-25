@@ -22,6 +22,7 @@ class ArtManageService
         $page = intval($filters['page'] ?? 1);
         $pagesize = intval($filters['pagesize'] ?? 20);
         $range = (string)($filters['range'] ?? '');
+        in_array($range, array('', 'today', '7d', '30d'), TRUE) or $range = '';
 
         $extra = array('page' => '{page}', 'cid' => $cid, 'pagesize' => $pagesize, 'range' => $range);
         $cond = array();
@@ -94,6 +95,7 @@ class ArtManageService
         $catelists = arrlist_cond_orderby($catelist, array('model' => 1), array(), 1, 200);
         $cid = intval($filters['cid'] ?? 0);
         $range = (string)($filters['range'] ?? '');
+        in_array($range, array('', 'today', '7d', '30d'), TRUE) or $range = '';
         $page = max(1, intval($filters['page'] ?? 1));
         $pagesize = intval($filters['pagesize'] ?? 20) ?: 20;
         $artlist = NULL;

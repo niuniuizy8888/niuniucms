@@ -11,14 +11,14 @@ class TagFlowService
      * @param string $str 逗号分隔的标签名原文
      * @return string 最终 tagid=>name 的 JSON 串，或空串
      */
-    public static function post($vid, $cid, $str)
+    public static function post($vid, $cid, $str, bool $bumpPageCache = true)
     {
         if (empty($str)) return '';
         $arr = explode(',', $str);
         $arr = array_filter($arr);
         if (empty($arr)) return '';
         $arr = array_unique($arr);
-        return self::process($vid, $cid, $arr);
+        return self::process($vid, $cid, $arr, array(), $bumpPageCache);
     }
 
     /**
@@ -80,7 +80,7 @@ class TagFlowService
      * @param array $tagarr 沿用的旧标签映射
      * @return string tagid=>name JSON；没有标签时为空串
      */
-    public static function process($vid, $cid, $new_tags = array(), $tagarr = array())
+    public static function process($vid, $cid, $new_tags = array(), $tagarr = array(), bool $bumpPageCache = true)
     {
         \App\Service\System\ArticleTagSchema::ensureReady();
         $conf = _SERVER('conf');
@@ -98,31 +98,42 @@ class TagFlowService
             foreach (self::videoFindByVidAll($vid) as $r) {   // 分页取尽（旧实现 pagesize=1000 上限，存量重复绑定超限时预过滤漏判）
                 $bound[intval($r['tagid'])] = true;
             }
-            $pending = array();
-            foreach ($new_tags as $name) {
-                ++$i;
-                $name = self::normalizeName($name);
-                if ($name && $i <= $n) {
-                    $read = tag_read_name($name);
-                    $reused = (bool) $read;
-                    if (! $read) {
-                        $arr = array('name' => $name, 'count' => 0);
-                        $tagid = tag_create($arr);
-                        FALSE === $tagid and message(-1, lang('create_failed'));
-                        $read = array('tagid' => $tagid, 'name' => $name);
+            $persist = static function () use ($new_tags, $n, $vid, $bound, &$tagarr, &$videoarr, &$tagids) {
+                $i = 0;
+                $pending = array();
+                foreach ($new_tags as $name) {
+                    ++$i;
+                    $name = self::normalizeName($name);
+                    if ($name && $i <= $n) {
+                        $read = tag_read_name($name);
+                        $reused = (bool) $read;
+                        if (! $read) {
+                            $arr = array('name' => $name, 'count' => 0);
+                            $tagid = tag_create($arr);
+                            if (FALSE === $tagid) {
+                                if (function_exists('xn_log')) xn_log('tag_create failed: ' . $name, 'error');
+                                continue;
+                            }
+                            $read = array('tagid' => $tagid, 'name' => $name);
+                        }
+                        $tid = intval($read['tagid']);
+                        if (! isset($bound[$tid]) && ! isset($pending[$tid])) {
+                            $pending[$tid] = true;
+                            $videoarr[] = array('tagid' => $tid, 'vid' => $vid);
+                            if ($reused) $tagids[] = $tid;
+                        }
+                        // JSON 列无条件收：即便绑定行早已存在，本视频的 tag 映射也应包含它。
+                        $tagarr[$tid] = $read['name'];
                     }
-                    $tid = intval($read['tagid']);
-                    if (! isset($bound[$tid]) && ! isset($pending[$tid])) {
-                        $pending[$tid] = true;
-                        $videoarr[] = array('tagid' => $tid, 'vid' => $vid);
-                        if ($reused) $tagids[] = $tid;
-                    }
-                    // JSON 列无条件收：即便绑定行早已存在，本视频的 tag 映射也应包含它。
-                    $tagarr[$tid] = $read['name'];
                 }
+                !empty($videoarr) and tag_video_big_insert($videoarr);
+            };
+            if ($bumpPageCache) {
+                $persist();
+            } else {
+                \App\Repository\DbTableRepository::withoutPageCacheBump($persist);
             }
-            !empty($videoarr) and tag_video_big_insert($videoarr);
-            ArticleTagService::recount(array_keys($tagarr));
+            ArticleTagService::recount(array_keys($tagarr), $bumpPageCache);
         }
         return empty($tagarr) ? '' : xn_json_encode($tagarr);
     }

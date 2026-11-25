@@ -2,6 +2,7 @@
 !defined('DEBUG') and exit('Access Denied.');
 
 // hook admin_ad_start.php
+FALSE === group_access($gid, 'managead') and message(-1, lang('user_group_insufficient_privilege')); // 先校验广告管理权限门禁，再检测表结构
 if (!db_find_table($db->tablepre . 'ad')) {
     // ad 表已集成进 core/install/install.sql（新装自带）。老库缺表时直接给出可执行 DDL，
     // 免去翻找已移除的归档升级脚本（原 .agent/archived/升级脚本_20260810/ad.php）。
@@ -18,7 +19,6 @@ if (!db_find_table($db->tablepre . 'ad')) {
         . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;'
         . '</code>');
 }
-FALSE === group_access($gid, 'managead') and message(-1, lang('user_group_insufficient_privilege')); // 广告管理权限门禁（上线前补齐）
 $action = param(1, 'list');
 if ('GET' == $method) {
     extract(\App\Service\Admin\AdManageService::listPage(intval($uid)), EXTR_SKIP); // S-4：防覆盖路由局部变量

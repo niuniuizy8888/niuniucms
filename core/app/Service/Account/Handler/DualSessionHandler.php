@@ -51,10 +51,14 @@ class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTime
                         if (isset($arr['uid'])) $_SESSION['uid'] = $arr['uid'];
                         if (isset($arr['cid'])) $_SESSION['cid'] = $arr['cid'];
                         $GLOBALS['g_session'] = $arr;
-                        return $arr['data'] ?? '';
+                        $raw = (string)($arr['data'] ?? '');
+                        \App\Service\Account\SessionService::$initialKeys = $raw !== '' ? array_keys(\App\Service\Account\SessionService::parseSessionData($raw)) : array();
+                        return $raw;
                     }
                 }
-            } catch (\Throwable $e) {}
+            } catch (\Throwable $e) {
+                \App\Service\Account\SessionService::markRedisFail();
+            }
         }
 
         // 2. MySQL 慢路径（登录 session）
@@ -72,12 +76,15 @@ class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTime
             $GLOBALS['g_session'] = $arr;
             if (isset($arr['uid'])) $_SESSION['uid'] = $arr['uid'];
             if (isset($arr['cid'])) $_SESSION['cid'] = $arr['cid'];
-            return $arr['data'] ?? '';
+            $raw = (string)($arr['data'] ?? '');
+            \App\Service\Account\SessionService::$initialKeys = $raw !== '' ? array_keys(\App\Service\Account\SessionService::parseSessionData($raw)) : array();
+            return $raw;
         }
 
         // 3. 全新 session：不调用 sess_new（避免预建 MySQL 记录），
         //    由 write() 首次写入时决定存储位置
         \App\Service\Account\SessionService::$loadedFrom = 'none'; // 服务端没有这份会话（分类器要用这个事实）
+        \App\Service\Account\SessionService::$initialKeys = array();
         $GLOBALS['g_session'] = [
             'sid'       => $id,
             'uid'       => 0,
@@ -104,8 +111,9 @@ class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTime
             $this->delRedis($id);
             $cid = (int)_SESSION('cid');
             unset($_SESSION['uid'], $_SESSION['cid']);
-            $data and $data = session_encode();
+            $data and $data = (session_status() === PHP_SESSION_ACTIVE) ? session_encode() : '';
             // 并发写覆盖竞态维护：键级合并（与 SessionService::write 同口径）
+            $cur = null;
             $curData = '';
             try {
                 $cur = session_read($id);
@@ -119,10 +127,16 @@ class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTime
             } catch (\Throwable $e) {
                 $curData = '';
             }
-            if ($data !== '') {
+            if ($data !== '' || $curData !== '') {
                 $parsedCur = \App\Service\Account\SessionService::parseSessionData($curData);
+                $parsedNew = $data !== '' ? \App\Service\Account\SessionService::parseSessionData($data) : array();
                 $merged = $parsedCur;
-                foreach (\App\Service\Account\SessionService::parseSessionData($data) as $k => $v) {
+                foreach (\App\Service\Account\SessionService::$initialKeys as $initKey) {
+                    if (!array_key_exists($initKey, $parsedNew)) {
+                        unset($merged[$initKey]);
+                    }
+                }
+                foreach ($parsedNew as $k => $v) {
                     $merged[$k] = $v;
                 }
                 $data = $merged === $parsedCur ? $curData : \App\Service\Account\SessionService::buildSessionData($merged);
@@ -164,15 +178,25 @@ class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTime
                 \App\Service\Account\SessionService::putData($id, $data, $time);
             } else {
                 \App\Service\Account\SessionService::putRow($id, $arr);
+                if (is_array($cur) && 1 == intval($cur['bigdata'] ?? 0)) {
+                    try { session_data_delete(['sid' => $id]); } catch (\Throwable $e) {}
+                }
             }
             $g_session = $arr;
         } else {
-            // 匿名 → 写入 Redis，清理 MySQL
-            $this->delMySQL($id);
+            // 匿名会话：仅在原会话确实从 MySQL 加载（例如登出退回匿名）时才删 MySQL，避免每次匿名访问打两条无谓 DELETE
+            if (\App\Service\Account\SessionService::$loadedFrom === 'mysql') {
+                $this->delMySQL($id);
+            }
             $cid = (int)_SESSION('cid');
             unset($_SESSION['uid'], $_SESSION['cid']);
-            $data and $data = session_encode();
+            $data and $data = (session_status() === PHP_SESSION_ACTIVE) ? session_encode() : '';
+            // 全新匿名纯浏览请求且无任何会话数据时不落 Redis/MySQL，防爬虫/压测写放大
+            if ('' === $data && 0 === $cid && \App\Service\Account\SessionService::$loadedFrom === 'none') {
+                return true;
+            }
             $redis = _sess_redis();
+            $redisSaved = false;
             if ($redis) {
                 $all = [
                     'uid'       => 0,
@@ -183,23 +207,22 @@ class DualSessionHandler implements \SessionHandlerInterface, \SessionUpdateTime
                     'url'       => _SERVER('REQUEST_URI') ?? '',
                     'useragent' => _SERVER('HTTP_USER_AGENT') ?? '',
                 ];
-                $redis->setex('sess_' . $id, $this->ttl, serialize($all));
-                $g_session = $all;
-            } elseif ('' !== $data) {
-                // ：Redis 不可用时原实现是「什么都不写」——本请求往 $_SESSION 里登记的
-                // bull_token 场景环就此蒸发，下一请求读不到 ⇒ 该标签页每次写操作都被判非法操作。
-                // 兜底落 MySQL（仅当本请求确有会话数据：纯浏览的匿名访客 $data 为空，照旧不落库，
-                // 与 SessionService::write() 的 QPS 防护同口径），并留痕提醒恢复 Redis。
-                \App\Service\Account\SessionService::putRow($id, [
-                    'uid'       => 0,
-                    'cid'       => $cid,
-                    'url'       => _SERVER('REQUEST_URI') ?? '',
-                    'last_date' => $time,
-                    'data'      => $data,
-                    'ip'        => $longip,
-                    'useragent' => _SERVER('HTTP_USER_AGENT') ?? '',
-                    'bigdata'   => 0,
-                ]);
+                try {
+                    if ($redis->setex('sess_' . $id, $this->ttl, serialize($all))) {
+                        $g_session = $all;
+                        $redisSaved = true;
+                    } else {
+                        \App\Service\Account\SessionService::markRedisFail();
+                    }
+                } catch (\Throwable $e) {
+                    \App\Service\Account\SessionService::markRedisFail();
+                }
+            }
+            if (!$redisSaved && '' !== $data) {
+                // Redis 不可用/写入失败时兜底走 SessionService::write()（含键级合并、bigdata>255 拆分及孤儿清理）
+                $_SESSION['uid'] = 0;
+                $_SESSION['cid'] = $cid;
+                \App\Service\Account\SessionService::write($id, true);
                 if (function_exists('xn_log')) xn_log('session_redis_unavailable_fallback_mysql sid=' . $id, 'session_write_error');
             }
         }

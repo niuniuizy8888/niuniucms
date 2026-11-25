@@ -3,16 +3,25 @@ $(function() {
     var jform = $('#form');
     jform.on('submit', function() {
         var jsubmit = jform.find('#submit');
-        jsubmit.button('loading');
         jform.reset();
+        jsubmit.button('loading');
         var postdata = jform.serializeObject();
         $.xpost(jform.attr('action'), postdata, function(code, message) {
             if(code == 0) {
                 jsubmit.button(message);
-                var referer = String(postdata.referer || '');
+                var referer = String(postdata.referer || '').trim();
+                var safeReferer = '';
+                if (referer && !/[\x00-\x1f\x7f]/.test(referer)) {
+                    try {
+                        var parsed = new URL(referer, window.location.origin);
+                        if (parsed.origin === window.location.origin && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) {
+                            safeReferer = parsed.href;
+                        }
+                    } catch (e) {}
+                }
                 setTimeout(function(){
-                    if (referer) {
-                        window.location.href = referer;
+                    if (safeReferer) {
+                        window.location.href = safeReferer;
                     } else {
                         window.location.reload();
                     }

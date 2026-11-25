@@ -32,7 +32,7 @@ if (!\App\Service\Content\CateService::accessUser(intval($pageCate['cid']), intv
     http_response_code(403);
     if ($json) message(-1, lang('forbidden'));
     $header['title'] = '无权限';
-    $message = '您无权访问此内容，请登录或升级会员';
+    $msg = $message = '您无权访问此内容，请登录或升级会员';
     include _file(view_load('message'));
     return;
 }
@@ -59,7 +59,7 @@ if (is_array($full) && !empty($full)) {
     'seo_key' => $cate['seo_key'] ?? '',
     'seo_des' => $cate['seo_des'] ?? '',
 ), array(), array(
-    'url' => \App\Service\Front\SeoService::currentUrl(),
+    'url' => \App\Service\Front\SeoService::canonicalUrl(!empty($cate['url']) ? (string)$cate['url'] : url('page-' . xn_urlencode((string)($cate['seo_des'] ?? '')))),
     'robots' => 'index,follow',
 ));
 if ($json) {

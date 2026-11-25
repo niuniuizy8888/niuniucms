@@ -160,25 +160,41 @@ class ApiImportService
             $bound = count($bindings['ids']);
             return ['bound'=>$bound, 'skipped'=>count($saved)-$bound];
         }
-        // 修复：统一走 cloudPayload()（商店不加密 / legacy 解密自适应）
         $_codes = \App\Service\System\CloudOpsService::cloudPayload();
         $arrlist = $_codes['api'] ?? array();
-        $api = isset($arrlist[$code]['api']) ? $arrlist[$code]['api'] : '';
-        $_code = isset($arrlist[$code]['code']) ? $arrlist[$code]['code'] : '';
-        $name = isset($arrlist[$code]['name']) ? $arrlist[$code]['name'] : '';
-        $play = isset($arrlist[$code]['player']) ? $arrlist[$code]['player'] : '';
-        $arr = $conf['api'];
+        if (empty($arrlist[$code]) || empty($arrlist[$code]['api'])) {
+            message(-1, "未在商店清单中找到可用采集源：{$code}");
+        }
+        $api = (string)$arrlist[$code]['api'];
+        $_code = isset($arrlist[$code]['code']) && '' !== (string)$arrlist[$code]['code'] ? (string)$arrlist[$code]['code'] : $code;
+        $name = isset($arrlist[$code]['name']) && '' !== (string)$arrlist[$code]['name'] ? (string)$arrlist[$code]['name'] : $code;
+        $play = isset($arrlist[$code]['player']) ? (string)$arrlist[$code]['player'] : '';
+        // 先验证分类数据可获取，再写入 kv('api')/kv('vodplayer')，避免失败路径污染 KV
+        $apiarr = array();
+        foreach (array('fast_type', 'fast_down') as $_fk) {
+            if (empty($arrlist[$code][$_fk])) continue;
+            $_fu = \App\Service\System\CloudOpsService::storeUrl((string)$arrlist[$code][$_fk]);
+            if ('' === $_fu) continue;
+            $_fcls = xn_json_decode(http_get($_fu, '', 30, 3, 'cloud'));
+            if (!empty($_fcls['class']) && is_array($_fcls['class'])) {
+                $apiarr = $_fcls['class'];
+                break;
+            }
+        }
+        if (empty($apiarr)) {
+            $apiarr = \App\Service\Collection\ApiExecutionService::sourceClassList($code, $api);
+        }
+        if (empty($apiarr)) {
+            message(-1, "未取到 {$code} 的分类数据（商店未配置 fast_type/fast_down，且源站 api 未返回 class）——请在商店侧补齐快速通道，或改用「采集」");
+        }
+        $arr = $conf['api'] ?? array();
         $arr[$code] = array(
             'api' => $api,
             'code' => $_code,
             'model' => 0,
         );
         $conf['api'] = $arr;
-        $vodplayer = $conf['vodplayer'];
-        // 站内播放器保护闸：本函数会用采集接口自带的解析地址整条覆写本线路的播放器条目。
-        // 站长若已把该线路改成站内本地播放器（parse 留空）或站内播放页（/ 开头路径），
-        // 下一次「导入分类」就会把它悄悄写回第三方解析站——症状是「播放器设置没动过却又外链了」。
-        // 因此：仅当现有条目是第三方完整地址（或本线路还没有条目）时才接受接口下发的解析地址。
+        $vodplayer = $conf['vodplayer'] ?? array();
         $parse = $play;
         $tip = '无需安装任何插件';
         if (isset($vodplayer[$code]['parse'])) {
@@ -203,29 +219,6 @@ class ApiImportService
         $conf['vodplayer'] = $vodplayer;
         kv_set('api', $conf['api']);
         kv_set('vodplayer', $conf['vodplayer']);
-        // 修复：分类来源三级回落，取不到就**明确报错**——旧实现拿可能为空的 `fast_type`
-        // 直接 http_get('')，静默建 0 个分类，却在 prepare() 里回「分类已导入，准备开始第1页数据入库」。
-        //   ① `fast_type`：商店 fast DB 的分类端点（带 type_pid/type_mid，可建父子树）
-        //   ② `fast_down`：同源 fast DB 数据端点（class 同形状）
-        //   ③ 普通 `api` 接口补 `ac=list`（新商店 api_sources.fast_* 实测 12/12 为空、且商店无
-        //      /fast/<code>.json ⇒ 没有这条回落就永远建不出分类）
-        $apiarr = array();
-        foreach (array('fast_type', 'fast_down') as $_fk) {
-            if (empty($arrlist[$code][$_fk])) continue;
-            $_fu = \App\Service\System\CloudOpsService::storeUrl((string)$arrlist[$code][$_fk]);
-            if ('' === $_fu) continue;
-            $_fcls = xn_json_decode(http_get($_fu, '', 30, 3, 'cloud'));
-            if (!empty($_fcls['class']) && is_array($_fcls['class'])) {
-                $apiarr = $_fcls['class'];
-                break;
-            }
-        }
-        if (empty($apiarr)) {
-            $apiarr = \App\Service\Collection\ApiExecutionService::sourceClassList($code, $api);
-        }
-        if (empty($apiarr)) {
-            message(-1, "未取到 {$code} 的分类数据（商店未配置 fast_type/fast_down，且源站 api 未返回 class）——请在商店侧补齐快速通道，或改用「采集」");
-        }
         $res2arr = $apiarr;
         $r = arrlist_chunk($res2arr, 'type_pid');
         $typearr = array(

@@ -68,7 +68,7 @@ server {
     # 【2026-10-08】原清单里的 .agent 目录已废弃删除，内容归口到 .skills/，故条目改用 .skills。
     # 【2026-09-02】补 .domian（应用商店接口目录，实际目录名带点；未配 mall_api_token
     # 时虽 fail-closed，仍不建议暴露）。
-    location ~* ^/(config|core|data|tools|lang|model|route|runtime|deploy|dev|install|tests|task|\.skills|\.domian|\.git|\.svn)(/|$) {
+    location ~* ^/(config|core|data|tools|docker|lang|model|route|runtime|deploy|dev|install|tests|task|\.skills|\.domian|\.git|\.svn)(/|$) {
         deny all;
     }
     # 【2026-10-10 文档整合轮实测】**本段不是可选项，是目录级必需项**：
@@ -82,11 +82,15 @@ server {
     location ~* ^/template/[^/]+/html/ {
         deny all;
     }
+    # 禁止可写目录（template/plugins/runtime）直接执行任何 PHP 文件（含 pathinfo）
+    location ~* ^/(template|plugins|runtime)/.*\.php(/|$) {
+        deny all;
+    }
     # 【2026-09-03 插件系统改造】plugins/（W0 由 addons/ 改名）下 PHP 禁止直访：hook/*.php / setting.php /
     # install.php / bootstrap.php 等仅允许经编译管线（_include）或后台入口执行；作者漏写 `<?php exit;` 头的
     # hook 文件此前可被 URL 直接触发。插件静态资源（icon.png 等）不受影响。
     # 必须位于 PHP-FPM location 之前（正则 location 先到先得）。
-    location ~* ^/plugins/.+\.(php|phtml|phar)$ {
+    location ~* ^/plugins/.+\.(php\d*|phtml|phar|pht|phps)$ {
         deny all;
     }
     # 【复核批次 R29 实测缺口】插件「服务端模板源」保护：plugins/<插件>/template/*.html 只经服务端
@@ -96,10 +100,15 @@ server {
     location ~* ^/plugins/[^/]+/template/ {
         deny all;
     }
-    # 上传目录禁止执行 PHP
+    # 上传目录禁止执行 PHP、禁止点文件与备份下载，并保留 SVG script-src 'none' CSP 防存储型 XSS
     location ^~ /upload/ {
         autoindex off;
-        location ~ \.(php|phtml|phar)$ { deny all; }
+        location ~ /\. { deny all; }
+        location ~* \.(php\d*|phtml|phar|pht|phps|bak|sql|log|env|sh|py|pl|cgi)$ { deny all; }
+        location ~* \.svgz?$ {
+            add_header X-Content-Type-Options nosniff always;
+            add_header Content-Security-Policy "script-src 'none'" always;
+        }
     }
     # 【2026-08-29】隐藏文件/目录一律 404（.git .svn .ht* .env .user.ini 等）
     location ~ /\. {
@@ -285,8 +294,9 @@ server {
 # 【2026-10-07】以下两条已在主 server 块内落地（见上）。2026-10-10 审计 S-8：解除注释，
 #               使本片段可直接复制到其他 vhost（location 指令只能放 server/location 上下文，
 #               勿整份 include 本文件）。php 直访与 pathinfo 封禁属红线 §7 三层防线之一，必须生效。
-location ~* ^/(template|plugins|runtime)/.*\.php(/|$) { deny all; }
-location ~* \.php/.+ { deny all; }   # 任何 pathinfo 形态一律拒（本站零 PATH_INFO 用法）
+# （以下两条规则已内置到上方主 server {} 块中；复制给其它 vhost 时取消注释并放进 server {} 内）
+# location ~* ^/(template|plugins|runtime)/.*\.php(/|$) { deny all; }
+# location ~* \.php/.+ { deny all; }   # 任何 pathinfo 形态一律拒（本站零 PATH_INFO 用法）
 # location ~* \.svg$ {
 #     add_header X-Content-Type-Options nosniff always;
 #     add_header Content-Security-Policy "script-src 'none'" always;

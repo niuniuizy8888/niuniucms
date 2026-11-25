@@ -129,8 +129,9 @@ class AdminIndexService
         admin_audit_log('logout');
         admin_token_clean();
         user_token_clear();
-        // 与前台登出对称：清除会话 uid 并轮换会话 id
+        // 与前台登出对称：清除会话 uid/admin_ok 并轮换会话 id
         $_SESSION['uid'] = 0;
+        $_SESSION['admin_ok'] = 0;
         unset($_SESSION['admin_ok']);
         session_regenerate_id(true);
         return array(

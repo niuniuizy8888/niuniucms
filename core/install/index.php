@@ -22,10 +22,11 @@ require_once APP_PATH . 'core/paths.php'; // U-2
 // 旧版 1.0.x 站点标记（根目录 config/config.php、install.lock、install/index.php）：存在即视为「已安装、待升级」，
 // 安装向导一律拒绝（防止先覆盖新版程序包、尚未运行 upgrade.php 的窗口期被他人重装接管）。
 define('NNCMS_LEGACY_MARK', is_file(APP_PATH . 'config/config.php') ? 'config/config.php' : (is_file(APP_PATH . 'install.lock') ? 'install.lock' : (is_file(APP_PATH . 'install/index.php') ? 'install/index.php' : '')));
-// 安装锁：新位置 core/config/install.lock（core/ 可只读），旧位置 core/install.lock 仍视为已安装（第 2 轮 U-2）
+// 安装锁：新位置 data/install.lock（回退 core/config/install.lock / core/install.lock）
 define('NNCMS_INSTALL_LOCK', nncms_runtime_path('install.lock'));
 define('NNCMS_INSTALL_LOCK_LEGACY', APP_PATH . 'core/install.lock');
-define('DEBUG', (is_file(NNCMS_INSTALL_LOCK) || is_file(NNCMS_INSTALL_LOCK_LEGACY) || is_file(APP_PATH . 'core/config/config.php') || '' !== NNCMS_LEGACY_MARK) ? 0 : 2);
+define('NNCMS_INSTALL_CFG_EXISTS', is_file(nncms_runtime_path('config.php')) || is_file(APP_PATH . 'data/config.php') || is_file(APP_PATH . 'core/config/config.php'));
+define('DEBUG', (is_file(NNCMS_INSTALL_LOCK) || is_file(NNCMS_INSTALL_LOCK_LEGACY) || NNCMS_INSTALL_CFG_EXISTS || '' !== NNCMS_LEGACY_MARK) ? 0 : 2);
 define('MESSAGE_HTM_PATH', INSTALL_PATH . 'html/message.html');
 $conf = (include APP_PATH . 'core/config/config.default.php');
 // 安装向导阶段 config.php 尚未生成，出厂 auth_key 为空 ⇒ core.php 会走 xn_auth_key_fallback()：
@@ -43,7 +44,7 @@ include APP_PATH . 'core/model/user.php';
 $lang=include APP_PATH . 'core/lang/zh_cn.php';
 $_SERVER['lang'] = $lang;
 (is_file(NNCMS_INSTALL_LOCK) || is_file(NNCMS_INSTALL_LOCK_LEGACY)) AND message(0, jump($lang['already_installed'], '../'));
-is_file(APP_PATH . 'core/config/config.php') AND message(0, jump($lang['installed_tips'], '../'));
+NNCMS_INSTALL_CFG_EXISTS AND message(0, jump($lang['installed_tips'], '../'));
 if ('' !== NNCMS_LEGACY_MARK) {
     http_response_code(403);
     message(-1, '检测到旧版牛牛CMS 的数据（' . NNCMS_LEGACY_MARK . '），这是一个待升级的站点，安装向导已禁用。请上传并运行 upgrade.php 完成升级；如确实要全新安装，请先删除旧版的 config/、install/ 目录与根目录 install.lock。');
@@ -83,28 +84,50 @@ if (empty($action)) {
     } else {
         $type = 'pdo_mysql';
         $engine = param('engine');
-        $host = param('host');
+        $host = trim((string)param('host', '', FALSE));
         $name = param('name');
-        $user = param('user');
-        $password = param('password');
+        $user = trim((string)param('user', '', FALSE));
+        $password = (string)param('password', '', FALSE);
         $tablepre = param('tablepre');
         $force = param('force');
         $adminemail = param('adminemail');
         $adminuser = param('adminuser');
+        $adminpassRaw = (string)param('adminpass', '', FALSE);
         $adminpass = param('adminpass');
         $adminpassrepeat = param('adminpassrepeat');
         empty($host) AND message('host', lang('dbhost_is_empty'));
         empty($name) AND message('name', lang('dbname_is_empty'));
         empty($user) AND message('user', lang('dbuser_is_empty'));
-        empty($adminpass) AND message('adminpass', lang('adminuser_is_empty'));
+        empty($adminpassRaw) AND message('adminpass', lang('adminuser_is_empty'));
         $adminpassrepeat != $adminpass and message('adminpassrepeat', lang('password_incorrect'));
         empty($adminemail) AND message('adminemail', lang('adminpass_is_empty'));
-        // 管理员用户名/密码强度校验（新增）
+        // 主机格式白名单（支持域名、IPv4、[IPv6] 及可选 :port），阻断 PDO DSN 分号参数注入
+        if (!preg_match('/^(?:[A-Za-z0-9.-]{1,253}|\[[0-9a-fA-F:]+\])(?::[0-9]{1,5})?$/D', $host)) {
+            message('host', '数据库主机格式不合法：仅允许域名、IPv4 或 [IPv6] 及可选端口');
+        }
+        // 管理员用户名/密码强度校验（按原始密码长度校验，防止 HTML 实体膨胀绕过 12 位下限）
         if (!preg_match('#^[a-zA-Z0-9_]{2,32}$#', $adminuser)) {
             message('adminuser', '管理员用户名不合法：仅允许字母、数字、下划线，长度 2-32');
         }
-        if (strlen($adminpass) < 12) { // 安全审查 L-5：6 → 12
+        if (strlen($adminpassRaw) < 12) { // 安全审查 L-5：6 → 12
             message('adminpass', '管理员密码至少 12 位');
+        }
+        // 安装过程排他互斥锁：防止并发 POST /install.php?action=database 造成重装竞态
+        $installLockTarget = nncms_runtime_path_w('install.lock');
+        $installMutexFile = dirname($installLockTarget) . '/.install.mutex';
+        $installMutexFp = @fopen($installMutexFile, 'c+');
+        if ($installMutexFp === false || !@flock($installMutexFp, LOCK_EX | LOCK_NB)) {
+            message(-1, '安装程序正在执行中，请勿重复提交。');
+        }
+        register_shutdown_function(static function () use ($installMutexFp, $installMutexFile) {
+            if (is_resource($installMutexFp)) {
+                @flock($installMutexFp, LOCK_UN);
+                @fclose($installMutexFp);
+            }
+            @unlink($installMutexFile);
+        });
+        if (is_file($installLockTarget) || is_file(NNCMS_INSTALL_LOCK_LEGACY) || is_file(nncms_runtime_path('config.php'))) {
+            message(0, jump($lang['already_installed'], '../'));
         }
         // POST 直达时同样拦截缺少 pdo_mysql 的环境（GET 页已拦截，防绕过）
         !extension_loaded('pdo_mysql') AND message(-1, lang('evn_not_support_php_mysql'));
@@ -143,19 +166,23 @@ if (empty($action)) {
         $r = db_connect($db);
         if (!$r) {
             if (1049 == $errno) {
-                // 库不存在：自动建库（仅 1049 走建库；1045 认证失败等直接报错，避免误导；
-                // 库名白名单已在字段校验区拦截）
-                if (str_contains($host, ':')) {
-                    $arr = explode(':', $host);
-                    $host = $arr[0];
-                    $port = $arr[1];
-                } else {
-                    $port = 3306;
+                // 库不存在：自动建库（支持 IPv4/域名/[IPv6]:port，严格校验端口范围防 DSN 注入）
+                $dsnHost = $host;
+                $port = 3306;
+                if (preg_match('/^\[([0-9a-fA-F:]+)\](?::([0-9]{1,5}))?$/D', $host, $hm)) {
+                    $dsnHost = $hm[1];
+                    if (isset($hm[2]) && $hm[2] !== '') $port = (int)$hm[2];
+                } elseif (preg_match('/^([A-Za-z0-9.-]+):([0-9]{1,5})$/D', $host, $hm)) {
+                    $dsnHost = $hm[1];
+                    $port = (int)$hm[2];
+                }
+                if ($port < 1 || $port > 65535) {
+                    message('host', '数据库端口不合法（范围 1-65535）');
                 }
                 $created = FALSE;
                 try {
                     $attr = array(PDO::ATTR_TIMEOUT => 5);
-                    $link = new PDO("mysql:host=$host;port=$port", $user, $password, $attr);
+                    $link = new PDO("mysql:host=$dsnHost;port=$port", $user, $password, $attr);
                     $created = $link->exec("CREATE DATABASE `$name`");
                 } catch (PDOException $e) {
                     $errno = $e->getCode();
@@ -281,8 +308,9 @@ if (empty($action)) {
                 xn_log('install report skipped: cloud_api is empty', 'install_report');
             }
         }
-        if (FALSE === @file_put_contents(NNCMS_INSTALL_LOCK,  'install_time:'.date('Y-m-d H:i:s'))) {
-            message(-1, '无法写入 install.lock（' . nncms_runtime_path_w('install.lock') . '）：请确认 data/ 或 core/config/ 可写。数据库与配置已写入，修正权限后手动创建该文件即可完成安装。');
+        $lockWritePath = nncms_runtime_path_w('install.lock');
+        if (FALSE === @file_put_contents($lockWritePath, 'install_time:' . date('Y-m-d H:i:s'), LOCK_EX)) {
+            message(-1, '无法写入 install.lock（' . $lockWritePath . '）：请确认 data/ 或 core/config/ 可写。数据库与配置已写入，修正权限后手动创建该文件即可完成安装。');
         }
         // 生成8位随机后台目录名
         /*$admin_path = strtolower(xn_rand(8));

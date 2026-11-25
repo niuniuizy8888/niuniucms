@@ -16,7 +16,7 @@ class UserService
         if ('' === $action || !function_exists('xn_log')) return;
         $payload = array(
             'action' => $action,
-            'uid'    => intval(isset($_SESSION['uid']) ? $_SESSION['uid'] : 0),
+            'uid'    => intval(_SESSION('uid', 0)),
             'ip'     => function_exists('ip') ? ip() : '',
             'route'  => function_exists('param') ? (string)param(0, '') : '',
         );
@@ -234,19 +234,22 @@ class UserService
 
         self::memberAudit('logout', array('uid' => $uid));
         $_SESSION['uid'] = 0;
+        // 显式置 0 清除后台会话态（SessionService::write() 键合并语义要求显式覆写而非仅 unset）
+        $_SESSION['admin_ok'] = 0;
         \App\Service\Account\UserAuthService::tokenClear();
-        // 安全修复：前台登出须同时吊销后台 admin_token（否则共享终端「登出」后
-        // 滑动续期窗口内仍可免密重进后台框架；前台不加载 admin.func.php，内联同款参数清除）
+        // 安全修复：前台登出须同时吊销后台 admin_token（保持与 admin_cookie_opt 同口径，含 cookie_domain）
         $conf = _SERVER('conf');
         if (isset($_COOKIE[$conf['cookie_pre'] . 'admin_token'])) {
-            $https = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) != 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
-            setcookie($conf['cookie_pre'] . 'admin_token', '', array(
+            $https = function_exists('http_is_https') ? http_is_https($conf) : (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) != 'off');
+            $opt = array(
                 'expires' => time() - 86400,
                 'path' => $conf['cookie_path'],
                 'secure' => $https,
                 'httponly' => true,
                 'samesite' => 'Lax',
-            ));
+            );
+            if (!empty($conf['cookie_domain'])) $opt['domain'] = $conf['cookie_domain'];
+            setcookie($conf['cookie_pre'] . 'admin_token', '', $opt);
             unset($_COOKIE[$conf['cookie_pre'] . 'admin_token']);
         }
         session_regenerate_id(true);
@@ -286,8 +289,8 @@ class UserService
         $password_new = param('password_new');
         $password_new_repeat = param('password_new_repeat');
         // 修复：空/弱新密码会导致 password_hash('') 入库后被 password_verify_custom 空值拒绝，账号永久锁死
-        $password_new === '' and message('password', lang('please_input_password'));
-        is_password($password_new, $err) or message('password', $err);
+        $password_new === '' and message('password_new', lang('please_input_password'));
+        is_password($password_new, $err) or message('password_new', $err);
         $password_new_repeat != $password_new and message(-1, lang('repeat_password_incorrect'));
         password_verify_custom($password_old, $user['password'], (string)($user['salt'] ?? '')) or message(-1, lang('old_password_incorrect'));
         $password_new_hash = password_hash($password_new, PASSWORD_BCRYPT);

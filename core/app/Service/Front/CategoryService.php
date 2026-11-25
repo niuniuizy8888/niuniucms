@@ -29,7 +29,13 @@ class CategoryService
 
         $cup = $cate['cup'] ?? 0;
         $sonlist = $cate_nav[$cid]['sonlist'] ?? null;
-        $cidarr = is_array($sonlist) ? array_column($sonlist, 'cid') : array();
+        $visibleCids = \App\Service\Content\ContentVisibilityService::categoryIds();
+        if (is_array($sonlist) && !empty($sonlist)) {
+            $cidarr = array_values(array_intersect(array_map('intval', array_column($sonlist, 'cid')), $visibleCids));
+        } else {
+            // 扁平频道（无子分类）若当前用户组可读则回落自身 cid
+            $cidarr = in_array(intval($cid), $visibleCids, TRUE) ? array(intval($cid)) : array();
+        }
         $pagesize = empty($cate['pagesize']) ? $conf['pagesize'] : $cate['pagesize'];
 
         if ('1' == $cate['model']) {
@@ -61,7 +67,13 @@ class CategoryService
     protected static function buildArt($cid, $page, $hit, $pagesize, $cate, $conf, $cidarr, $sonlist, $cup, $route_cate)
     {
         $allow_hits = array('hits', 'hits_day', 'hits_week', 'hits_month');
-        if ($hit && in_array($hit, $allow_hits, true)) {
+        if (empty($cidarr)) {
+            $cate['arts'] = 0;
+            $arrlistall = array();
+            $artlist = array();
+            $page_url = self::categoryPageUrl($route_cate, $cid, $cate, $conf, ($hit && in_array($hit, $allow_hits, true)) ? $hit : '');
+            $num = 0;
+        } elseif ($hit && in_array($hit, $allow_hits, true)) {
             $page_url = self::categoryPageUrl($route_cate, $cid, $cate, $conf, $hit);
             $ranked = \App\Service\Content\QueryService::rankChannelArtByHit($hit, $cidarr, $page, $pagesize);
             $arrlistall = \App\Service\Content\CateService::channelArtCache($cid, $pagesize);
@@ -122,7 +134,13 @@ class CategoryService
     protected static function buildVod($cid, $page, $hit, $pagesize, $cate, $conf, $cidarr, $sonlist, $cup, $route_cate)
     {
         $allow_hits = array('hits', 'hits_day', 'hits_week', 'hits_month');
-        if ($hit && in_array($hit, $allow_hits, true)) {
+        if (empty($cidarr)) {
+            $cate['videos'] = 0;
+            $arrlistall = array();
+            $videolist = array();
+            $page_url = self::categoryPageUrl($route_cate, $cid, $cate, $conf, ($hit && in_array($hit, $allow_hits, true)) ? $hit : '');
+            $num = 0;
+        } elseif ($hit && in_array($hit, $allow_hits, true)) {
             $page_url = self::categoryPageUrl($route_cate, $cid, $cate, $conf, $hit);
             $ranked = \App\Service\Content\QueryService::rankChannelVideoByHit($hit, $cidarr, $page, $pagesize);
             $arrlistall = \App\Service\Content\CateService::channelVideoCache($cid, $pagesize);

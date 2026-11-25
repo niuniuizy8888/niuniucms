@@ -8,6 +8,20 @@ class DbTableRepository
 {
     protected $table;
     protected $primaryKey;
+    private static int $suppressPageCacheBump = 0;
+
+    /**
+     * 在回调执行期间抑制内容表写入触发全站页缓存版本推进（用于点赞/收藏计数、前台惰性标签补种等高频细粒度写入，避免单次互动击穿全站缓存）。
+     */
+    public static function withoutPageCacheBump(callable $fn)
+    {
+        self::$suppressPageCacheBump++;
+        try {
+            return $fn();
+        } finally {
+            self::$suppressPageCacheBump = max(0, self::$suppressPageCacheBump - 1);
+        }
+    }
 
     public function __construct(string $table, string $primaryKey = 'id')
     {
@@ -228,13 +242,15 @@ class DbTableRepository
      * @param \PdoDriver|null $d
      * @return int|false 影响行数；$cond/$update 为空=false
      */
-    public function bigUpdate(array $cond, array $update, $d = NULL)
+    public function bigUpdate(array $cond, array $update, $d = NULL, bool $bumpCache = TRUE)
     {
         if (empty($cond) || empty($update)) return FALSE;
         reset($cond);
         $condKey = key($cond);
         $r = $this->builder($d)->bulkUpdate((string)$condKey, $update);
-        FALSE !== $r && $this->bumpContentPageCache();
+        if ($bumpCache && FALSE !== $r) {
+            $this->bumpContentPageCache();
+        }
         return $r;
     }
 
@@ -262,10 +278,13 @@ class DbTableRepository
      */
     private function bumpContentPageCache(): void
     {
+        if (self::$suppressPageCacheBump > 0) return;
+        // vod_top/art_top 属每次浏览写入的热度流水表，不得推进 page_content_ver，避免每次访问击穿全站缓存；
+        // group 权限变更纳入白名单，确保收紧 allowread 后页缓存立即失效。
         static $contentTables = array(
-            'vod' => 1, 'vod_vid' => 1, 'vod_sticky' => 1, 'vod_top' => 1,
-            'art' => 1, 'art_aid' => 1, 'art_top' => 1,
-            'cate' => 1, 'tag' => 1, 'tag_id' => 1, 'ad' => 1, 'link' => 1, 'recycle' => 1,
+            'vod' => 1, 'vod_vid' => 1, 'vod_sticky' => 1,
+            'art' => 1, 'art_aid' => 1,
+            'cate' => 1, 'group' => 1, 'tag' => 1, 'tag_id' => 1, 'ad' => 1, 'link' => 1, 'recycle' => 1,
         );
         if (!isset($contentTables[$this->table])) return;
         if (function_exists('page_cache_bump')) {

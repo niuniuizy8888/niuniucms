@@ -73,9 +73,9 @@ class MultiLayerCache
         $this->maxAttempts = $options['maxAttempts'] ?? 5;
         $this->lockTtl    = $options['lockTtl'] ?? 10;
 
-        // 熔断器锁文件：跨请求共享 Redis/Memcached 故障状态
+        // 熔断器状态文件（JSON，不受 OPcache 缓存滞后影响）
         $cachePath = _SERVER('conf')['cache_path'] ?? './runtime/cache/';
-        $this->breakerLockFile = rtrim($cachePath, '/') . '/.breaker_state.php';
+        $this->breakerLockFile = rtrim($cachePath, '/') . '/.breaker_state.json';
         $this->loadBreakerState();
 
         if (empty($layerConfig)) {
@@ -119,23 +119,33 @@ class MultiLayerCache
     {
         if (!$this->breakerLockFile) return;
         if (!file_exists($this->breakerLockFile)) return;
-        $data = @include $this->breakerLockFile;
+        $raw = @file_get_contents($this->breakerLockFile);
+        if (!is_string($raw) || $raw === '') return;
+        $data = json_decode($raw, true);
         if (is_array($data)) {
-            if (isset($data['tripped'])) self::$breakerOpen = $data['tripped'];
-            if (isset($data['pending'])) self::$breakerPending = $data['pending'];
+            if (isset($data['tripped']) && is_array($data['tripped'])) self::$breakerOpen = $data['tripped'];
+            if (isset($data['pending']) && is_array($data['pending'])) self::$breakerPending = $data['pending'];
         }
     }
 
     /**
-     * 持久化熔断器状态到锁文件
+     * 持久化熔断器状态到锁文件（原子临时文件 + rename，避免并发半写与 OPcache 延迟）
      */
     private function saveBreakerState(): void
     {
         if (!$this->breakerLockFile) return;
         $dir = dirname($this->breakerLockFile);
         if (!is_dir($dir)) @mkdir($dir, 0777, true);
-        $content = '<?php return ' . var_export(['tripped' => self::$breakerOpen, 'pending' => self::$breakerPending], true) . ';';
-        @file_put_contents($this->breakerLockFile, $content, LOCK_EX);
+        $content = json_encode(['tripped' => self::$breakerOpen, 'pending' => self::$breakerPending]);
+        if ($content === false) return;
+        $tmp = $this->breakerLockFile . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.tmp';
+        if (@file_put_contents($tmp, $content, LOCK_EX) !== false) {
+            if (!@rename($tmp, $this->breakerLockFile)) {
+                @unlink($tmp);
+            }
+        } else {
+            @unlink($tmp);
+        }
     }
 
     /**
@@ -150,9 +160,9 @@ class MultiLayerCache
             unset(self::$breakerOpen[$driverName]);
             $this->saveBreakerState();
             // 恢复后先补删熔断窗口内漏删的键（审查修复）：窗口内 delete 被 skip，
-            // 若只恢复不补删，这些键的旧值会「复活」被 get 读到（陈旧窗口=熔断时长+键 TTL）。
+            // 若只恢复不补删，这些键的旧值会「复活」被 get 读到；若补删失败再次触发熔断，则本轮继续跳过。
             $this->flushPendingDeletes($driverName);
-            return false;
+            return isset(self::$breakerOpen[$driverName]);
         }
         return true;
     }
@@ -809,24 +819,33 @@ class MultiLayerCache
     private function acquireLock(string $key, ?int $ttl = null): bool
     {
         $ttl = ($ttl !== null && $ttl > 0) ? $ttl : $this->lockTtl;
-        // 存在 Redis 驱动则一律使用 Redis 锁（不可回退文件锁：跨节点会双持）
+        // 存在且未熔断的 Redis 驱动优先使用 Redis 锁；Redis 熔断开路时回退本机 flock，避免每次阻塞等待
         foreach ($this->layers as $layer) {
             if ($layer instanceof RedisDriver) {
-                $ok = $layer->lock($key, $ttl);
-                // 注意：无论本次是否抢到，都保持 mode=redis 登记——本实例此前若已持有该锁，
-                // 之后调用 unlock() 仍需走 RedisDriver 的 token CAS 才能释放自己的锁。
-                // 越权释放由 RedisDriver::unlock 的 token 比对兜底（非持有者无 token → false）。
-                $this->lockMode[$key] = 'redis';
-                return $ok;
+                if ($this->isBreakerOpen('redis')) {
+                    break;
+                }
+                try {
+                    $ok = $layer->lock($key, $ttl);
+                    $this->lockMode[$key] = 'redis';
+                    return $ok;
+                } catch (\Throwable $e) {
+                    $this->tripBreaker('redis');
+                    $this->log('error', $key, 'redis', 0, $e->getMessage());
+                    break;
+                }
             }
         }
         // 无 Redis：回退本机 flock（单节点语义）
         $tmp = sys_get_temp_dir() . '/mlc_' . md5($key) . '.lock';
         $fp = @fopen($tmp, 'w');
-        if ($fp && @flock($fp, LOCK_EX | LOCK_NB)) {
-            $this->lockFp[$key] = $fp;
-            $this->lockMode[$key] = 'file';
-            return true;
+        if ($fp) {
+            if (@flock($fp, LOCK_EX | LOCK_NB)) {
+                $this->lockFp[$key] = $fp;
+                $this->lockMode[$key] = 'file';
+                return true;
+            }
+            @fclose($fp);
         }
         return false;
     }
@@ -898,18 +917,39 @@ class MultiLayerCache
         $ttl = $ttlOverride ?? $this->backfillTtl($key);
         if ($ttl === -1) return;
         $limit = ($hitLayer < 0) ? count($this->layers) : $hitLayer;
+        $hotSet = false;
         for ($i = 0; $i < $limit; $i++) {
+            $name = $this->layers[$i]->getName();
             // 即使本对象记录过 TTL，下层也可能已被其它请求改写。
-            if ($hitLayer >= 0 && $this->layers[$i]->getName() !== 'static') continue;
-            if ($ttl === null && $this->layers[$i]->getName() !== 'static') continue;
-            // 熔断窗口内不回填故障层（回填值来自下层，窗口内的 set/delete 已登记 pending 补删）
-            if ($this->isBreakerOpen($this->layers[$i]->getName())) continue;
-            if (self::skipLayerForKey($this->layers[$i]->getName(), $key)) continue;
+            if ($hitLayer >= 0 && $name !== 'static') continue;
+            if ($ttl === null && $name !== 'static') continue;
+            if (self::skipLayerForKey($name, $key)) continue;
+            if ($hitLayer < 0 && $name === 'mysql' && $hotSet) {
+                try { $this->layers[$i]->delete($key); } catch (\Throwable $e) {}
+                continue;
+            }
+            // 熔断窗口内不回填故障层（新源数据写不到该层时顺带登记 pending 补删，防止恢复后旧值遮蔽）
+            if ($this->isBreakerOpen($name)) {
+                if ($hitLayer < 0 && in_array($name, ['redis', 'memcached'], true)) {
+                    $this->addPendingDeletes($name, array($key));
+                }
+                continue;
+            }
             try {
-                $this->layers[$i]->set($key, $value, $ttl ?? 0);
-                $this->log('backfill', $key, $this->layers[$i]->getName());
+                $r = $this->layers[$i]->set($key, $value, $ttl ?? 0);
+                if ($hitLayer < 0 && $r && in_array($name, self::SHARED_LAYERS, true)) {
+                    $hotSet = true;
+                } elseif ($hitLayer < 0 && !$r && in_array($name, ['redis', 'memcached'], true)) {
+                    $this->tripBreaker($name);
+                    $this->addPendingDeletes($name, array($key));
+                }
+                $this->log('backfill', $key, $name);
             } catch (\Throwable $e) {
-                $this->log('error', $key, $this->layers[$i]->getName(), 0, $e->getMessage());
+                if ($hitLayer < 0 && in_array($name, ['redis', 'memcached'], true)) {
+                    $this->tripBreaker($name);
+                    $this->addPendingDeletes($name, array($key));
+                }
+                $this->log('error', $key, $name, 0, $e->getMessage());
             }
         }
     }

@@ -102,7 +102,7 @@ trait VideoQueryTrait
         $route_page_vod = $conf['route']['vod'];
         $url = url($route_page_vod . '-' . $vid, '', FALSE);
         if ($conf['url_rewrite_on'] > 1) {
-            !empty($cate['alias']) and $url = url(urlencode($cate['alias']) . '-' . $vid, '', FALSE);
+            !empty($cate['alias']) and $url = url(xn_urlencode($cate['alias']) . '-' . $vid, '', FALSE);
         }
         return $url;
     }
@@ -157,10 +157,10 @@ trait VideoQueryTrait
      * @param object|null $d       连接/从库选择器，NULL=默认
      * @return array vid 整数列表（签名声明 array）；无结果/空关键词为空数组
      */
-    public static function searchKeywordIds($keyword, int $limit = 60, $d = NULL): array
+    public static function searchKeywordIds($keyword, int $limit = 60, $d = NULL, ?array $cids = NULL): array
     {
         if (empty($keyword)) return array();
-        $ids = \App\Repository\RepositoryFactory::contentQuery()->searchIdsByKeyword('vod', 'vid', $keyword, $limit, $d);
+        $ids = \App\Repository\RepositoryFactory::contentQuery()->searchIdsByKeyword('vod', 'vid', $keyword, $limit, $d, $cids);
         if (empty($ids)) return array();
         return array_values(array_unique(array_map('intval', $ids)));
     }
@@ -179,11 +179,11 @@ trait VideoQueryTrait
         $pagesize = $pagesize ?: intval($conf['pagesize'] ?? 20);
         // 发布前检查修复（C-4）：补 ORDER BY vid DESC——无排序的 LIMIT 分页行集由执行计划决定，
         // 统计/索引漂移后相邻两页可重复或漏行（与下方 arrlist_multisort 语义一致）
-        $videolist = \App\Repository\RepositoryFactory::vod()->find($cond, array('vid' => -1), $page, $pagesize, 'vid');
+        $videolist = \App\Repository\RepositoryFactory::vod()->find($cond, array('vid' => -1), $page, $pagesize, 'vid', self::findColsLight());
         if ($videolist) {
             $videolist = arrlist_multisort($videolist, 'vid', FALSE);
             foreach ($videolist as &$video) {
-                self::format($video);
+                self::format($video, TRUE);
             }
             unset($video);
         }
@@ -202,7 +202,7 @@ trait VideoQueryTrait
         $vidarr = array_values(array_unique(array_filter(array_map('intval', $vidarr))));
         if (empty($vidarr)) return array();
 
-        $videolist = video__find(array('vid' => $vidarr), array('vid' => 1), 1, count($vidarr), 'vid');
+        $videolist = video__find(array('vid' => $vidarr), array('vid' => 1), 1, count($vidarr), 'vid', self::queryFindCols($light));
         if (!$videolist) return array();
 
         $items = array();
@@ -249,7 +249,7 @@ trait VideoQueryTrait
         $route_page_vod = $conf['route']['vod'];
         $video['url'] = url($route_page_vod . '-' . $video['vid'], '', FALSE);
         if ($conf['url_rewrite_on'] > 1) {
-            !empty($cate['alias']) and $video['url'] = url(urlencode($cate['alias']) . '-' . $video['vid'], '', FALSE);
+            !empty($cate['alias']) and $video['url'] = url(xn_urlencode($cate['alias']) . '-' . $video['vid'], '', FALSE);
         }
         // R7-P09：海报本地缩略图就绪后原位替换 pic（本地无缩略图时返回原远程 URL，形状不变、
         // 不新增字段以免破坏按行结构断言的回归用例；渲染期不出网）。

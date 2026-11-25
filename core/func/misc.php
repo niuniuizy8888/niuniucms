@@ -167,16 +167,23 @@ function jump($message, $url = '', $delay = 3)
     $json = _SERVER('json');
     if ($json) return $message;
     if (!$url) return $message;
-    'back' == $url and $url = 'javascript:history.back()';
-    // 外链安全跳转：外部 URL 先经确认页（防钓鱼/防误跳），自动跳转默认 5 秒
-    if (\App\Service\System\UrlSafetyService::isExternal($url)) {
-        return \App\Service\System\UrlSafetyService::renderJumpConfirm($message, $url, max(1, $delay));
+    $url = trim((string)preg_replace('/[\x00-\x1F\x7F]/', '', (string)$url));
+    if ('' === $url) return $message;
+    $isBack = ('back' === $url);
+    if ($isBack) {
+        $url = 'javascript:history.back()';
+    } else {
+        // 先剥控制字符后再做外链识别，防 /\t/evil.com 或 ht\ttps:// 绕过；同时拒绝危险伪协议
+        if (\App\Service\System\UrlSafetyService::isExternal($url)) {
+            return \App\Service\System\UrlSafetyService::renderJumpConfirm($message, $url, max(1, intval($delay)));
+        }
+        if (preg_match('/^[a-z][a-z0-9+.\-]*:/i', $url) && !preg_match('#^https?://#i', $url)) {
+            $url = '/';
+        }
     }
-    // JS 与 HTML 双转义：防 url 含引号时注入脚本/属性（url 可能含外部输入）
-    $js_url = str_replace(array('\\', "'"), array('\\\\', "\\'"), $url);
-    $js_url = str_ireplace('</script', '<\\/script', $js_url); // 防提前闭合 script 标签注入
+    $js_url = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
     $html_url = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
-    $htmladd = '<script>setTimeout(function() {window.location=\'' . $js_url . '\'}, ' . ($delay * 1000) . ');</script>';
+    $htmladd = '<script>setTimeout(function() {window.location=' . $js_url . '}, ' . (max(0, intval($delay)) * 1000) . ');</script>';
     return '<a href="' . $html_url . '">' . $message . '</a>' . $htmladd;
 }
 /**
@@ -292,7 +299,8 @@ function xn_json_decode($json)
  */
 function pagination($url, $totalnum, $page, $pagesize = 20)
 {
-    $url = trim(xn_urldecode($url));
+    // 仅还原 {page} 占位符，禁止整条 URL 走 xn_urldecode()（否则会把查询参数里的 _22/_3e 等序列还原为原始 HTML 引号/尖括号触发反射 XSS，并破坏 batch_id 等带下划线的参数名）
+    $url = trim(str_replace(array('%7Bpage%7D', '%7bpage%7d', '_7Bpage_7D', '_7bpage_7d'), '{page}', (string)$url));
     $totalpage = ceil($totalnum / $pagesize);
     if ($totalpage < 2) return '';
     $page = min($totalpage, $page);
@@ -466,10 +474,15 @@ function xn_auth_key_fallback($conf = array())
         if ('' !== $candidate && is_file($file)) {
             $key = $candidate;
         } else {
-            // ③ 落盘不可用 ⇒ 确定性派生（config 稳定 ⇒ 值稳定；含 db 口令 ⇒ 不可公网猜测）
+            // ③ 落盘不可用 ⇒ 确定性派生（从实际嵌套 db master 配置读取凭据，不再读不存在的扁平键）
+            $dbCfg = is_array($conf['db'] ?? null) ? $conf['db'] : array();
+            $dbType = (string)($dbCfg['type'] ?? 'pdo_mysql');
+            $master = (isset($dbCfg['master']) && is_array($dbCfg['master']))
+                ? $dbCfg['master']
+                : ((isset($dbCfg[$dbType]['master']) && is_array($dbCfg[$dbType]['master'])) ? $dbCfg[$dbType]['master'] : array());
             $key = hash('sha256', 'nncms-auth-fallback|' . __FILE__ . '|'
-                . (string)($conf['db']['database'] ?? '') . '|' . (string)($conf['db']['user'] ?? '')
-                . '|' . (string)($conf['db']['password'] ?? '') . '|' . (string)($conf['db']['host'] ?? '')
+                . (string)($master['name'] ?? '') . '|' . (string)($master['user'] ?? '')
+                . '|' . (string)($master['password'] ?? '') . '|' . (string)($master['host'] ?? '')
                 . '|' . (string)($conf['sitename'] ?? ''));
         }
     }
@@ -530,15 +543,34 @@ function http_location($url)
 function http_referer()
 {
     $referer = param('referer');
-    empty($referer) and $referer = (string)_SERVER('HTTP_REFERER'); // 无 Referer 时 _SERVER() 回 NULL，PHP 8.1+ strpos/parse_url 传 NULL 弃用
+    empty($referer) and $referer = (string)_SERVER('HTTP_REFERER');
+    $referer = trim((string)preg_replace('/[\x00-\x1F\x7F]/', '', (string)$referer));
+    if ('' === $referer) return '';
     if (strpos($referer, url('user-login')) !== false || strpos($referer, url('user-logout')) !== false || strpos($referer, url('user-create')) !== false) {
         $referer = http_url_path();
     }
-    // 安全过滤，只支持站内跳转，不允许跳到外部，否则可能会被 XSS
-    $parse_url = parse_url($referer);
-    if (isset($parse_url['host']) && $parse_url['host'] != $_SERVER['HTTP_HOST']) $referer = './';
-    // 安全审查 L-1：再拒非 http(s) scheme（javascript:/data: 等无 host 串旧实现会原样通过）与协议相对 // 、/\ 形态
-    if (FALSE === $parse_url || (isset($parse_url['scheme']) && !in_array(strtolower($parse_url['scheme']), array('http', 'https'), TRUE)) || preg_match('#^\s*[/\\\\]{2}#', $referer)) $referer = './';
+    // 安全过滤：先剥控制字符，再拒非 http(s) scheme、协议相对 // / /\ 与跨主机（含端口归一）
+    $probe = (string)preg_replace('/[\x00-\x20\x7F]/', '', $referer);
+    $parse_url = @parse_url($probe);
+    if (FALSE === $parse_url
+        || (isset($parse_url['scheme']) && !in_array(strtolower($parse_url['scheme']), array('http', 'https'), TRUE))
+        || preg_match('#^[/\\\\]{2}#', $probe)
+    ) {
+        return './';
+    }
+    if (isset($parse_url['host'])) {
+        $refHost = strtolower(trim((string)$parse_url['host'], '[]'));
+        $refScheme = strtolower((string)($parse_url['scheme'] ?? 'http'));
+        $refPort = isset($parse_url['port']) ? (int)$parse_url['port'] : ($refScheme === 'https' ? 443 : 80);
+        $selfRaw = (string)($_SERVER['HTTP_HOST'] ?? '');
+        $selfScheme = (function_exists('http_is_https') && http_is_https()) ? 'https' : 'http';
+        $selfParsed = @parse_url($selfScheme . '://' . $selfRaw);
+        $selfHost = is_array($selfParsed) ? strtolower(trim((string)($selfParsed['host'] ?? ''), '[]')) : '';
+        $selfPort = (is_array($selfParsed) && isset($selfParsed['port'])) ? (int)$selfParsed['port'] : ($selfScheme === 'https' ? 443 : 80);
+        if ($selfHost === '' || $refHost !== $selfHost || $refPort !== $selfPort) {
+            return './';
+        }
+    }
     return $referer;
 }
 // $round: float round ceil floor
@@ -615,22 +647,25 @@ function message($code, $message, $extra = array())
     $arr['code'] = $code;
     $arr['message'] = $message;
     $arr['type'] = is_int($code) ? ($code == 0 ? 'success' : ($code < 0 ? 'error' : 'warning')) : 'info';
-    // jump() 自动跳转脚本：仅白名单提取 jump() 生成的 setTimeout(window.location) 结构；
-    // url 段禁 `<`（防 </script> 逃逸 XSS）与 `'`/`\`（防 JS 转义构造 /\/\/、\x2f 等绕过站内校验）
+    // jump() 自动跳转脚本：白名单提取 jump() 生成的 setTimeout(window.location) 结构（同时兼容 json_encode 双引号与历史单引号形态）
     $arr['jump_script'] = '';
-    if (is_string($message) && preg_match('#<script>(setTimeout\(function\(\) \{window\.location=\'([^<\'\\\\]*)\'\}, \d+\));</script>#s', $message, $_m)) {
-        $_jurl = $_m[2];
+    if (is_string($message) && preg_match('#<script>setTimeout\(function\(\) \{window\.location=("(?:[^"\\\\<]|\\\\u[0-9a-fA-F]{4}|\\\\/)+"|\'[^<\'\\\\]*\')\}, (\d+)\);</script>#s', $message, $_m)) {
+        $_rawLoc = $_m[1];
+        $_delayMs = intval($_m[2]);
+        $_jurl = ($_rawLoc[0] === '"')
+            ? (string)json_decode($_rawLoc, true)
+            : substr($_rawLoc, 1, -1);
+        $_jurl = trim((string)preg_replace('/[\x00-\x1F\x7F]/', '', $_jurl));
         $_jurl_ok = '' !== $_jurl
-            && '//' !== substr($_jurl, 0, 2)
-            && 0 !== stripos($_jurl, 'javascript:')
-            && 0 !== stripos($_jurl, 'data:')
-            && !preg_match('#^https?://#i', $_jurl);
+            && !preg_match('#^[/\\\\]{2}#', $_jurl)
+            && !preg_match('/^[a-z][a-z0-9+.\-]*:/i', $_jurl);
         if ($_jurl_ok) {
-            $arr['jump_script'] = '<script>' . $_m[1] . '</script>';
+            $_safeJsUrl = json_encode($_jurl, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+            $arr['jump_script'] = '<script>setTimeout(function() {window.location=' . $_safeJsUrl . ';}, ' . max(0, $_delayMs) . ');</script>';
             // 先剥 script 标签及内容（strip_tags 不保证剥离 script 内容，7.4/8.5 实测保留），再剥其余标签（a）：
             // jump 场景显示纯文本（自动跳转已由 jump_script 承担，避免转义后显示 HTML 源码）
             $_msg_noscript = preg_replace('#<script\b[^>]*>.*?</script>#is', '', $message);
-            $arr['message'] = trim(strip_tags($_msg_noscript));
+            $arr['message'] = trim(strip_tags((string)$_msg_noscript));
         }
     }
     $header['title'] = $conf['sitename'];
@@ -1237,7 +1272,8 @@ function page_cache_site_suffix()
         $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', $raw);
     }
     if ('' === $host) $host = 'default';
-    $suffix = '_h' . substr(md5(strtolower($host)), 0, 12);
+    $scheme = (function_exists('http_is_https') && http_is_https()) ? 'https' : 'http';
+    $suffix = '_h' . substr(md5($scheme . '|' . strtolower($host)), 0, 12);
     return $suffix;
 }
 
@@ -1271,7 +1307,7 @@ function page_cache_bump($force = FALSE)
  */
 function page_cache_start($cacheKey, $onHit = NULL)
 {
-    if (DEBUG != 0) return FALSE;
+    if (DEBUG != 0 || intval($GLOBALS['uid'] ?? 0) > 0) return FALSE;
     $cacheKey = page_cache_vkey($cacheKey);
     try {
         $cached = cache_get($cacheKey);
@@ -1329,7 +1365,7 @@ function page_cache_start($cacheKey, $onHit = NULL)
  */
 function page_cache_end($cacheKey, $ttl = 1800)
 {
-    if (DEBUG != 0) return;
+    if (DEBUG != 0 || intval($GLOBALS['uid'] ?? 0) > 0) return;
     $cacheKey = page_cache_vkey($cacheKey);
     $out = ob_get_clean();
     if ($out !== false) {

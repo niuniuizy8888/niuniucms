@@ -117,8 +117,7 @@ DEBUG and set_exception_handler('exception_handler');
 DEBUG and set_error_handler('error_handle', -1);
 empty($conf['timezone']) and $conf['timezone'] = 'Asia/Shanghai';
 date_default_timezone_set($conf['timezone']);
-// 超级全局变量
-!empty($_SERVER['HTTP_X_REWRITE_URL']) and $_SERVER['REQUEST_URI'] = $_SERVER['HTTP_X_REWRITE_URL'];
+// 超级全局变量（禁止采信客户端可控头 HTTP_X_REWRITE_URL 覆盖 REQUEST_URI，防缓存投毒与反代绕过）
 !isset($_SERVER['REQUEST_URI']) and $_SERVER['REQUEST_URI'] = ''; 
 $_REQUEST = array_merge(xn_url_parse($_SERVER['REQUEST_URI'], $conf), $_GET, $_POST);
 // 注：$_COOKIE 不再并入 $_REQUEST（M2）——此前 Cookie 可覆盖 param() 读取的任何参数

@@ -1,4 +1,8 @@
 <?php
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit('CLI only');
+}
 // 审查轮 U-1 步骤 4：模板兼容性扫描。
 //   默认（save-gate 口径）：对 .html 原文跑 scanTemplate（含原生 PHP 标签检出）。
 //   --compile（编译期口径）：先按 view.php 的 tpl_allow_php=0 剥离原生 PHP 标签段，再跑 scanTemplate，

@@ -60,7 +60,7 @@ function _base64_flexible_decode(string $s)
  */
 function core_decrypt(string $encoded): string
 {
-    if ($encoded === '') return '';
+    if ($encoded === '' || !defined('SECRET') || SECRET === '') return '';
 
     $ciphertext = _base64_flexible_decode($encoded);
     if ($ciphertext === false) return '';
@@ -68,18 +68,10 @@ function core_decrypt(string $encoded): string
     $iv  = str_repeat("\0", 16);
 
     // 上线前审计 INFRA-01：仅用当前 SECRET 解密；已移除源码内硬编码旧密钥回退（fail-closed）。
-    // 新数据请使用 xn_encrypt / xn_decrypt（AES-256-GCM）。若仍有旧版 CBC 密文，请用离线工具
-    // 以历史密钥解密后重新写入，勿把旧密钥留在公开源码。
+    // openssl_decrypt(OPENSSL_RAW_DATA) 已自动完成 PKCS#7 去填充，不再二次手剥避免误截正常末尾字节。
     $key = hash('sha256', SECRET, true);
     $decrypted = @openssl_decrypt($ciphertext, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv);
     if ($decrypted !== false && $decrypted !== '') {
-        $len = strlen($decrypted);
-        if ($len > 0) {
-            $pad = ord($decrypted[$len - 1]);
-            if ($pad > 0 && $pad <= 16 && substr($decrypted, -$pad) === str_repeat(chr($pad), $pad)) {
-                return substr($decrypted, 0, -$pad);
-            }
-        }
         return $decrypted;
     }
 

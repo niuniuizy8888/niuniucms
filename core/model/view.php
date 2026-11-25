@@ -56,104 +56,166 @@ function _file($srcfile)
 {
     // hook model_view__file_start.php
 
-    global $conf; 
-    $tmpfile = $conf['cache_path'] . substr(str_replace('/', '_', $srcfile), strlen(APP_PATH));
+    global $conf;
+    $normApp = rtrim(str_replace('\\', '/', APP_PATH), '/') . '/';
+    $normSrc = str_replace('\\', '/', (string)$srcfile);
+    $rel = str_starts_with($normSrc, $normApp) ? substr($normSrc, strlen($normApp)) : ltrim($normSrc, '/');
+    $safeRel = preg_replace('#[^A-Za-z0-9_.-]#', '_', $rel);
+    $extOrig = file_ext($normSrc);
+    $tmpfile = $conf['cache_path'] . $safeRel . '.' . substr(md5($rel), 0, 8) . ($extOrig ? '.' . $extOrig : '.html');
     $srcM = is_file($srcfile) ? filemtime($srcfile) : 0;
     $tmpM = is_file($tmpfile) ? filemtime($tmpfile) : 0;
     // 0 字节产物（杀毒清空/磁盘配额/写一半）且源非空 ⇒ 视为失效重建，不让空产物长期驻留
     $tmpZero = $tmpM && 0 === (int)@filesize($tmpfile) && $srcM && (int)@filesize($srcfile) > 0;
-    // 审查轮 U-1（R2 遗留）：mtime 粒度 1 秒，源在「上次编译的同一秒内」被再次编辑时 $srcM==$tmpM，
-    // $srcM>$tmpM 漏判 ⇒ 用「源 mtime|字节数」指纹兜底（产物旁 .meta）。指纹不符即重编译；
-    // 本判据只新增重编译理由、绝不阻止其它理由（降级重试路径不受影响）。
+    // 审查轮 U-1：mtime 粒度 1 秒，用「源及子模板 mtime|字节数」指纹兜底（产物旁 .meta）
     $srcZ = $srcM ? (int)@filesize($srcfile) : 0;
     $metafile = $tmpfile . '.meta';
     $fpStale = false;
     if (is_file($tmpfile)) {
         $metaOld = is_file($metafile) ? @file_get_contents($metafile) : false;
-        if ($metaOld !== false && $metaOld !== ($srcM . '|' . $srcZ)) $fpStale = true;
+        if ($metaOld !== false) {
+            $metaArr = @json_decode($metaOld, true);
+            if (is_array($metaArr) && isset($metaArr['main'])) {
+                if ($metaArr['main'] !== ($srcM . '|' . $srcZ)) {
+                    $fpStale = true;
+                } elseif (!empty($metaArr['deps']) && is_array($metaArr['deps'])) {
+                    foreach ($metaArr['deps'] as $depPath => $depSig) {
+                        $dm = is_file($depPath) ? (int)@filemtime($depPath) : 0;
+                        $dz = is_file($depPath) ? (int)@filesize($depPath) : 0;
+                        if (($dm . '|' . $dz) !== $depSig) {
+                            $fpStale = true;
+                            break;
+                        }
+                    }
+                }
+            } elseif ($metaOld !== ($srcM . '|' . $srcZ)) {
+                $fpStale = true;
+            }
+        }
     }
     if (!is_file($tmpfile) || $tmpZero || $fpStale || DEBUG > 1 || ($srcM && $tmpM && $srcM > $tmpM) || \App\Service\System\AddonService::hookSigStaleFor($tmpfile)) {
-        // 顺序修正：先剥离模板源的原生 php（tpl_allow_php=0 安全规则，只作用于模板作者内容），
-        // 再内联插件 hook（受信代码，其 php 逻辑段不参与剥离——此前内联在前、剥离在后，wrapped 格式
-        // hook 的 kv 读取/变量赋值整段被清空，只剩 HTML 壳无条件输出=配置开关失效）。
-        // 并补 hook 签名失效门（hook 文件改动 → 模板产物重建，对齐 includeFile 管线语义）。
-        $s = file_get_contents(\App\Service\System\AddonService::findOverwrite($srcfile));
+        $resolvedSrc = \App\Service\System\AddonService::findOverwrite($srcfile);
+        $s = @file_get_contents($resolvedSrc);
+        if (!is_string($s)) $s = '';
         if ($s !== '' && substr($s, 0, 3) === "\xEF\xBB\xBF") $s = substr($s, 3);
         $s = ltrim($s);
         $s = preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s', '', $s);
-        // 安全审查 H-1：前台主题模板（template/ 下）作者内容里的 $conf → 脱敏副本、$GLOBALS/超全局 → 空变量。
-        // 必须在内联插件 hook 之前做（hook 是受信代码，合法读取真实 $conf）。
         $tplScope = view_tpl_in_scope($srcfile);
-        // 安全审查第 2 轮：主模板正文也过一遍与模板编辑器/下载同口径的内容闸（此前只在保存、下载、
-        // {inc:}/<template include> 子模板时检查；手工上传/FTP 改的主模板绕过）。只在重编译时跑一次，开销可忽略。
+        $blockedHtml = '<!-- template blocked --><div style="margin:12px;padding:10px 14px;border:1px solid #e0b4b4;background:#fff6f6;color:#9f3a38;font-size:14px">'
+            . '该页面模板未通过安全检查，已停止渲染。请站长到后台查看提示并修正模板文件。</div>';
         $tplGateWhy = $tplScope ? view_tpl_body_gate($s) : '';
         if ('' !== $tplGateWhy) {
             xn_log('template main body content gate rejected: ' . $srcfile . ' :: ' . $tplGateWhy, 'addon_compile_error');
             \App\Service\System\AddonService::degradedMark($tmpfile, $srcfile, 'template content gate: ' . $tplGateWhy);
-            // 产物落为安全提示（源文件修改后 mtime 变新会自动重编译并清除后台告警）
-            $s = '<!-- template blocked --><div style="margin:12px;padding:10px 14px;border:1px solid #e0b4b4;background:#fff6f6;color:#9f3a38;font-size:14px">'
-                . '该页面模板未通过安全检查，已停止渲染。请站长到后台查看提示并修正模板文件。</div>';
+            $s = $blockedHtml;
         }
-        if ($tplScope) $s = view_tpl_scope_rewrite($s);
-        $s = \App\Service\System\AddonService::inlineHookMarkers($s);
+        $incDeps = array();
+        if ($resolvedSrc !== $srcfile) {
+            $incDeps[$resolvedSrc] = (int)@filemtime($resolvedSrc) . '|' . (int)@filesize($resolvedSrc);
+        }
         $reg_arr = '[a-zA-Z_]\w*(?:\[\w+\]|\[\'\w+\'\]|\[\"\w+\"\]|\[\$[a-zA-Z_]\w*\])*';
-        //2025.09.07 修复inc
+        // 1) 展开 {inc:} 与 <template include>（暂不内联受信插件 hook，防止与模板标签拼接混淆）
         $s = preg_replace_callback(
             '#\{inc\:([\w|\/\.]+)\}#',
-            function ($matches) use ($srcfile, $tplScope) {
-                return process_inc($matches, dirname($srcfile), $tplScope);
+            function ($matches) use ($srcfile, $tplScope, &$incDeps) {
+                return process_inc($matches, dirname($srcfile), $tplScope, $incDeps);
             },
             $s
         );
-        /*0ld----$s = preg_replace_callback('#\{inc\:([\w|\/\.]+)\}#', 'process_inc', $s);*/
-        // 移除原「内联后剥离」行（原 line 58）：剥离已前置到 hook 内联之前——
-        // 原位置会把刚内联进来的插件 hook php 逻辑再次剥空（wrapped 格式 hook 开关/配置失效=假工作）。
+        $prevIncScope = \App\Service\System\AddonService::$g_include_tpl_scope;
+        \App\Service\System\AddonService::$g_include_tpl_scope = $tplScope;
+        try {
+            for ($i = 0; $i < 10; ++$i) {
+                if (!str_contains($s, '<template')) break;
+                $s = preg_replace_callback('#<template\sinclude="(.*?)">(.*?)</template>#is', '_include_callback_1', $s);
+            }
+        } finally {
+            \App\Service\System\AddonService::$g_include_tpl_scope = $prevIncScope;
+        }
+        // 2) 处理 {php} / {@EXPR}（禁用时替换为空格而非空串，阻断 <{php}{/php}?php 字符拼接重组）
         $allow_tpl_php = !empty($conf['tpl_allow_php']);
-        if ($allow_tpl_php) {
-            $s = preg_replace('#\{php\}(.*?)\{\/php\}#s', '<?php \\1 ?>', $s);
-        } else {
-            // 项目审查补齐：剥除属**安全事件**，必须与 KV 配置层同口径留痕
-            // （config_runtime_audit_forbidden 写 config_audit + admin_audit_log('config_forbidden_key_blocked')）。
-            // 此前模板面静默剥除、零审计 ⇒ 主题/插件/模板里塞 {php} 不留任何线索，排障口径形同虚设。
-            // 判据与剥除正则同形（`{php}…{/php}` 成对），避免只出现半截 `{php}` 也写审计。
+        if (!$allow_tpl_php) {
             $phpStripped = 0;
-            $s = preg_replace('#\{php\}.*?\{\/php\}#s', '', $s, -1, $phpStripped);
+            $s = preg_replace('#\{php\}.*?\{\/php\}#s', ' ', $s, -1, $phpStripped);
             if ($phpStripped > 0) {
                 xn_log('template tag stripped: {php} x' . $phpStripped . ' in ' . $srcfile, 'config_audit');
                 function_exists('admin_audit_log') and admin_audit_log('config_forbidden_key_blocked', array('key' => 'tpl_tag_php', 'file' => $srcfile, 'count' => $phpStripped));
             }
         }
-        $s = preg_replace_callback('#\{block\:([a-zA-Z_]\w*)\040?([^\n\}]*?)\}(.*?){\/block}#s', 'process_block', $s);
-        while (preg_match('#\{loop\:\$' . $reg_arr . '(?:\040\$[a-zA-Z_]\w*){1,2}\}.*?\{\/loop\}#s', $s))
-            $s = preg_replace_callback('#\{loop\:(\$' . $reg_arr . '(?:\040\$[a-zA-Z_]\w*){1,2})\}(.*?)\{\/loop\}#s', 'process_loop', $s);
-        while (preg_match('#\{if\:[^\n\}]+\}.*?\{\/if\}#s', $s))
-            $s = preg_replace_callback('#\{if\:([^\n\}]+)\}(.*?)\{\/if\}#s', 'process_if', $s); 
-        // {h:$a.b} / {h:$a}：HTML 转义输出（htmlspecialchars ENT_QUOTES，不二次编码已有实体）
-        $s = preg_replace_callback('#\{h\:\$([a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)*)\}#', 'process_vars_h', $s);
-        $s = preg_replace_callback('#\{\$([a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)+)\}#', 'process_vars_dot', $s);
-        if (!empty($conf['tpl_allow_expr'])) {
-            $s = preg_replace('#\{\@([^\}]+)\}#', '<?php echo(\\1); ?>', $s);
-        } else {
-            // 同 {php}：表达式标签剥除也是安全事件，留痕口径一致（config_audit + 后台审计）。
-            // ⚠ 判据必须与剥除正则同形（`{@` + 非 `}` 序列 + `}`）：模板里大量存在 CSS 的
-            //   `{@media screen{…}` 这类**没有紧跟闭合 `}` 的** `{@` 片段，用宽判据
-            //   `str_contains($s,'{@')` 会让每个含公共 `public/foot.html`（其内有一个历史
-            //   `{@xn_debug_info()}`）的页面都写一条审计，把安全通道刷成噪声、真事件被淹没。
+        $allow_tpl_expr = !empty($conf['tpl_allow_expr']);
+        if (!$allow_tpl_expr) {
             $exprStripped = 0;
-            $s = preg_replace('#\{\@[^\}]+\}#', '', $s, -1, $exprStripped);
+            $s = preg_replace('#\{\@[^\}]+\}#', ' ', $s, -1, $exprStripped);
             if ($exprStripped > 0) {
                 xn_log('template tag stripped: {@EXPR} x' . $exprStripped . ' in ' . $srcfile, 'config_audit');
                 function_exists('admin_audit_log') and admin_audit_log('config_forbidden_key_blocked', array('key' => 'tpl_tag_expr', 'file' => $srcfile, 'count' => $exprStripped));
             }
         }
-        $s = preg_replace_callback('#\{(\$' . $reg_arr . ')\}#', 'process_vars', $s); 
-        for ($i = 0; $i < 10; ++$i) {
-            $s = preg_replace_callback('#<template\sinclude="(.*?)">(.*?)</template>#is', '_include_callback_1', $s);
-            if (!str_contains($s, '<template')) break;
+        // 3) 展开后的总闸复检：此时尚未内联插件 hook，也尚未发射编译器 PHP 标签；
+        // 任何残留或借拼接重组出的 <? 标签与跨边界表达式都会在此被阻断，再统一执行作用域改写。
+        if ($tplScope && '' === $tplGateWhy) {
+            if (!$allow_tpl_php && str_contains($s, '<?')) {
+                $tplGateWhy = 'php_tag_reconstructed';
+            } else {
+                $tplGateWhy = view_tpl_body_gate($s);
+            }
+            if ('' !== $tplGateWhy) {
+                xn_log('template assembled content gate rejected: ' . $srcfile . ' :: ' . $tplGateWhy, 'addon_compile_error');
+                \App\Service\System\AddonService::degradedMark($tmpfile, $srcfile, 'template content gate: ' . $tplGateWhy);
+                $s = $blockedHtml;
+            } else {
+                $s = view_tpl_scope_rewrite($s);
+            }
         }
-        // ㉑（审核轮）：模板产物写盘前最终语法闸——解析失败拒写（有旧产物沿用，签名不推进=每请求重试）；
-        // 无旧产物降级为**合法空产物**（include=no-op 页面缺块但站活——写坏内容=include 即 parse error 白屏），
-        // 降级路径不推进签名 → 每请求重试直至源/hook 修复后自动恢复。
+        // 4) 编译受控模板指令
+        if ($allow_tpl_php && '' === $tplGateWhy) {
+            $s = preg_replace('#\{php\}(.*?)\{\/php\}#s', '<?php \\1 ?>', $s);
+        }
+        $s = preg_replace_callback('#\{block\:([a-zA-Z_]\w*)\040?([^\n\}]*?)\}(.*?){\/block}#s', 'process_block', $s);
+        while (preg_match('#\{loop\:\$' . $reg_arr . '(?:\040\$[a-zA-Z_]\w*){1,2}\}.*?\{\/loop\}#s', $s))
+            $s = preg_replace_callback('#\{loop\:(\$' . $reg_arr . '(?:\040\$[a-zA-Z_]\w*){1,2})\}(.*?)\{\/loop\}#s', 'process_loop', $s);
+        while (preg_match('#\{if\:[^\n\}]+\}.*?\{\/if\}#s', $s))
+            $s = preg_replace_callback('#\{if\:([^\n\}]+)\}(.*?)\{\/if\}#s', 'process_if', $s);
+        // {h:$a.b} / {h:$a}：HTML 转义输出（htmlspecialchars ENT_QUOTES，不二次编码已有实体）
+        $s = preg_replace_callback('#\{h\:\$([a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)*)\}#', 'process_vars_h', $s);
+        $s = preg_replace_callback('#\{\$([a-zA-Z_]\w*(?:\.[a-zA-Z0-9_]+)+)\}#', 'process_vars_dot', $s);
+        if ($allow_tpl_expr && '' === $tplGateWhy) {
+            $s = preg_replace('#\{\@([^\}]+)\}#', '<?php echo(\\1); ?>', $s);
+        }
+        $s = preg_replace_callback('#\{(\$' . $reg_arr . ')\}#', 'process_vars', $s);
+        // 5) 压缩处理在插件 hook 内联与最终语法闸之前完成（保留 <!--{hook ...}--> 标记，移除非法 "//" 空正则，注释改替为空格）
+        $ext = file_ext($tmpfile);
+        $is_html = in_array($ext, array('htm', 'html'), true);
+        if ($is_html && 0 == DEBUG && !empty($conf['compress'])) {
+            $preCompress = $s;
+            if (1 == $conf['compress']) {
+                // 禁止将 \t 替换为空串（否则 <\t?php 可在全部安全闸之后重组为合法 PHP 开标签），改为单空格
+                $s = str_replace("\t", ' ', $s);
+                $compressed = preg_replace(
+                    array("#> *([^ ]*) *<#", "#<!--(?!\{hook\b)[\s\S]*?-->#", '#>\s+<#', "#>\s+\r\n#"),
+                    array(">\\1<", ' ', '><', '>'),
+                    $s
+                );
+                if (is_string($compressed) && '' !== trim($compressed)) $s = $compressed;
+            } elseif (2 == $conf['compress']) {
+                $compressed = preg_replace(
+                    array("#> *([^ ]*) *<#", "#[\s]+#", "#<!--(?!\{hook\b)[\s\S]*?-->#", '#>\s+<#'),
+                    array(">\\1<", ' ', ' ', '><'),
+                    $s
+                );
+                if (is_string($compressed) && '' !== trim($compressed)) $s = $compressed;
+            }
+            if ('' === trim($s) && '' !== trim($preCompress)) {
+                xn_log('template compress empty, fallback uncompressed ' . $tmpfile, 'compile_error');
+                $s = $preCompress;
+            }
+        }
+        // 6) 内联受信插件 hook（含主模板与 {inc:} 子模板中的 <!--{hook ...}--> 标记）
+        $s = \App\Service\System\AddonService::inlineHookMarkers($s);
+        if ($tplScope) {
+            $s = '<?php $__tplconf = view_tpl_conf(isset($conf) ? $conf : null); $__tplnull = null; if (isset($user) && is_array($user) && class_exists(\App\Service\Account\UserService::class)) { $user = \App\Service\Account\UserService::safeInfo($user); } $sid = null; ?>' . $s;
+        }
+        // 7) 最终语法闸（作用于完整最终代码，之后单次原子落盘）
         $tplParseErr = \App\Service\System\AddonService::artifactParseError($s);
         $fgTplRejected = (NULL !== $tplParseErr);
         if ($fgTplRejected) {
@@ -161,43 +223,31 @@ function _file($srcfile)
             if (is_file($tmpfile) && (int)filesize($tmpfile) > 0) {
                 return $tmpfile;
             }
-            $s = "<?php "; // 合法空产物降级（后续模板编译对空串 no-op）
+            $s = "<?php "; // 合法空产物降级
         }
         if (!$fgTplRejected) {
-        \App\Service\System\AddonService::hookSigSave($tmpfile);
-        // 主模板内容闸通过 ⇒ 清掉此前因该文件留下的后台告警（无记录时只读一次 json，无写）
-        if ($tplScope && '' === $tplGateWhy) \App\Service\System\AddonService::degradedClear($tmpfile);
+            \App\Service\System\AddonService::hookSigSave($tmpfile);
+            if ($tplScope && '' === $tplGateWhy) \App\Service\System\AddonService::degradedClear($tmpfile);
         }
-        if ($tplScope && !$fgTplRejected) {
-            // 渲染期在模板作用域内构造脱敏 $conf 副本（不动全局 $conf：区块/缓存/编译器渲染中仍需真实配置）
-            $s = '<?php $__tplconf = view_tpl_conf(isset($conf) ? $conf : null); $__tplnull = null; if (isset($user) && is_array($user) && class_exists(\App\Service\Account\UserService::class)) { $user = \App\Service\Account\UserService::safeInfo($user); } $sid = null; ?>' . $s;
-        }
-        $ext = file_ext($tmpfile);
-        $is_html = in_array($ext, array('htm', 'html'));
-        $preCompress = $s;
-        if ('php' == $ext && 0 == DEBUG && $conf['compress'] > 0) {
-            file_put_contents_try($tmpfile, $s);
-            $s = trim(php_strip_whitespace($tmpfile));
-            // 压缩读回为空（中间文件被杀毒/配额清掉）⇒ 用未压缩内容，绝不写空产物
-            if ('' === $s && '' !== trim($preCompress)) { xn_log('template compress empty, fallback uncompressed ' . $tmpfile, 'compile_error'); $s = $preCompress; }
-            file_put_contents_try($tmpfile, $s);
-        } elseif ($is_html && 0 == DEBUG && $conf['compress'] > 0) {
-            file_put_contents_try($tmpfile, $s);
-            $s = addons_compile_srcfile($tmpfile);
-            if (!is_string($s) || ('' === trim($s) && '' !== trim($preCompress))) { xn_log('template compress empty, fallback uncompressed ' . $tmpfile, 'compile_error'); $s = $preCompress; }
-            if (1 == $conf['compress']) {
-                $s = str_replace(array("\t"), '', $s);
-                $s = preg_replace(array("#> *([^ ]*) *<#", "#<!--[\\w\\W\r\\n]*?-->#", "# \"#", '#>\s+<#', "#/\*[^*]*\*/#", "//", '#\/\*(\s|.)*?\*\/#', "#>\s+\r\n#"), array(">\\1<", '', "\"", '><', '', '', '', '>'), $s);
-            } elseif (2 == $conf['compress']) {
-                $s = preg_replace(array("#> *([^ ]*) *<#", "#[\s]+#", "#<!--[\\w\\W\r\\n]*?-->#", "# \"#", "#/\*[^*]*\*/#", "//", '#>\s+<#', '#\/\*(\s|.)*?\*\/#'), array(">\\1<", ' ', '', "\"", '', '', '><', ''), $s);
+        if ('php' == $ext && 0 == DEBUG && !empty($conf['compress'])) {
+            $stripTmp = $tmpfile . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.strip.tmp';
+            $preCompress = $s;
+            file_put_contents_try($stripTmp, $s);
+            $stripped = trim((string)@php_strip_whitespace($stripTmp));
+            @unlink($stripTmp);
+            if ('' !== $stripped) $s = $stripped;
+            elseif ('' !== trim($preCompress)) {
+                xn_log('template compress empty, fallback uncompressed ' . $tmpfile, 'compile_error');
+                $s = $preCompress;
             }
-            file_put_contents_try($tmpfile, $s);
-        } else {
-            file_put_contents_try($tmpfile, $s);
         }
-        // 审查轮 U-1（R2 遗留）：写入「源 mtime|字节数」指纹，供下次请求判定同秒编辑。
+        file_put_contents_try($tmpfile, $s);
+        function_exists('opcache_invalidate') && @opcache_invalidate($tmpfile, TRUE);
         if (is_file($tmpfile) && (int)@filesize($tmpfile) > 0) {
-            @file_put_contents($metafile, $srcM . '|' . $srcZ, LOCK_EX);
+            @file_put_contents($metafile, json_encode(array(
+                'main' => $srcM . '|' . $srcZ,
+                'deps' => $incDeps,
+            ), JSON_UNESCAPED_SLASHES), LOCK_EX);
         }
     }
     // hook model_view__file_end.php
@@ -275,7 +325,8 @@ function rep_double($s)
     // hook model_view_rep_double_start.php
 
     // hook model_view_rep_double_end.php
-    return str_replace('\"', '"', $s);
+    // 历史 preg_replace /e 遗留反转义已废除：在词法安全扫描后执行 str_replace('\"', '"') 会造成引号提前闭合与沙箱绕过
+    return $s;
 }
 /**
  * 变量下标规范化：把 `[key]` 统一成合法 PHP 数组下标。
@@ -377,7 +428,7 @@ function process_loop($matches)
  * @param string $basedir 当前模板所在目录（_file() 用 dirname($srcfile) 传入；空则跳过同目录查找）
  * @return string 内联后的子模板内容（合法纯 HTML 段）或空串
  */
-function process_inc($matches, $basedir = '', $tplScope = false)
+function process_inc($matches, $basedir = '', $tplScope = false, &$incDeps = null)
 {
     // hook model_view_process_inc_start.php
 
@@ -388,12 +439,12 @@ function process_inc($matches, $basedir = '', $tplScope = false)
         $filename = $arr[0] . '/' . $arr[1];
     }
     $filename = ltrim($filename, '/');
-    if ($filename === '' || str_contains($filename, "\0") || str_contains($filename, '..')) return '';
+    if ($filename === '' || str_contains($filename, "\0") || str_contains($filename, '..')) return ' ';
     // 如果有上下文，就优先从当前模板所在目录找
     if ($basedir) {
         $tpl_file = $basedir . '/' . $filename;
         if (file_exists($tpl_file)) {
-            // 修复：{inc:} 子模板内的 hook 标记也要内联（head/foot 子模板的 hook 点此前是死点）
+            if (is_array($incDeps)) $incDeps[$tpl_file] = (int)@filemtime($tpl_file) . '|' . (int)@filesize($tpl_file);
             return process_inc_body(file_get_contents($tpl_file), $tplScope);
         }
     }
@@ -404,8 +455,12 @@ function process_inc($matches, $basedir = '', $tplScope = false)
     }
 
     // hook model_view_process_inc_end.php
-    // 修复：默认主题路径分支同样内联子模板 hook 标记
-    return file_exists($tpl_file) ? process_inc_body(file_get_contents($tpl_file), $tplScope) : '';
+    if (file_exists($tpl_file)) {
+        if (is_array($incDeps)) $incDeps[$tpl_file] = (int)@filemtime($tpl_file) . '|' . (int)@filesize($tpl_file);
+        return process_inc_body(file_get_contents($tpl_file), $tplScope);
+    }
+    // 缺失子模板返回空格而非空串，阻断前后字符拼合形成原生 PHP 标签
+    return ' ';
 }
 
 /**
@@ -427,7 +482,7 @@ function process_inc($matches, $basedir = '', $tplScope = false)
  */
 function process_inc_body($s, $tplScope = false)
 {
-    if (!is_string($s) || $s === '') return '';
+    if (!is_string($s) || $s === '') return ' ';
     // ① 与 _file() 同口径剥离原生 PHP（{inc:} 引入的子模板不接受编剧作者 PHP）
     $s = preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s', '', $s);
     // ② 内容闸：与模板编辑器保存路径同口径，命中即拒绝整段内联
@@ -444,20 +499,20 @@ function process_inc_body($s, $tplScope = false)
                     $reason = is_array($first) ? ((string)($first['kind'] ?? '') . ' ' . (string)($first['name'] ?? '')) : (string)$first;
                     xn_log('template {inc:} content gate rejected: ' . $reason, 'addon_compile_error');
                 }
-                return '';
+                return ' ';
             }
         } else {
-            // 闸不可用（引导早期/CLI 精简上下文）：fail-closed——已剥离 PHP 的纯 HTML 才放行
             if (function_exists('xn_log')) xn_log('template {inc:} content gate unavailable, fail-closed', 'addon_compile_error');
-            return '';
+            return ' ';
         }
     } catch (\Throwable $e) {
         if (function_exists('xn_log')) xn_log('template {inc:} content gate error: ' . $e->getMessage(), 'addon_compile_error');
-        return '';
+        return ' ';
     }
     if ($tplScope) $s = view_tpl_scope_rewrite($s);
-    // 修复：{inc:} 子模板内的 hook 标记也要内联（head/foot 子模板的 hook 点此前是死点）
-    return \App\Service\System\AddonService::inlineHookMarkers($s);
+    // 子模板内的 <!--{hook ...}--> 标记留给 _file() 在总闸复检与指令编译完成后统一内联，
+    // 两侧补空格阻断跨文件首尾字符拼接成 PHP 标签或超全局名。
+    return ' ' . $s . ' ';
 }
 
 /**

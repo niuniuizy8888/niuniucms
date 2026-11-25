@@ -23,12 +23,22 @@ class ArtBlockService
     }
 
     /**
-     * 单分类「点击排行」区块数据：QueryService::rankArtByHit('hits', ...) 走累计点击榜
-     * （topByCid 按主表 views 降序取 aid 回表装配，行补 n 名次；total 为 countByCid 口径）。
+     * 单分类「点击排行」区块数据：按主表 views 降序并经可见性过滤。
      * @param int $cid 分类 id
      * @param int $n 条数上限
-     * @return array {artlist: array, cate_name, cate_url, cid}（结构同 single）
+     * @return array {artlist: array, cate_name, cate_url, cid}
      */
+    public static function singleTop($cid, int $n): array
+    {
+        $cate = cate_read($cid);
+        $ranked = \App\Service\Content\QueryService::rankArtByHit('hits', $cid, 1, $n);
+        return array(
+            'artlist' => is_array($ranked['items'] ?? null) ? array_values($ranked['items']) : array(),
+            'cate_name' => $cate['name'] ?? '',
+            'cate_url' => $cate['url'] ?? '',
+            'cid' => $cate['cid'] ?? intval($cid),
+        );
+    }
     /**
      * 随机文章区块。⚠ $cid 只用于取展示用分类名，**不参与筛选**：
      * 候选取全站 art_aid 索引最新 max(n*5,100) 条，shuffle 后截 n 个，再 findAsc 回表。
@@ -66,9 +76,24 @@ class ArtBlockService
      */
     public static function hitPeriod(string $type, int $n, $cid = NULL): array
     {
-        $rows = \App\Service\Content\ArtService::hitRows($type, $n, $cid);
-        if (empty($rows)) return array();
-        $aids = array_column($rows, 'aid');
-        return \App\Service\Content\ArtService::findAsc($aids, $n) ?: array();
+        $allowed = \App\Service\Content\ContentVisibilityService::intersectCategories($cid);
+        if (empty($allowed) || $n <= 0) return array();
+        $map = array('d' => 'hits_day', 'w' => 'hits_week', 'm' => 'hits_month', 'hits_day' => 'hits_day', 'hits_week' => 'hits_week', 'hits_month' => 'hits_month');
+        $hitType = $map[strtolower($type)] ?? 'hits_day';
+        $ranked = \App\Repository\RepositoryFactory::contentQuery()->hitRankIds('art_top', 'aid', $allowed, $hitType, 1, $n);
+        if (empty($ranked['ids'])) return array();
+        $items = \App\Service\Content\ArtService::findAsc($ranked['ids'], $n);
+        $items = \App\Service\Content\ContentVisibilityService::filter(is_array($items) ? $items : array());
+        if (empty($items)) return array();
+        $byId = array();
+        foreach ($items as $it) {
+            if (isset($it['aid'])) $byId[intval($it['aid'])] = $it;
+        }
+        $ordered = array();
+        foreach ($ranked['ids'] as $rid) {
+            $rid = intval($rid);
+            if (isset($byId[$rid])) $ordered[] = $byId[$rid];
+        }
+        return $ordered;
     }
 }

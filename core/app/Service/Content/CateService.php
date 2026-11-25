@@ -81,19 +81,30 @@ class CateService
         if (empty($cid)) return FALSE;
         $cate = $catelist[$cid] ?? array();
         if (empty($cate)) return FALSE;
-        $cate['videos'] = VideoService::countByCid($cid);
+        $model = intval($cate['model'] ?? 0);
         if (1 == intval($cate['type'] ?? 0)) {
-            $pagesize = 5000;
-            $totalpage = $cate['videos'] > 5000 ? ceil($cate['videos'] / $pagesize) : 1;
-            for ($i = 1; $i <= $totalpage; ++$i) {
-                $videolist = \App\Repository\RepositoryFactory::vodVid()->find(array('cid' => $cid), array(), $i, $pagesize, 'vid', array('vid'));
-                if ($videolist) {
-                    $vids = array();
-                    foreach ($videolist as $video) $vids[] = $video['vid'];
-                    // ⚠ 不再吞返回值（复核修正）：deleteAll 在「回收站快照失败/列宽不足」时返回 FALSE 且**未删任何内容**。
-                    //   旧写法忽略它，继续删分类 ⇒ 分类没了、一批视频成孤儿（cate 已删但 vod 仍在，后台无法按分类管理）。
-                    //   现 fail-closed：直接中止分类删除并把结果交回调用方。
-                    if (!empty($vids) && FALSE === \App\Service\Content\VideoService::deleteAll($vids)) {
+            $batchSize = 200;
+            if ($model === 1) {
+                // 文章分类：恒取第 1 页循环删除，避免边删边翻页遗漏且避免文章成孤儿
+                $guard = 0;
+                while ($guard++ < 5000) {
+                    $artlist = \App\Repository\RepositoryFactory::artAid()->find(array('cid' => $cid), array('aid' => 1), 1, $batchSize, 'aid', array('aid'));
+                    if (empty($artlist)) break;
+                    $aids = array_values(array_filter(array_map('intval', array_keys($artlist))));
+                    if (empty($aids)) break;
+                    if (FALSE === \App\Service\Content\ArtService::deleteAll($aids)) {
+                        return FALSE;
+                    }
+                }
+            } else {
+                // 视频分类：恒取第 1 页小批次删除，消除偏移跳过 ~50% 视频与大 IN 列表隐患
+                $guard = 0;
+                while ($guard++ < 5000) {
+                    $videolist = \App\Repository\RepositoryFactory::vodVid()->find(array('cid' => $cid), array('vid' => 1), 1, $batchSize, 'vid', array('vid'));
+                    if (empty($videolist)) break;
+                    $vids = array_values(array_filter(array_map('intval', array_keys($videolist))));
+                    if (empty($vids)) break;
+                    if (FALSE === \App\Service\Content\VideoService::deleteAll($vids)) {
                         return FALSE;
                     }
                 }
@@ -237,7 +248,7 @@ class CateService
             }
             if ($conf['url_rewrite_on'] > 1 && $cate['alias']) {
                 if (0 == $cate['category'] || 1 == $cate['category']) {
-                    $cate['url'] = url($cate['alias'], array(), FALSE);
+                    $cate['url'] = url(xn_urlencode($cate['alias']), array(), FALSE);
                 }
             }
         }
@@ -420,7 +431,10 @@ class CateService
      */
     public static function channelVideoCache($cid, $pagesize)
     {
-        $key = 'channel_video_' . $cid . '_' . $pagesize;
+        $vis = ContentVisibilityService::fingerprint();
+        $rw = intval(_SERVER('conf')['url_rewrite_on'] ?? 0);
+        $site = function_exists('page_cache_site_suffix') ? page_cache_site_suffix() : '';
+        $key = 'channel_video_' . intval($cid) . '_' . intval($pagesize) . '_v' . $vis . '_r' . $rw . $site;
         static $cache = array();
         if (isset($cache[$key])) return $cache[$key];
         $arr = cache_get($key);
@@ -432,16 +446,12 @@ class CateService
         return $cache[$key];
     }
 
-    /**
-     * channelArt() 的双层缓存壳：进程 static + 分布式缓存（键 channel_art_{cid}_{pagesize}，
-     * TTL 1200s，仅非空结果回写；空结果返回 NULL 且不固化）。
-     * @param int|string $cid 频道分类 id
-     * @param int|string $pagesize 每子频道取条数（进缓存键）
-     * @return array|null 频道区块；无数据为 NULL
-     */
     public static function channelArtCache($cid, $pagesize)
     {
-        $key = 'channel_art_' . $cid . '_' . $pagesize;
+        $vis = ContentVisibilityService::fingerprint();
+        $rw = intval(_SERVER('conf')['url_rewrite_on'] ?? 0);
+        $site = function_exists('page_cache_site_suffix') ? page_cache_site_suffix() : '';
+        $key = 'channel_art_' . intval($cid) . '_' . intval($pagesize) . '_v' . $vis . '_r' . $rw . $site;
         static $cache = array();
         if (isset($cache[$key])) return $cache[$key];
         $arr = cache_get($key);
@@ -470,12 +480,16 @@ class CateService
         if (empty($cid)) return NULL;
         $page = 1;
         $category_catelist = self::channelCategory($cid);
+        $allowedMap = array_flip(ContentVisibilityService::categoryIds());
         $arrlist = array();
         $cate_aids = array();
         $aidlist = array();
+        $cat_top_cids = array();
         if ($category_catelist) {
             foreach ($category_catelist as &$_cate) {
-                $arrlist['list'][$_cate['cid']] = array(
+                $subCid = intval($_cate['cid']);
+                if (!isset($allowedMap[$subCid])) continue;
+                $arrlist['list'][$subCid] = array(
                     'cid' => $_cate['cid'],
                     'name' => $_cate['name'],
                     'rank' => $_cate['rank'],
@@ -483,7 +497,7 @@ class CateService
                     'url' => $_cate['url'],
                     'channel_new' => $pagesize,
                 );
-                $cat_top_cids[] = intval($_cate['cid']); // P-2：挪到循环外批量取
+                $cat_top_cids[] = $subCid;
             }
             $aidlist += $cate_aids;
         }
@@ -501,7 +515,7 @@ class CateService
         }
         $aidarr = array_unique($aidarr);
         $items = ArtService::findAsc($aidarr, count($aidarr));
-        $items = array_reverse((array)$items);
+        $items = ContentVisibilityService::filter(is_array($items) ? array_reverse($items) : array());
         foreach ($items as &$_art) {
             isset($cate_aids[$_art['aid']]) and $arrlist['list'][$_art['cid']]['news'][$_art['aid']] = $_art;
         }
@@ -535,12 +549,16 @@ class CateService
         if (empty($cid)) return NULL;
         $page = 1;
         $category_catelist = self::channelCategory($cid);
+        $allowedMap = array_flip(ContentVisibilityService::categoryIds());
         $arrlist = array();
         $cate_vids = array();
         $vidlist = array();
+        $cat_top_cids2 = array();
         if ($category_catelist) {
             foreach ($category_catelist as &$_cate) {
-                $arrlist['list'][$_cate['cid']] = array(
+                $subCid = intval($_cate['cid']);
+                if (!isset($allowedMap[$subCid])) continue;
+                $arrlist['list'][$subCid] = array(
                     'cid' => $_cate['cid'],
                     'name' => $_cate['name'],
                     'rank' => $_cate['rank'],
@@ -548,7 +566,7 @@ class CateService
                     'url' => $_cate['url'],
                     'channel_new' => $pagesize,
                 );
-                $cat_top_cids2[] = intval($_cate['cid']); // P-2：挪到循环外批量取
+                $cat_top_cids2[] = $subCid;
             }
             $vidlist += $cate_vids;
         }
@@ -568,7 +586,7 @@ class CateService
         }
         $vidarr = array_unique($vidarr);
         $items = VideoService::findAsc($vidarr, count($vidarr), true);
-        $items = array_reverse((array)$items);
+        $items = ContentVisibilityService::filter(is_array($items) ? array_reverse($items) : array());
         foreach ($items as &$_video) {
             isset($cate_vids[$_video['vid']]) and $arrlist['list'][$_video['cid']]['news'][$_video['vid']] = $_video;
             isset($stickylist[$_video['vid']]) and $arrlist['sticky'][$_video['vid']] = $_video;

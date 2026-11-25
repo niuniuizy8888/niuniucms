@@ -134,20 +134,46 @@ class LexicalSafetyService
         }
         static $allowChars = array('(' => 1, ')' => 1, '[' => 1, ']' => 1, ',' => 1, ';' => 1, '.' => 1, '-' => 1);
         static $allowConst = array('true' => 1, 'false' => 1, 'null' => 1);
+        // 仅允许主题前缀隔离的 kv_* 最小白名单，彻底禁止 db_* 任意 SQL 与动态可调用表达式
+        static $allowFuncs = array('kv_get' => 1, 'kv_set' => 1, 'kv_delete' => 1);
         for ($i = 0; $i < $n; $i++) {
             $tok = $tokens[$i];
             if (!is_array($tok)) {
-                if (!isset($allowChars[$tok])) $findings[] = array('kind' => 'hook_token', 'name' => (string)$tok, 'expr' => '');
+                if (!isset($allowChars[$tok])) {
+                    $findings[] = array('kind' => 'hook_token', 'name' => (string)$tok, 'expr' => '');
+                    continue;
+                }
+                // '(' 仅允许紧跟 array(...) 或显式白名单函数名，彻底阻断 ('system')('id') / ['C','m']('x') 等动态调用
+                if ($tok === '(') {
+                    $prev = self::prevSignificant($tokens, $i - 1);
+                    $okPrev = ($prev !== null && ($prev[0] === T_ARRAY || ($prev[0] === T_STRING && isset($allowFuncs[strtolower($prev[1])]))));
+                    if (!$okPrev) {
+                        $findings[] = array('kind' => 'hook_dynamic_call', 'name' => $prev !== null ? (string)$prev[1] : '(', 'expr' => '');
+                    }
+                }
                 continue;
             }
             $type = $tok[0];
             if (isset($allowTypes[$type])) continue;
             if ($type === T_STRING) {
                 $low = strtolower($tok[1]);
-                $next = self::nextSignificant($tokens, $i + 1);
+                $nextIdx = self::nextSignificantIndex($tokens, $i + 1);
+                $next = $nextIdx !== null ? (is_array($tokens[$nextIdx]) ? $tokens[$nextIdx] : array(0 => $tokens[$nextIdx], 1 => (string)$tokens[$nextIdx])) : null;
                 if ($next !== null && $next[0] === '(') {
-                    if (strncmp($low, 'kv_', 3) === 0 || strncmp($low, 'db_', 3) === 0) continue;
-                    $findings[] = array('kind' => 'hook_call', 'name' => $tok[1], 'expr' => '');
+                    if (!isset($allowFuncs[$low])) {
+                        $findings[] = array('kind' => 'hook_call', 'name' => $tok[1], 'expr' => '');
+                        continue;
+                    }
+                    // kv_set / kv_delete 首参必须为 theme_ 前缀的字符串字面量，防止覆盖核心 runtime_conf/api/setting
+                    if ($low === 'kv_set' || $low === 'kv_delete') {
+                        $argIdx = self::nextSignificantIndex($tokens, $nextIdx + 1);
+                        $argTok = $argIdx !== null ? $tokens[$argIdx] : null;
+                        $keyVal = (is_array($argTok) && $argTok[0] === T_CONSTANT_ENCAPSED_STRING)
+                            ? self::decodeStringLiteral($argTok[1]) : '';
+                        if ($keyVal === '' || !str_starts_with($keyVal, 'theme_')) {
+                            $findings[] = array('kind' => 'hook_kv_scope', 'name' => $tok[1] . '(' . $keyVal . ')', 'expr' => '');
+                        }
+                    }
                     continue;
                 }
                 if (isset($allowConst[$low])) continue;
@@ -417,6 +443,9 @@ class LexicalSafetyService
         if ($phpSeen !== '' && empty($findings)) {
             // PHP 段存在但仅空白——仍记录（纵深冗余，正则符号层已先行拦截）
             $findings[] = array('kind' => 'php_tag', 'name' => $phpSeen, 'expr' => $phpSeen);
+        } elseif (str_contains($code, '<?')) {
+            // short_open_tag=0 时 `<?` 分词为 T_INLINE_HTML，在此纵深兜底拦截
+            $findings[] = array('kind' => 'php_tag', 'name' => '<?', 'expr' => '<?');
         }
 
         // 指令表达式提取（与既有深扫同口径）

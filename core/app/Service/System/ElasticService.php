@@ -85,7 +85,7 @@ class ElasticService
         // 注意：_SERVER() 可能返回 NULL，PHP8 下不可直接取下标（会告警），故先归一为数组。
         $isHttps = (0 === stripos($url, 'https://'));
         $gConf = function_exists('_SERVER') ? _SERVER('conf') : NULL;
-        $verify = ($isHttps && is_array($gConf) && !empty($gConf['ssl_verify']));
+        $verify = $isHttps && ((is_array($gConf) && array_key_exists('ssl_verify', $gConf)) ? !empty($gConf['ssl_verify']) : true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $verify);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $verify ? 2 : 0);
         return $ch;
@@ -120,7 +120,7 @@ class ElasticService
         $headers = array('Content-Type: application/json');
 
         if (!empty($apiKey)) {
-            $headers[] = 'Authorization: ApiKey ' . $apiKey;
+            $headers[] = 'Authorization: ApiKey ' . preg_replace('/[\r\n\x00]/', '', (string)$apiKey);
         }
 
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
@@ -128,19 +128,23 @@ class ElasticService
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::CONNECT_TIMEOUT);
         curl_setopt($ch, CURLOPT_TIMEOUT, self::REQUEST_TIMEOUT);
 
-        if (empty($apiKey)) {
+        if (empty($apiKey) && ($esUser !== '' || $esPass !== '')) {
             curl_setopt($ch, CURLOPT_USERPWD, "$esUser:$esPass");
         }
 
         if ($data !== null) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, JSON_UNESCAPED_UNICODE));
+            $jsonBody = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($jsonBody === false) {
+                xn_log("ES request json_encode failed — $method $url", 'es_error');
+                return null;
+            }
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonBody);
         }
 
         $res = curl_exec($ch);
         $errno = curl_errno($ch);
         $error = curl_error($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
 
         if ($res === false || $errno !== 0) {
             xn_log("ES request failed: [$errno] $error — $method $url", 'es_error');
@@ -189,27 +193,30 @@ class ElasticService
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::PING_TIMEOUT);
         curl_setopt($ch, CURLOPT_TIMEOUT, self::PING_TIMEOUT);
 
-        $apiKey = $conf['es']['api_key'];
+        $apiKey = preg_replace('/[\r\n\x00]/', '', (string)($conf['es']['api_key'] ?? ''));
         if (!empty($apiKey)) {
             curl_setopt($ch, CURLOPT_HTTPHEADER, array('Authorization: ApiKey ' . $apiKey));
         } else {
-            $esUser = $conf['es']['user'];
-            $esPass = $conf['es']['pass'];
-            curl_setopt($ch, CURLOPT_USERPWD, "$esUser:$esPass");
+            $esUser = (string)($conf['es']['user'] ?? '');
+            $esPass = (string)($conf['es']['pass'] ?? '');
+            if ($esUser !== '' || $esPass !== '') {
+                curl_setopt($ch, CURLOPT_USERPWD, "$esUser:$esPass");
+            }
         }
 
         $res = curl_exec($ch);
         $errno = curl_errno($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
 
         // ⚠ 状态码判定（审查修复）：旧实现 curl errno=0 即算可达——认证失败（401）也会
         //   breakerReset 并报 true。现 HTTP ≥400 一律按故障计（熔断 + false）。
         if ($res === false || $errno !== 0 || $httpCode >= 400) {
+            self::markAvailability(false);
             self::breakerFail();
             return false;
         }
 
+        self::markAvailability(true);
         self::breakerReset();
         return true;
     }
@@ -317,6 +324,21 @@ class ElasticService
     }
 
     /**
+     * 单条删除搜索文档：DELETE /{index}/_doc/{vid}（视频删除时同步清理，防幽灵结果）
+     */
+    public static function deleteOne(int $vid)
+    {
+        if ($vid <= 0) return null;
+        $conf = _SERVER('conf');
+        if (empty($conf['es']['host']) || empty($conf['es']['index'])) return null;
+        if (!self::breakerAllow()) return null;
+        if (cache_get('es_available_check') === false) return null;
+        $esHost = rtrim((string)$conf['es']['host'], '/');
+        $index = (string)$conf['es']['index'];
+        return self::request('DELETE', "$esHost/$index/_doc/$vid");
+    }
+
+    /**
      * 批量写入：拼 NDJSON 后 POST {es.host}/_bulk（元素 vid/name 逐条 intval/(string) 归一，
      * _id=vid 覆盖式）。总超时放宽到 30s（区别于 request 的 3s）。
      * ⚠ 前置闸已补：原实现不走 breakerAllow()（docblock 也这么写），而同方法自己的 @return 又声明
@@ -346,13 +368,17 @@ class ElasticService
         foreach ($list as $item) {
             $vid = intval($item['vid'] ?? 0);
             $name = (string)($item['name'] ?? '');
-            $body .= json_encode(array('index' => array('_index' => $index, '_id' => $vid))) . "\n";
-            $body .= json_encode(array('vid' => $vid, 'name' => $name), JSON_UNESCAPED_UNICODE) . "\n";
+            $meta = json_encode(array('index' => array('_index' => $index, '_id' => $vid)), JSON_INVALID_UTF8_SUBSTITUTE);
+            $doc = json_encode(array('vid' => $vid, 'name' => $name), JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($meta === false || $doc === false) continue;
+            $body .= $meta . "\n" . $doc . "\n";
         }
+        if ($body === '') return null;
 
         // 修复（VULN-H03）：bulk 同样过统一出站闸（原仅 scheme 正则）
         $ch = self::esCurlInit((string)$esHost . '/_bulk');
         if ($ch === false) {
+            self::markAvailability(false);
             self::breakerFail();
             return null;
         }
@@ -362,8 +388,8 @@ class ElasticService
 
         $headers = array('Content-Type: application/x-ndjson');
         if (!empty($apiKey)) {
-            $headers[] = 'Authorization: ApiKey ' . $apiKey;
-        } else {
+            $headers[] = 'Authorization: ApiKey ' . preg_replace('/[\r\n\x00]/', '', (string)$apiKey);
+        } elseif ($esUser !== '' || $esPass !== '') {
             curl_setopt($ch, CURLOPT_USERPWD, "$esUser:$esPass");
         }
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -372,10 +398,10 @@ class ElasticService
         $errno = curl_errno($ch);
         $error = curl_error($ch);
         $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
 
         if ($res === false || $errno !== 0) {
             xn_log("ES bulk_insert failed: [$errno] $error", 'es_error');
+            self::markAvailability(false);
             self::breakerFail();
             return null;
         }
@@ -384,10 +410,12 @@ class ElasticService
         // 其余 4xx 原样返回（bulk 响应体内的逐条 errors 由调用方自行判读）。
         if ($httpCode >= 500 || 401 === $httpCode || 403 === $httpCode) {
             xn_log("ES bulk_insert HTTP $httpCode: " . substr((string)$res, 0, 300), 'es_error');
+            self::markAvailability(false);
             self::breakerFail();
             return null;
         }
         if ($httpCode >= 200 && $httpCode < 300) {
+            self::markAvailability(true);
             self::breakerReset();
         }
         return json_decode($res, true);
@@ -427,7 +455,7 @@ class ElasticService
                 $result[] = $hit['_source'];
             }
         }
-        return json_encode($result, JSON_UNESCAPED_UNICODE);
+        return json_encode($result, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?: '[]';
     }
 
     /**

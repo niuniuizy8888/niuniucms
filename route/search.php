@@ -56,7 +56,7 @@ if ($keyword) {
     $searchPage = \App\Service\Front\SearchService::resolvePage();
     $kwLen = function_exists('mb_strlen') ? mb_strlen((string)$keyword, 'UTF-8') : strlen((string)$keyword);
     if (!$json && DEBUG == 0 && $kwLen <= 30 && $searchPage <= 10) {
-        $searchCacheKey = 'page_search_' . md5('kw:' . $keyword . '_p' . $searchPage . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0));
+        $searchCacheKey = 'page_search_' . md5('kw:' . $keyword . '_p' . $searchPage . '_u' . intval($uid) . '_g' . $gid . '_v' . \App\Service\Content\ContentVisibilityService::fingerprint() . '_r' . ($conf['url_rewrite_on'] ?? 0));
         if (page_cache_start($searchCacheKey)) exit;
         $search_cache_started = true;
     }

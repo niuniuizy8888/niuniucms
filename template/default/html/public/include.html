@@ -8,7 +8,7 @@
 <meta property="og:title" content="{h:$seo.t}" />
 <meta property="og:description" content="{h:$seo.d}" />
 <meta property="og:type" content="{if:isset($video)}video{else}website{/if}" />
-<meta property="og:site_name" content="{$nncms.site_name}" />
+<meta property="og:site_name" content="{h:$nncms.site_name}" />
 {if:isset($seo['url']) && !empty($seo['url'])}<meta property="og:url" content="{h:$seo.url}" />{/if}
 {if:isset($seo['image']) && !empty($seo['image'])}<meta property="og:image" content="{h:$seo.image}" />{/if}
 <meta name="theme-color" content="#0a0a0a" />

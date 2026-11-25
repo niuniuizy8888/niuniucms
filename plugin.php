@@ -280,32 +280,33 @@ function plugin_scaffold_new($ROOT, $dir, $name)
         exit(1);
     }
     $name = '' !== $name ? $name : $dir;
+    $nameComment = str_replace(array("\r", "\n", '*/', '<?', '?>'), ' ', $name);
+    $namePhpText = var_export($name . ' 已启用——后台插件列表点「设置」修改本条文案。', true);
+    $nameHtml = htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     $kvKey = 'plugin_' . $dir;          // 插件 kv 键统一加目录前缀防冲突
 
     // ---- 骨架模板（与 .skills/插件开发.md 手册示例同构：kv 配置 + 页脚钩子 + 设置页） ----
-    $conf = <<<JSON
-{
-    "name": "{$name}",
-    "version": "0.1.0",
-    "software_version": "",
-    "brief": "{$name}（脚手架生成：页脚信息条示例，后台可配置开关与文案）",
-    "author": "",
-    "installed": 0,
-    "enable": 0,
-    "hooks_rank": {"foot_end.php": 0}
-}
-JSON;
+    $conf = json_encode(array(
+        'name' => $name,
+        'version' => '0.1.0',
+        'software_version' => '',
+        'brief' => $name . '（脚手架生成：页脚信息条示例，后台可配置开关与文案）',
+        'author' => '',
+        'installed' => 0,
+        'enable' => 0,
+        'hooks_rank' => array('foot_end.php' => 0),
+    ), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
     $install = <<<PHP
 <?php
-// {$name} · 安装脚本（install 标志写入后执行一次；异常自动回滚安装标志）
+// {$nameComment} · 安装脚本（install 标志写入后执行一次；异常自动回滚安装标志）
 // install.php 是直接执行脚本：不带 hook 的 `<?php exit;` 头（那是 hook/*.php 专属约定）。
 
 // 默认配置写入 kv（键名统一加插件前缀防冲突；kv_set 自带缓存失效）
 if (NULL === kv_get('{$kvKey}')) {
     kv_set('{$kvKey}', array(
         'on'    => 1,
-        'text'  => '{$name} 已启用——后台插件列表点「设置」修改本条文案。',
+        'text'  => {$namePhpText},
         'bg'    => '#1d4ed8',
         'color' => '#ffffff',
     ));
@@ -314,14 +315,14 @@ PHP;
 
     $uninstall = <<<PHP
 <?php
-// {$name} · 卸载脚本（uninstall 标志写入后执行一次；清理插件写入的 kv 数据）
+// {$nameComment} · 卸载脚本（uninstall 标志写入后执行一次；清理插件写入的 kv 数据）
 kv_delete('{$kvKey}');
 PHP;
 
     $hook = <<<PHP
 <?php exit; ?>
 <?php
-/* {$name} · 页脚注入（foot_end.php）
+/* {$nameComment} · 页脚注入（foot_end.php）
  * HTML 上下文 hook 约定：首行 = exit 头带闭合标签（编译期剥头连闭合一并剥掉），
  * body 从 php 开标签重新进入代码态；裸语句格式（exit 头不带闭合）仅限 PHP 上下文 hook（core/model、route）。
  * 铁律：本注释与字符串内严禁出现 php 开/闭标签字面序列——编译期 balancePhpMode 按字面计数配平模式态，
@@ -345,7 +346,7 @@ PHP;
 
     $setting = <<<PHP
 <?php
-// {$name} · 后台设置页（addon-setting&dir={$dir}，渲染于后台 head/foot 包裹内）
+// {$nameComment} · 后台设置页（addon-setting&dir={$dir}，渲染于后台 head/foot 包裹内）
 // 数据存 kv；写操作走 bull token（admin_require_bull_token 校验 safe_token）。
 
 \$cfg = kv_get('{$kvKey}');
@@ -372,7 +373,7 @@ if ('POST' == \$method) {
 }
 ?>
 <div class="card" style="max-width:760px">
-    <h2 style="margin-top:0">{$name} · 设置</h2>
+    <h2 style="margin-top:0">{$nameHtml} · 设置</h2>
     <form method="post">
         <input type="hidden" name="safe_token" value="<?= bull_token_get(\$uid, 'plugin_{$dir}_set') ?>">
         <p><label><input type="checkbox" name="on" value="1" <?= !empty(\$cfg['on']) ? 'checked' : '' ?>> 启用</label></p>

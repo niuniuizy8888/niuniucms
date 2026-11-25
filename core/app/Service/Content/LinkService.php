@@ -52,7 +52,7 @@ class LinkService
      */
     public static function listCache(int $page = 1, int $pagesize = 100): array
     {
-        $ver = (int)cache_get('link_cache_ver');
+        $ver = (int)cache_shared_get('link_cache_ver');
         $key = 'friends_link_' . $ver . '_' . $page . '_' . $pagesize;
         $rows = cache_get($key);
         if (NULL === $rows) {
@@ -116,8 +116,8 @@ class LinkService
      */
     public static function deleteCache(): bool
     {
-        $ver = (int)cache_get('link_cache_ver');
-        cache_set('link_cache_ver', $ver + 1, 86400 * 30);
+        $ver = (int)cache_shared_get('link_cache_ver');
+        cache_shared_set('link_cache_ver', $ver + 1, 86400 * 30);
         return TRUE;
     }
 }

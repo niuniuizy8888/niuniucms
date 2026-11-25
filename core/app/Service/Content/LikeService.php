@@ -88,13 +88,15 @@ class LikeService
     public static function incrementCounter($aid, $model)
     {
         $aid = intval($aid);
-        if (1 == intval($model)) {
-            \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid), array('likes+' => 1));
-            content_cache_delete('art_', $aid);
-            return;
-        }
-        \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid), array('likes+' => 1));
-        content_cache_delete('vod_', $aid);
+        \App\Repository\DbTableRepository::withoutPageCacheBump(static function () use ($aid, $model) {
+            if (1 == intval($model)) {
+                \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid), array('likes+' => 1));
+                content_cache_delete('art_', $aid);
+                return;
+            }
+            \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid), array('likes+' => 1));
+            content_cache_delete('vod_', $aid);
+        });
     }
 
     /**
@@ -111,13 +113,15 @@ class LikeService
         // 上线前安全审计修复（F-10）：减计加 `>0` 钳制——unlike 分支「先 check（300s 缓存）
         // 后 remove 再 decrement」非原子，并发双 unlike 或缓存未失效时第二次删 0 行但照减，计数可负漂移。
         // 条件走 applyCond 操作符数组（QueryBuilder 预编译路径）。
-        if (1 == intval($model)) {
-            \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid, 'likes' => array('>' => 0)), array('likes-' => 1));
-            content_cache_delete('art_', $aid);
-            return;
-        }
-        \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid, 'likes' => array('>' => 0)), array('likes-' => 1));
-        content_cache_delete('vod_', $aid);
+        \App\Repository\DbTableRepository::withoutPageCacheBump(static function () use ($aid, $model) {
+            if (1 == intval($model)) {
+                \App\Repository\RepositoryFactory::art()->update(array('aid' => $aid, 'likes' => array('>' => 0)), array('likes-' => 1));
+                content_cache_delete('art_', $aid);
+                return;
+            }
+            \App\Repository\RepositoryFactory::vod()->update(array('vid' => $aid, 'likes' => array('>' => 0)), array('likes-' => 1));
+            content_cache_delete('vod_', $aid);
+        });
     }
 
     /**

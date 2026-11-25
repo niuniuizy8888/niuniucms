@@ -29,6 +29,7 @@ class AddonService
     private static $addons_paths = array();
     private static $addonss = array();
     private static $g_include_slot_kv = array();
+    public static $g_include_tpl_scope = false;
     private static $initialized = false;
     /** enabledPaths() / hooksSignature() 的请求级缓存（原函数级 static，改为属性以便测试复位） */
     private static $enabledPathsCache = NULL;
@@ -446,20 +447,18 @@ class AddonService
         $ext = file_ext($tmpfile);
         $isHtml = in_array($ext, array('htm', 'html'));
         if ('php' == $ext && 0 == DEBUG && $conf['compress'] > 0) {
-            // php_strip_whitespace 需要真实文件：写独立临时文件，避免污染正式缓存（防护分支 $old 比对依赖）
-            $stripFile = $tmpfile . '.strip.tmp';
+            // php_strip_whitespace 需要真实文件：写唯一临时文件防并发踩踏
+            $stripFile = $tmpfile . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.strip.tmp';
             $orig = $s;
             file_put_contents_try($stripFile, $s);
             $s = trim(php_strip_whitespace($stripFile));
             @unlink($stripFile);
-            // 中间文件被杀毒/配额清掉时 strip 读回空串 ⇒ 用未压缩原文（功能等价），不产出空产物
             if ('' === $s && is_string($orig) && '' !== trim($orig)) {
                 xn_log('php_strip_whitespace returned empty, using uncompressed ' . $tmpfile, 'addon_compile_error');
                 $s = $orig;
             }
         } elseif ($isHtml && 0 == DEBUG && $conf['compress'] > 0) {
-            // HTML 档位口径：先写盘再读回（hook 处理依赖文件），写独立临时文件避免污染正式缓存（防护分支 $old 比对依赖）
-            $stripFile = $tmpfile . '.strip.tmp';
+            $stripFile = $tmpfile . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.strip.tmp';
             $orig = $s;
             file_put_contents_try($stripFile, $s);
             $s = self::compileSourceFile($stripFile);
@@ -469,12 +468,13 @@ class AddonService
                 $s = $orig;
             }
             if (1 == $conf['compress']) {
-                $s = str_replace(array("\t"), '', $s);
-                $compressed = preg_replace(array("#> *([^ ]*) *<#", "#<!--[\\w\\W\r\\n]*?-->#", "# \"#", '#>\s+<#', "#/\*[^*]*\*/#", "//", '#/\*[\s\S]*?\*/#', "#>\s+\r\n#"), array(">\\1<", '', "\"", '><', '', '', '', '>'), $s);
-                if ($compressed !== null) $s = $compressed;
+                // 禁止将 \t 删成空串，防止 <\t?php 在压缩阶段重组为 PHP 开标签
+                $s = str_replace("\t", ' ', $s);
+                $compressed = preg_replace(array("#> *([^ ]*) *<#", "#<!--(?!\{hook\b)[\s\S]*?-->#", '#>\s+<#', "#>\s+\r\n#"), array(">\\1<", ' ', '><', '>'), $s);
+                if ($compressed !== null && '' !== trim($compressed)) $s = $compressed;
             } elseif (2 == $conf['compress']) {
-                $compressed = preg_replace(array("#> *([^ ]*) *<#", "#[\s]+#", "#<!--[\\w\\W\r\\n]*?-->#", "# \"#", "#/\*[^*]*\*/#", "//", '#/\*[\s\S]*?\*/#'), array(">\\1<", ' ', '', "\"", '', '', '><', ''), $s);
-                if ($compressed !== null) $s = $compressed;
+                $compressed = preg_replace(array("#> *([^ ]*) *<#", "#[\s]+#", "#<!--(?!\{hook\b)[\s\S]*?-->#", '#>\s+<#'), array(">\\1<", ' ', ' ', '><'), $s);
+                if ($compressed !== null && '' !== trim($compressed)) $s = $compressed;
             }
         }
         return $s;
@@ -490,23 +490,19 @@ class AddonService
      */
     public static function includeTemplateCallback(array $m)
     {
-        // 安全闸（S9）：此标签回调历史零校验，file_get_contents($m[1]) 可读任意路径——
-        // 绝对路径/../穿越/phar:// 入口（全仓 14 处 unserialize allowed_classes=false 对 phar stub 触发无效）。
-        // 红线不动编译规则（view.php 正则），仅收紧回调取文件语义：必须解析进 template/、plugins/、core/admin/html/ 前缀
         $path = (string) $m[1];
         if ($path === '' || str_contains($path, "\0") || preg_match('#://|\\\\#', $path) || str_contains($path, '..')) {
-            return '';
+            return ' ';
         }
         $base = defined('APP_PATH') ? APP_PATH : './';
         $real = realpath($base . ltrim($path, '/'));
         if ($real === FALSE) {
-            return '';
+            return ' ';
         }
-        $allowedRoots = array(
-            realpath($base . 'template'),
-            realpath($base . 'plugins'),
-            realpath($base . 'core/admin/html'),
-        );
+        // 前台主题作用域（$g_include_tpl_scope=true）仅允许包含 template/ 下模板，禁止跨作用域引入后台或插件目录
+        $allowedRoots = self::$g_include_tpl_scope
+            ? array(realpath($base . 'template'))
+            : array(realpath($base . 'template'), realpath($base . 'plugins'), realpath($base . 'core/admin/html'));
         $ok = FALSE;
         foreach ($allowedRoots as $root) {
             if ($root !== FALSE && str_starts_with($real, $root . DIRECTORY_SEPARATOR)) {
@@ -515,17 +511,12 @@ class AddonService
             }
         }
         if (!$ok) {
-            return '';
+            return ' ';
         }
         $r = @file_get_contents($real);
         if ($r === FALSE) {
-            return '';
+            return ' ';
         }
-        // 上线前审计修复（VULN-C02 第二向量）：本回调在 view.php 里位于
-        // `preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s','',$s)` **之后**执行，此前 file_get_contents
-        // 的结果原样返回 ⇒ 被 include 的文件里的原生 php 段直达编译产物并执行（与 {inc:} 同一
-        // 根因）。此处做等价收口：重剥原生 PHP + 重跑内容闸，命中即整段丢弃；闸不可用 fail-closed。
-        // 被包含内容只应是模板片段（HTML + 模板指令），不含原生 PHP。
         $r = preg_replace('#(?:\<\?.*?\?\>|\<\?.*)#s', '', $r);
         try {
             $incFindings = \App\Service\System\TemplateService::legacyRegexFindings($r);
@@ -538,21 +529,23 @@ class AddonService
                     $reason = is_array($first) ? ((string)($first['kind'] ?? '') . ' ' . (string)($first['name'] ?? '')) : (string)$first;
                     xn_log('template <template include> content gate rejected: ' . $reason, 'addon_compile_error');
                 }
-                return '';
+                return ' ';
             }
         } catch (\Throwable $e) {
             if (function_exists('xn_log')) xn_log('template <template include> content gate error: ' . $e->getMessage(), 'addon_compile_error');
-            return '';
+            return ' ';
         }
         preg_match_all('#<slot\sname="(.*?)">(.*?)</slot>#is', $m[2], $m2);
         if (!empty($m2[1])) {
             $kv = array_combine($m2[1], $m2[2]);
-            self::$g_include_slot_kv += $kv;
-            foreach (self::$g_include_slot_kv as $slot => $content) {
-                $r = preg_replace('#<slot\sname="' . $slot . '"\s*/>#is', $content, $r);
+            foreach ($kv as $slot => $content) {
+                $slotQuoted = preg_quote((string)$slot, '#');
+                $r = preg_replace_callback('#<slot\sname="' . $slotQuoted . '"\s*/>#is', function () use ($content) {
+                    return ' ' . (string)$content . ' ';
+                }, $r);
             }
         }
-        return $r;
+        return ' ' . $r . ' ';
     }
 
     /**
@@ -669,7 +662,14 @@ class AddonService
         $conffile = \APP_PATH . "plugins/$dir/conf.json";
         if (!is_file($conffile)) return self::fail('conf.json 不存在');
         $pconf = xn_json_decode((string)file_get_contents($conffile));
-        if (!self::checkSoftwareVersion(is_array($pconf) ? $pconf : array())) return FALSE;
+        if (!is_array($pconf) || empty($pconf['installed'])) {
+            return self::fail('插件尚未安装，禁止启用');
+        }
+        if (!self::checkSoftwareVersion($pconf)) return FALSE;
+        $missingDeps = self::dependencies($dir);
+        if (!empty($missingDeps)) {
+            return self::fail('缺少前置依赖插件: ' . implode(', ', array_keys($missingDeps)));
+        }
         // R1-2：启用前置校验——语法坏插件此前=全站白屏（内联产物 parse error）或静默空转（空编译缓存），现在是明确报错
         if (TRUE !== self::verifyAddonCode($dir)) return FALSE;
         $r = file_replace_var($conffile, array('enable' => 1), TRUE);
@@ -855,8 +855,13 @@ class AddonService
      */
     public static function entryBlocked($entry)
     {
-        $norm = strtolower(str_replace('\\', '/', (string)$entry));
+        $raw = (string)$entry;
+        if ('' === $raw || str_contains($raw, "\0")) return TRUE;
+        $norm = strtolower(str_replace('\\', '/', $raw));
+        while (str_starts_with($norm, './')) $norm = substr($norm, 2);
         if ('' === $norm) return TRUE;
+        // 拒绝任何点文件或点目录段（如 .git/config、.hidden/a.php、.htaccess）
+        if (preg_match('#(^|/)\.#', $norm)) return TRUE;
         $base = basename($norm);
         if ('' === $base || '.' === $base[0]) return TRUE;
         $ext = pathinfo($norm, PATHINFO_EXTENSION);
@@ -893,12 +898,14 @@ class AddonService
         for ($i = 0; $i < $zip->numFiles; $i++) {
             $entry = (string)$zip->getNameIndex($i);
             $norm = str_replace('\\', '/', $entry);
-            if ('' === $norm || '/' === $norm[0] || str_contains($norm, ':') || preg_match('#(^|/)\.\.(/|$)#', $norm)) {
+            if ('' === $norm || str_contains($entry, "\0") || '/' === $norm[0] || str_contains($norm, ':') || preg_match('#(^|/)\.\.(/|$)#', $norm)) {
                 $zip->close();
                 return self::fail('非法包路径: ' . $entry);
             }
-            $st = $zip->statIndex($i);
-            if (is_array($st) && isset($st['external']) && (((intval($st['external']) >> 16) & 0120000) === 0120000)) {
+            $opsys = 0; $attr = 0;
+            if ($zip->getExternalAttributesIndex($i, $opsys, $attr)
+                && (($opsys & 0xFF) === \ZipArchive::OPSYS_UNIX)
+                && ((($attr >> 16) & 0170000) === 0120000)) {
                 $zip->close();
                 return self::fail('软链条目被拒绝: ' . $entry);
             }
@@ -906,6 +913,7 @@ class AddonService
                 $zip->close();
                 return self::fail('条目被拒绝: ' . $entry);
             }
+            $st = $zip->statIndex($i);
             $uncompressed += (is_array($st) && isset($st['size'])) ? (int)$st['size'] : 0;
             if ($uncompressed > self::ZIP_MAX_UNCOMPRESSED) {
                 $zip->close();
@@ -950,12 +958,25 @@ class AddonService
             rmdir_recusive($tmpDir);
             return self::fail('无效插件包: conf.json 不存在');
         }
+        // 解压后符号链接复检 + 在暂存目录完成代码校验与标志归一，再原子落位（消除生产目录未校验竞态窗口）
+        $stageIter = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($sourceDir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::SELF_FIRST
+        );
+        foreach ($stageIter as $sf) {
+            if ($sf->isLink()) {
+                rmdir_recusive($tmpDir);
+                return self::fail('解压产物包含符号链接，已拒绝');
+            }
+        }
+        if (TRUE !== self::verifyAddonDir($sourceDir)) {
+            $err = self::$lastError;
+            rmdir_recusive($tmpDir);
+            return self::fail($err . '（站点未改动）');
+        }
         // 4) 目标冲突：已存在 → 默认拒绝；replace=1 → 旧目录挪入 runtime/backup（保留可还原）
         $target = \APP_PATH . 'plugins/' . $dir;
         $backupPath = '';
-        // 更新（$keepFlags）前先抓取旧标志。必须在挪走旧目录**之前**读：
-        // 包内 conf.json 是发布时的状态（通常 installed/enable 全 0），
-        // 只靠「不归零」是保不住标记的——见下方第 5 步的还原逻辑。
         $prevFlags = NULL;
         if ($keepFlags && is_file($target . '/conf.json')) {
             $pj = xn_json_decode((string)file_get_contents($target . '/conf.json'));
@@ -966,15 +987,28 @@ class AddonService
                 );
             }
         }
+        $stageConfFile = $sourceDir . 'conf.json';
+        $arr = xn_json_decode((string)file_get_contents($stageConfFile));
+        if (!$keepFlags && is_array($arr) && (!empty($arr['installed']) || !empty($arr['enable']))) {
+            if (!file_replace_var($stageConfFile, array('installed' => 0, 'enable' => 0), TRUE)) {
+                rmdir_recusive($tmpDir);
+                return self::fail('无法归零插件激活标志，已中止');
+            }
+        }
+        if ($keepFlags && is_array($prevFlags)) {
+            if (!file_replace_var($stageConfFile, array(
+                'installed' => (int)$prevFlags['installed'],
+                'enable' => (int)$prevFlags['enable'],
+            ), TRUE)) {
+                rmdir_recusive($tmpDir);
+                return self::fail('无法写回插件既有标志，已中止');
+            }
+        }
         if (is_dir($target)) {
             if (!$replace) {
                 rmdir_recusive($tmpDir);
                 return self::fail('插件目录已存在: ' . $dir . '（覆盖请勾选强制替换）');
             }
-            // 备份路径必须唯一：原实现只用 date('YmdHis')（秒级精度），
-            // 同一秒内对同一插件做两次覆盖安装（批量/脚本化更新、重试）会算出同一路径，
-            // 而 rename() 到**已存在的非空目录**会失败 ⇒ 第二次更新以「旧插件目录备份失败」
-            // 中止（错误信息还指向错误的方向）。补随机后缀 + 存在性探测确保唯一。
             $stamp = date('YmdHis');
             $backupPath = \APP_PATH . 'runtime/backup/addon_' . $dir . '_' . $stamp;
             if (is_dir($backupPath)) {
@@ -990,36 +1024,14 @@ class AddonService
                 return self::fail('旧插件目录备份失败，已中止（未做任何改动）');
             }
         }
-        // 5) 落位 → 归一标志 → R1-2 闸；任何一步失败全量回滚（新目录删、旧目录还原）
+        // 5) 原子落位
         if (!@rename(rtrim($sourceDir, '/'), $target)) {
             rmdir_recusive($tmpDir);
             if ('' !== $backupPath) @rename($backupPath, $target);
             return self::fail('插件目录落位失败');
         }
         rmdir_recusive($tmpDir);
-        $conffile = $target . '/conf.json';
-        $arr = xn_json_decode((string)file_get_contents($conffile));
-        // 上传≠启用：包内自带 installed/enable 标志一律归零（商店更新走 $keepFlags=TRUE 保留现有启用状态）
-        if (!$keepFlags && !empty($arr) && is_array($arr) && (!empty($arr['installed']) || !empty($arr['enable']))) {
-            file_replace_var($conffile, array('installed' => 0, 'enable' => 0), TRUE);
-        }
-        // 保留标志：把旧状态**显式写回**。原先只做到「不主动归零」，而商店包内 conf.json
-        // 是发布态（installed=0/enable=0）⇒ 更新一个「已安装但已停用」的插件会把它悄悄变成
-        // 「未安装」，与方法注释承诺的语义相反（实测：更新前 installed=1/enable=0 → 更新后 0/0）。
-        if ($keepFlags && is_array($prevFlags)) {
-            file_replace_var($conffile, array(
-                'installed' => (int)$prevFlags['installed'],
-                'enable' => (int)$prevFlags['enable'],
-            ), TRUE);
-        }
-        if (TRUE !== self::verifyAddonCode($dir)) {
-            $err = self::$lastError;
-            rmdir_recusive($target);
-            if ('' !== $backupPath) @rename($backupPath, $target);
-            return self::fail($err . '（已回滚，站点未改动）');
-        }
         if ($keepFlags) self::clearTmpDir(); // 覆盖已启用插件的文件后，编译产物必须重建
-        // overwrite 基线：升级重装按当前核心重算（原文件可能已随核心升级变化）
         self::overwriteBaselineWrite($dir);
         self::$lastError = '';
         return $dir;
@@ -1046,7 +1058,12 @@ class AddonService
     public static function verifyAddonCode($dir)
     {
         if (!self::isValidDirName($dir)) return self::fail('插件目录名非法');
-        $base = \APP_PATH . 'plugins/' . $dir . '/';
+        return self::verifyAddonDir(\APP_PATH . 'plugins/' . $dir . '/');
+    }
+
+    private static function verifyAddonDir($base)
+    {
+        $base = rtrim(str_replace('\\', '/', (string)$base), '/') . '/';
         if (!is_file($base . 'conf.json')) return self::fail('conf.json 不存在');
         $conf = xn_json_decode((string)file_get_contents($base . 'conf.json'));
         if (empty($conf) || !is_array($conf)) return self::fail('conf.json 解析失败');
@@ -1054,8 +1071,6 @@ class AddonService
         if (is_array($hookpaths)) {
             foreach ($hookpaths as $hp) {
                 $t = (string)file_get_contents($hp);
-                // 发布前检查修复（E-2）：判头正则与编译期剥头统一为 \s+——原 \s* 放行的
-                // 「<?phpexit;」（无空白）运行期剥头失配=安装成功但静默空转+每请求降级重试
                 if (!preg_match('#^\s*<\?php\s+exit;#is', $t)) {
                     return self::fail('hook 文件缺少 "<?php exit;" 头: hook/' . file_name($hp));
                 }
@@ -1069,7 +1084,7 @@ class AddonService
             $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($owDir, \FilesystemIterator::SKIP_DOTS));
             foreach ($it as $f) {
                 if (!$f->isFile() || 'php' !== strtolower($f->getExtension())) continue;
-                $rel = str_replace($base, '', $f->getPathname());
+                $rel = str_replace($base, '', str_replace('\\', '/', $f->getPathname()));
                 $err = self::phpParseError((string)file_get_contents($f->getPathname()), $rel);
                 if (NULL !== $err) return self::fail($err);
             }
@@ -1598,6 +1613,7 @@ class AddonService
                 // 缺失或非 64 位 hex 一律归一为 '' ⇒ 调用方跳过校验而非误判失败。
                 'sha256' => (isset($e['sha256']) && is_string($e['sha256']) && 1 === preg_match('#^[0-9a-f]{64}$#i', $e['sha256']))
                     ? strtolower($e['sha256']) : '',
+                'sig' => (isset($e['sig']) && is_string($e['sig'])) ? trim($e['sig']) : '',
             );
         }
         cache_set('store_plugins_v2', $out, 600);

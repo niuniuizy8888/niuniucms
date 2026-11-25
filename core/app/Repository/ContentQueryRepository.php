@@ -113,13 +113,17 @@ class ContentQueryRepository
      * @param \PdoDriver|null $d 连接选择器
      * @return array<int> 命中的主键数组（按 idCol 降序，非相关度排序）；无结果空数组
      */
-    public function searchIdsByKeyword(string $table, string $idCol, string $keyword, int $limit = 60, $d = NULL): array
+    public function searchIdsByKeyword(string $table, string $idCol, string $keyword, int $limit = 60, $d = NULL, ?array $cids = NULL): array
     {
         $raw = trim((string)$keyword);
         if ($raw === '') return array();
+        if (NULL !== $cids) {
+            $cids = array_values(array_unique(array_filter(array_map('intval', $cids), static function ($id) { return $id > 0; })));
+            if (empty($cids)) return array();
+        }
         // P-4：同 searchByKeyword，优先走 ngram FULLTEXT，失败回退 LIKE
         if ('vod' === $table) {
-            $ftRows = $this->fulltextSearch($table, $idCol, $raw, $limit, array($idCol), $d);
+            $ftRows = $this->fulltextSearch($table, $idCol, $raw, $limit, array($idCol), $d, $cids);
             if (NULL !== $ftRows) {
                 $items = array();
                 foreach ($ftRows as $row) {
@@ -131,10 +135,13 @@ class ContentQueryRepository
         $keyword = $this->normalizeKeyword($raw);
         if ($keyword === '') return array();
 
-        $rows = $this->tableBuilder($table, $d)
+        $qb = $this->tableBuilder($table, $d)
             ->select(array($idCol))
-            ->where('name', 'LIKE', '%' . $keyword . '%')
-            ->orderBy($idCol, 'DESC')
+            ->where('name', 'LIKE', '%' . $keyword . '%');
+        if (NULL !== $cids) {
+            $qb->whereIn('cid', $cids);
+        }
+        $rows = $qb->orderBy($idCol, 'DESC')
             ->limit($limit)
             ->get();
         if (empty($rows)) return array();
@@ -210,55 +217,38 @@ class ContentQueryRepository
             return TRUE;
         };
 
-        $countQb = $this->tableBuilder($table, NULL);
-        if (!$cidBuilder($countQb)) {
-            return array('list' => array(), 'total' => 0);
-        }
-        $countQb->where('create_date', '>=', $start);
-        $total = $countQb->count();
-
-        // SQL 专项审计修复（R05/P0-3）：拆两步，消除 `GROUP BY + COUNT(*) + ORDER BY 聚合别名`
-        // 产生的 Using temporary; Using filesort（原为单条聚合查询，EXPLAIN 实测见审计报告 §8.4 ③）。
-        // ① 先按覆盖索引取「命中的候选 id 集合」——ORDER BY $idCol DESC 走 (cid,create_date,$idCol)
-        //    覆盖索引，只回表 id，无聚合无排序临时表；
-        // ② 再对**有界**候选集做分组计数并取前 N 页（IN 走主键，候选集上限 20000）。
-        // 语义等价性：原查询按 $idCol 分组计数、按 cnt DESC 排序后 LIMIT 分页；
-        // 现先取全部候选 id（同一 WHERE），分组计数结果与排序口径完全一致。
         $candQb = $this->tableBuilder($table, NULL);
         if (!$cidBuilder($candQb)) {
             return array('list' => array(), 'total' => 0);
         }
         $candQb->where('create_date', '>=', $start);
-        // 排序键刻意选 create_date 而非 $idCol：vod_top 现有索引为 (cid, create_date) 与 (cid, vid)
-        // 之外的单列索引，按 create_date 排序可让本查询走 (cid,create_date) 覆盖索引（EXPLAIN: Using index，
-        // 无 filesort）；按 $idCol 排序则实测额外产生 Using filesort。候选集语义是"时间窗内命中的
-        // 全部条目"，排序方向不影响后续分组计数结果，故此处以索引友好为优先。
         $candRows = $candQb
             ->select(array($idCol))
             ->orderBy('create_date', 'DESC')
             ->limit(self::HIT_RANK_CANDIDATE_CAP)
             ->get();
-        $candIds = array();
+        // 直接在内存中对时间窗且符合分类条件的候选集聚合计数，避免二次查询漏掉 create_date/cid 过滤及超大 IN 占位符
+        $counts = array();
         foreach ((array) $candRows as $_r) {
             $__id = intval($_r[$idCol] ?? 0);
-            if ($__id > 0) $candIds[$__id] = TRUE;
+            if ($__id > 0) {
+                $counts[$__id] = ($counts[$__id] ?? 0) + 1;
+            }
         }
-        if (empty($candIds)) {
-            return array('list' => array(), 'total' => $total);
+        if (empty($counts)) {
+            return array('list' => array(), 'total' => 0);
         }
-
-        $listQb = $this->tableBuilder($table, NULL);
-        $listQb->whereIn($idCol, array_keys($candIds));
-        $rows = $listQb
-            ->select(array($idCol, 'COUNT(*) AS cnt'))
-            ->groupBy($idCol)
-            ->orderBy('cnt', 'DESC')
-            ->limit($pagesize, $start_row)
-            ->get();
+        arsort($counts, SORT_NUMERIC);
+        $distinctTotal = count($counts);
+        $sliced = array_slice($counts, $start_row, $pagesize, true);
+        $rows = array();
+        foreach ($sliced as $__id => $__cnt) {
+            $rows[] = array($idCol => $__id, 'cnt' => $__cnt);
+        }
 
         return array(
-            'list' => $rows ?: array(),
-            'total' => $total,
+            'list' => $rows,
+            'total' => $distinctTotal,
         );
     }
 
@@ -333,7 +323,7 @@ class ContentQueryRepository
      * 词长 <2 字符（ngram 最小 token=2）也返回 NULL 走 LIKE。
      * 列/表/主键均为调用方内部常量 + 正则白名单，关键字走 ? 绑定，无注入面。
      */
-    private function fulltextSearch(string $table, string $idCol, string $keyword, int $limit, array $col, $d = NULL)
+    private function fulltextSearch(string $table, string $idCol, string $keyword, int $limit, array $col, $d = NULL, ?array $cids = NULL)
     {
         $conf = (array)_SERVER('conf');
         if (empty($conf['search_use_fulltext'])) return NULL;
@@ -345,11 +335,18 @@ class ContentQueryRepository
         if (!$db || !method_exists($db, 'prepare_execute')) return NULL;
         $len = function_exists('mb_strlen') ? mb_strlen($keyword, 'UTF-8') : strlen($keyword);
         if ($len < 2) return NULL;
+        $cidSql = '';
+        $params = array($keyword);
+        if (NULL !== $cids) {
+            if (empty($cids)) return array();
+            $cidSql = ' AND `cid` IN (' . implode(',', array_fill(0, count($cids), '?')) . ')';
+            foreach ($cids as $cid) $params[] = intval($cid);
+        }
         $sql = 'SELECT ' . implode(', ', array_map(function ($c) { return '`' . $c . '`'; }, $col))
-            . ' FROM `' . $db->tablepre . $table . '` WHERE MATCH(`name`) AGAINST (? IN NATURAL LANGUAGE MODE)'
+            . ' FROM `' . $db->tablepre . $table . '` WHERE MATCH(`name`) AGAINST (? IN NATURAL LANGUAGE MODE)' . $cidSql
             . ' ORDER BY `' . $idCol . '` DESC LIMIT ' . max(1, intval($limit));
         try {
-            $st = $db->prepare_execute($sql, array($keyword));
+            $st = $db->prepare_execute($sql, $params);
             if (!$st) return NULL;
             $rows = $st->fetchAll(\PDO::FETCH_ASSOC);
             return is_array($rows) ? $rows : NULL;

@@ -24,6 +24,7 @@ class VodManageService
         $pagesize = intval($filters['pagesize'] ?? 20);
         $sticky = intval($filters['sticky'] ?? -1);
         $range = (string)($filters['range'] ?? '');
+        in_array($range, array('', 'today', '7d', '30d'), TRUE) or $range = '';
 
         $extra = array('page' => '{page}', 'cid' => $cid, 'pagesize' => $pagesize, 'sticky' => $sticky, 'range' => $range);
         $cond = array();
@@ -98,6 +99,7 @@ class VodManageService
         $cid = intval($filters['cid'] ?? 0);
         $sticky = intval($filters['sticky'] ?? -1);
         $range = (string)($filters['range'] ?? '');
+        in_array($range, array('', 'today', '7d', '30d'), TRUE) or $range = '';
         $page = max(1, intval($filters['page'] ?? 1));
         $pagesize = intval($filters['pagesize'] ?? 20) ?: 20;
         $videolist = NULL;
@@ -346,7 +348,7 @@ class VodManageService
                 empty($groups) and message(-1, '参数错误: groups为空');
                 $groups = urldecode($groups);
                 $groups = json_decode($groups, true);
-                !is_array($groups) and message(-1, '参数格式错误: ' . json_last_error_msg() . ' - ' . $groups);
+                !is_array($groups) and message(-1, '参数格式错误: ' . json_last_error_msg());
                 $successCount = self::duplicateBatchMerge($action, $groups);
                 admin_audit_log('vod_duplicate_' . $action, array('count' => $successCount));
                 return array('code' => 0, 'message' => "成功合并 $successCount 组视频");
@@ -382,8 +384,11 @@ class VodManageService
     {
         $success_count = 0;
         foreach ($groups as $group) {
-            if (!isset($group['vids'])) continue;
-            $vids = array_map('intval', explode(',', $group['vids']));
+            if (!is_array($group) || !isset($group['vids']) || !is_string($group['vids'])) continue;
+            $vids = array_values(array_unique(array_filter(array_map('intval', explode(',', $group['vids'])), static function ($v) {
+                return $v > 0;
+            })));
+            if (count($vids) < 2) continue;
             $target_vid = ('batch_merge_max' == $action) ? max($vids) : min($vids);
             $source_vids = array_values(array_filter($vids, function ($vid) use ($target_vid) {
                 return $vid != $target_vid;

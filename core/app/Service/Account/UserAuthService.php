@@ -30,6 +30,9 @@ class UserAuthService
      */
     public static function tokenGet()
     {
+        $conf = _SERVER('conf');
+        $rawCookie = _COOKIE(($conf['cookie_pre'] ?? '') . 'token');
+        if (empty($rawCookie)) return FALSE;
         $_uid = self::tokenGetDo();
         empty($_uid) and self::tokenClear();
         return $_uid;

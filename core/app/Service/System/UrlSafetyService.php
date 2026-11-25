@@ -12,19 +12,29 @@ class UrlSafetyService
      */
     public static function isExternal($url): bool
     {
-        $url = trim((string)$url);
+        $url = trim((string)preg_replace('/[\x00-\x1F\x7F]/', '', (string)$url));
         if ('' === $url) return false;
-        // 协议相对 //host/path：按请求协议补全判断
-        if (str_starts_with($url, '//')) {
-            $https = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) != 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
-            $url = ($https ? 'https:' : 'http:') . $url;
+        $httpsNow = function_exists('http_is_https')
+            ? http_is_https()
+            : (!empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off');
+        // 浏览器会将 /\host、\\host 与 //host 同样视为协议相对外链
+        if (preg_match('#^[/\\\\]{2}#', $url)) {
+            $url = ($httpsNow ? 'https:' : 'http:') . '//' . ltrim(str_replace('\\', '/', $url), '/');
         }
         $scheme = strtolower((string)parse_url($url, PHP_URL_SCHEME));
         if (!in_array($scheme, array('http', 'https'), true)) return false;
-        $host = (string)parse_url($url, PHP_URL_HOST);
-        $self = (string)_SERVER('HTTP_HOST');
+        $host = strtolower(trim((string)parse_url($url, PHP_URL_HOST), '[]'));
         if ('' === $host) return false;
-        return '' === $self || strcasecmp($host, $self) !== 0;
+        $targetPort = parse_url($url, PHP_URL_PORT);
+        $targetPort = $targetPort !== null ? (int)$targetPort : ($scheme === 'https' ? 443 : 80);
+
+        $selfRaw = (string)_SERVER('HTTP_HOST');
+        if ('' === $selfRaw) return true;
+        $selfParsed = @parse_url(($httpsNow ? 'https://' : 'http://') . $selfRaw);
+        $selfHost = is_array($selfParsed) ? strtolower(trim((string)($selfParsed['host'] ?? ''), '[]')) : '';
+        $selfPort = (is_array($selfParsed) && isset($selfParsed['port'])) ? (int)$selfParsed['port'] : ($httpsNow ? 443 : 80);
+        if ('' === $selfHost) return true;
+        return $host !== $selfHost || $targetPort !== $selfPort;
     }
 
     /**
@@ -40,7 +50,7 @@ class UrlSafetyService
         $html = '<div class="jump-external" style="padding:12px 0;word-break:break-all;">'
             . '<p style="margin:0 0 8px;color:#856404;">即将离开本站，前往外部链接：</p>'
             . '<p style="margin:0 0 12px;font-size:13px;color:#666;">' . $safe_url . '</p>'
-            . '<p style="margin:0;"><a href="' . $safe_url . '" rel="nofollow noopener" target="_blank" style="margin-right:12px;">继续前往</a>'
+            . '<p style="margin:0;"><a href="' . $safe_url . '" rel="nofollow noopener noreferrer" target="_blank" style="margin-right:12px;">继续前往</a>'
             . '<a href="javascript:history.back();">返回上一页</a>（' . $delay . ' 秒后自动跳转）</p>'
             . '</div>' . $auto;
         return $safe_msg . $html;

@@ -25,7 +25,14 @@ class VodCategoryReviewService
     public static function state(string $code): array
     {
         $raw=Origin::sql('SELECT v FROM '.Origin::table('kv').' WHERE k=?',[self::key($code)])->fetchColumn();
-        return $raw ? (array)json_decode($raw,true,512,JSON_THROW_ON_ERROR) : [];
+        if (!$raw) return [];
+        try {
+            $decoded = json_decode((string)$raw,true,512,JSON_THROW_ON_ERROR);
+            return is_array($decoded) ? $decoded : [];
+        } catch (\JsonException $e) {
+            if (function_exists('xn_log')) xn_log('vod category review state corrupt: ' . $code . ' - ' . $e->getMessage(), 'error');
+            return [];
+        }
     }
 
     private static function saveState(string $code, array $state): void
@@ -85,7 +92,8 @@ class VodCategoryReviewService
         $types=[];
         foreach ($catalog['rows'] as $type) {
             $parent=$types[$type['type_pid']]['path'] ?? '';
-            $path=($parent!=='' ? $parent.' / ' : '').$type['type_name'];
+            $typeName=trim(filter_all_html(htmlspecialchars_decode((string)($type['type_name'] ?? ''),ENT_QUOTES)));
+            $path=($parent!=='' ? $parent.' / ' : '').$typeName;
             $matches=$locals[$path] ?? [];
             $types[$type['type_id']]=['path'=>\App\Service\Content\VideoService::fitText($path,1000),'cid'=>count($matches)===1 ? $matches[0] : 0];
         }

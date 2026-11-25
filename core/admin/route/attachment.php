@@ -26,10 +26,42 @@ if ($method === 'POST') {
             exit;
         }
         switch ($op) {
-            case 'save': \App\Service\System\AttachmentStorage::save($input); $result = ['message'=>'存储设置已保存，已有图片不会自动迁移']; break;
-            case 'probe': $result = ['message'=>\App\Service\System\AttachmentStorage::probe($input, !empty($_POST['upload']))]; break;
+            case 'save':
+                if (intval($gid) !== 1) {
+                    $submittedBackend = isset($input['backend']) ? trim((string)$input['backend']) : '';
+                    $storedStorage = \App\Service\System\AttachmentStorage::settings();
+                    $ftpKeys = ['host', 'port', 'user', 'password', 'directory', 'public_url', 'passive', 'tls', 'keep_local', 'timeout'];
+                    $touchesFtp = ($submittedBackend === 'ftp') || (($storedStorage['backend'] ?? 'local') === 'ftp');
+                    if (!$touchesFtp) {
+                        foreach ($ftpKeys as $fk) {
+                            if (array_key_exists($fk, $input) && trim((string)$input[$fk]) !== '' && (string)$input[$fk] !== (string)($storedStorage[$fk] ?? '')) {
+                                $touchesFtp = true;
+                                break;
+                            }
+                        }
+                    }
+                    if ($touchesFtp) {
+                        throw new \RuntimeException('仅超级管理员可配置或修改 FTP 远程存储');
+                    }
+                    // 非超管仅允许更新 local_url，彻底阻断借 backend=local 篡改隐藏 FTP 参数
+                    $input = ['backend' => 'local', 'local_url' => (string)($input['local_url'] ?? '')];
+                }
+                \App\Service\System\AttachmentStorage::save($input);
+                $result = ['message'=>'存储设置已保存，已有图片不会自动迁移'];
+                break;
+            case 'probe':
+                if (intval($gid) !== 1) {
+                    throw new \RuntimeException('仅超级管理员可测试 FTP 远程连接');
+                }
+                $result = ['message'=>\App\Service\System\AttachmentStorage::probe($input, !empty($_POST['upload']))];
+                break;
             case 'preview': $result = \App\Service\System\AttachmentJobService::preview($input); break;
-            case 'create': $result = \App\Service\System\AttachmentJobService::create($input); break;
+            case 'create':
+                if (intval($gid) !== 1 && trim((string)($input['target'] ?? '')) === 'ftp') {
+                    throw new \RuntimeException('仅超级管理员可发起 FTP 远程同步任务');
+                }
+                $result = \App\Service\System\AttachmentJobService::create($input);
+                break;
             case 'step': $result = \App\Service\System\AttachmentJobService::step($id); break;
             case 'status': $result = \App\Service\System\AttachmentJobService::status($id); break;
             case 'details': $result = \App\Service\System\AttachmentJobService::details($id,$input); break;

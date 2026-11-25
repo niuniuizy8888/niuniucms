@@ -328,8 +328,7 @@ function getStaticMime(): array
     return [
         'css' => 'text/css; charset=utf-8',
         'js'  => 'application/javascript; charset=utf-8',
-        'map' => 'application/json; charset=utf-8',
-        'json'=> 'application/json; charset=utf-8',
+        'txt' => 'text/plain; charset=utf-8',
         'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg'=> 'image/jpeg',
         'gif' => 'image/gif', 'webp'=> 'image/webp', 'svg' => 'image/svg+xml',
         'ico' => 'image/x-icon',
@@ -368,16 +367,20 @@ function serveStaticFile(string $reqPath): bool
         }
     }
     $file = APP_PATH . ltrim($reqPath, '/');
-    if (is_file($file)) {
+    $root = realpath(APP_PATH);
+    $real = realpath($file);
+    if ($root !== false && $real !== false && is_file($real)
+        && (0 === strpos($real, rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR))) {
         header('Content-Type: ' . $mime[$ext]);
         header('Cache-Control: public, max-age=604800');
-        // M4 加固：防 MIME 嗅探 + SVG 直出脚本执行
+        // M4 加固：防 MIME 嗅探 + SVG 沙箱隔离（阻断脚本/外链加载）
         header('X-Content-Type-Options: nosniff');
+        header('X-Frame-Options: SAMEORIGIN');
+        header('Referrer-Policy: same-origin');
         if ('svg' === $ext) {
-            // SVG 直出可执行内嵌 <script>（存储型 XSS 面）；img 引用不受 CSP 影响（img 内 SVG 本就无脚本执行）
-            header("Content-Security-Policy: script-src 'none'");
+            header("Content-Security-Policy: default-src 'none'; sandbox");
         }
-        readfile($file);
+        readfile($real);
         exit;
     }
     header('HTTP/1.1 404 Not Found');

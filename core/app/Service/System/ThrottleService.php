@@ -108,7 +108,25 @@ class ThrottleService
         fflush($fp);
         @flock($fp, LOCK_UN);
         fclose($fp);
+        // 概率清理过期计数文件（1% 概率，每次最多扫描 200 个），防 runtime/throttle/*.cnt 长期堆积耗尽 inode
+        if (mt_rand(1, 100) === 1) {
+            self::gcCountFiles($dir, $now);
+        }
         return $count;
+    }
+
+    private static function gcCountFiles(string $dir, int $now): void
+    {
+        $files = @glob($dir . '/*.cnt');
+        if (!is_array($files) || count($files) < 50) return;
+        $checked = 0;
+        foreach ($files as $f) {
+            if (++$checked > 200) break;
+            $mt = @filemtime($f);
+            if ($mt !== false && ($now - $mt) > 3600) {
+                @unlink($f);
+            }
+        }
     }
 
     /**

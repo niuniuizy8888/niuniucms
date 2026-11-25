@@ -42,13 +42,13 @@ function _curl_setup($url, $context = '') {
     curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     // SSRF 防护：禁止重定向到内网地址
     curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-    if (strpos(strtolower($url), 'https://') === 0) {
-        global $conf;
-        $ssl_verify = !empty($conf['ssl_verify']);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $ssl_verify);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $ssl_verify ? 2 : 0);
-        curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-    }
+    // TLS 校验无条件配置（覆盖 http→https 跳转），且缺省 fail-closed 开启证书校验
+    $cfg = function_exists('_SERVER') ? _SERVER('conf') : NULL;
+    if (!is_array($cfg)) $cfg = (isset($GLOBALS['conf']) && is_array($GLOBALS['conf'])) ? $GLOBALS['conf'] : array();
+    $ssl_verify = array_key_exists('ssl_verify', $cfg) ? !empty($cfg['ssl_verify']) : true;
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $ssl_verify);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, $ssl_verify ? 2 : 0);
+    curl_setopt($ch, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
     curl_setopt($ch, CURLOPT_ENCODING, 'gzip');
     return $ch;
 }
@@ -160,14 +160,17 @@ function outbound_ipv6_safe($ip)
     $b0 = ord($bin[0]);
     if (($b0 & 0xFE) === 0xFC) return FALSE;                                  // fc00::/7 ULA
     if ($b0 === 0xFE && (ord($bin[1]) & 0xC0) === 0x80) return FALSE;         // fe80::/10 链路本地
+    if ($b0 === 0xFE && (ord($bin[1]) & 0xC0) === 0xC0) return FALSE;         // fec0::/10 废弃站点本地
     if ($b0 === 0xFF) return FALSE;                                           // ff00::/8 组播
+    if ($b0 === 0x01 && ord($bin[1]) === 0x00 && substr($bin, 2, 6) === "\x00\x00\x00\x00\x00\x00") return FALSE; // 100::/64 discard RFC 6666
+    if ($b0 === 0x00 && ord($bin[1]) === 0x64 && ord($bin[2]) === 0xFF && ord($bin[3]) === 0x9B && ord($bin[4]) === 0x00 && ord($bin[5]) === 0x01) return FALSE; // 64:ff9b:1::/48 local NAT64
     if ($b0 === 0x20 && ord($bin[1]) === 0x01 && ord($bin[2]) === 0x0D && ord($bin[3]) === 0xB8) return FALSE; // 2001:db8::/32 文档
     return TRUE;
 }
 
 /**
  * 从 16 字节 IPv6 地址解码内嵌 IPv4（无内嵌形态返回 NULL）
- * 覆盖：::ffff:a.b.c.d/96 mapped、::a.b.c.d/96 compat、64:ff9b::/96 NAT64、2002::/16 6to4、2001::/32 Teredo
+ * 覆盖：::ffff:a.b.c.d/96 mapped、::ffff:0:a.b.c.d/96 translated、::a.b.c.d/96 compat、64:ff9b::/96 NAT64、2002::/16 6to4、2001::/32 Teredo
  */
 function outbound_v6_embedded4($bin)
 {
@@ -183,6 +186,10 @@ function outbound_v6_embedded4($bin)
     };
     // IPv4-mapped（::ffff:x）与 IPv4-compatible（::x，已废弃但解析器仍接受）
     if ($o[0] === 0x00 && $zeroRun(1, 9) && (($o[10] === 0xFF && $o[11] === 0xFF) || ($o[10] === 0x00 && $o[11] === 0x00))) {
+        return sprintf('%d.%d.%d.%d', $o[12], $o[13], $o[14], $o[15]);
+    }
+    // IPv4-translated（::ffff:0:a.b.c.d/96，RFC 2765）
+    if ($zeroRun(0, 7) && $o[8] === 0xFF && $o[9] === 0xFF && $o[10] === 0x00 && $o[11] === 0x00) {
         return sprintf('%d.%d.%d.%d', $o[12], $o[13], $o[14], $o[15]);
     }
     // NAT64 well-known 前缀 64:ff9b::/96
@@ -288,17 +295,17 @@ function outbound_request_context($url, $context = '')
 function outbound_url_safe($url, $resolve_dns = TRUE, &$resolved = NULL, $context = '')
 {
     if (!is_string($url) || $url === '') return FALSE;
+    // 拒绝控制字符、空白、反斜杠与 user:pass@，防止 parse_url 与 libcurl 解析差异
+    if (preg_match('/[\x00-\x20\x7F\\\\]/', $url)) return FALSE;
     $parsed = @parse_url($url);
-    if (!$parsed || empty($parsed['scheme']) || empty($parsed['host'])) return FALSE;
+    if (!$parsed || empty($parsed['scheme']) || empty($parsed['host']) || isset($parsed['user']) || isset($parsed['pass'])) return FALSE;
     if (!in_array(strtolower($parsed['scheme']), array('http', 'https'), TRUE)) return FALSE;
+    $port = isset($parsed['port']) ? intval($parsed['port']) : ('https' === strtolower($parsed['scheme']) ? 443 : 80);
+    if ($port < 1 || $port > 65535) return FALSE;
     if (!$resolve_dns) return TRUE;
     $ips = outbound_host_ips($parsed['host']);
     if (FALSE === $ips) return FALSE; // 解析失败 fail-closed
-    // 收集 host:port:ip 映射供 curl CURLOPT_RESOLVE 固定已校验 IP，消除校验与请求之间的 DNS 重绑定窗口（审计修复）
-    $port = isset($parsed['port']) ? intval($parsed['port']) : ('https' === strtolower($parsed['scheme']) ? 443 : 80);
     $hostname = trim($parsed['host'], '[]');
-    // 内网段拦截开关：关闭时不校验网段（$trusted 恒真⇒整段跳过），
-    // Only explicitly authorized, exact-origin cloud requests receive a private-network exception.
     $block_private = outbound_block_private();
     $trusted = !$block_private || 'cloud' === outbound_request_context($url, $context);
     $resolved = array();
@@ -318,17 +325,14 @@ function outbound_url_safe($url, $resolve_dns = TRUE, &$resolved = NULL, $contex
             $v6[] = $ip;
         }
     }
-    // 修复（双栈出站全灭）：原实现把**全部**解析 IP（含 AAAA）都塞进 CURLOPT_RESOLVE。
-    // 本机（与多数内网服务器）无 IPv6 出口时 curl 直接失败且**不回落 IPv4**——实测
-    // `https_request('https://www.baidu.com/')`=FALSE（pin=3）、第三方采集源=FALSE（pin=4），
-    // 而 IPv4-only 的商店正常（pin=1）。症状是「所有双栈第三方源都采不到、商店却通」。
-    // 口径：**优先只 pin IPv4**（有 A 记录时），仅当域名只有 AAAA 时才 pin IPv6。
-    // 安全属性不变：上面已把**全部**解析 IP（v4+v6）逐个过了内网/保留段校验，pin 只是把
-    // 校验过的地址固定给 curl，不再给它二次解析的机会——pin 子集不会放宽任何一条拦截。
     $pick = !empty($v4) ? $v4 : $v6;
+    $addrList = array();
     foreach ($pick as $ip) {
-        // CURLOPT_RESOLVE 的 IPv6 地址必须写成 [addr]（裸 AAAA 语法非法——v6-only 域名会解析失败）
-        $resolved[] = $hostname . ':' . $port . ':' . (!str_contains($ip, ':') ? $ip : '[' . trim($ip, '[]') . ']');
+        $addrList[] = !str_contains($ip, ':') ? $ip : '[' . trim($ip, '[]') . ']';
+    }
+    if (!empty($addrList)) {
+        // libcurl 要求同一 host:port 的多地址合并在单条逗号分隔记录中
+        $resolved[] = $hostname . ':' . $port . ':' . implode(',', array_unique($addrList));
     }
     return TRUE;
 }
@@ -375,6 +379,17 @@ function outbound_curl_exec(&$ch, &$url, $timeout, $max_redirects = 5, $msMode =
         if (!in_array($code, array(301, 302, 303, 307, 308), TRUE) || empty($next)) return $body;
         if ($i === $max_redirects) return FALSE;
         if (!preg_match('#^https?://#i', $next)) $next = http_url_resolve($url, $next);
+        // 301/302/303 跳转转为 GET 并清空 POST 载荷，防止令牌/表单体被转发至重定向目标
+        if (in_array($code, array(301, 302, 303), TRUE)) {
+            curl_setopt($ch, CURLOPT_POST, false);
+            curl_setopt($ch, CURLOPT_HTTPGET, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, '');
+        }
+        // 跨源跳转剥离 Cookie / Authorization 头
+        if (outbound_origin($next) !== outbound_origin($url)) {
+            curl_setopt($ch, CURLOPT_COOKIE, '');
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array('Cookie:', 'Authorization:'));
+        }
         $url = $next;
     }
     return FALSE;
@@ -643,7 +658,7 @@ function http_download_to_file($url, $destPath, $maxBytes = 209715200, $timeout 
         if (!empty($pinned)) $opts[CURLOPT_RESOLVE] = $pinned;
         if (0 === strpos(strtolower($current), 'https://')) {
             $conf = function_exists('_SERVER') ? _SERVER('conf') : (isset($_SERVER['conf']) ? $_SERVER['conf'] : NULL);
-            $verify = is_array($conf) ? !empty($conf['ssl_verify']) : TRUE;
+            $verify = (is_array($conf) && array_key_exists('ssl_verify', $conf)) ? !empty($conf['ssl_verify']) : TRUE;
             $opts[CURLOPT_SSL_VERIFYPEER] = $verify;
             $opts[CURLOPT_SSL_VERIFYHOST] = $verify ? 2 : 0;
             $opts[CURLOPT_SSLVERSION] = CURL_SSLVERSION_TLSv1_2;

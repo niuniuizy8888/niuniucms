@@ -43,14 +43,21 @@ class VodService
                 ? $cate_nav[$cup]['sonlist'] : array();
         }
         $user_access = \App\Service\Content\CateService::accessUser($cid, $gid, 'allowread');
-        $like_state = \App\Service\Content\LikeService::check($vid, $uid, 0) ? 'un' : '';
-        $favorite_state = \App\Service\Content\FavoriteService::check($vid, $uid, 0) ? 'un' : '';
-        \App\Service\Content\VideoService::incViews($vid);
-        \App\Service\Content\VideoService::recordTopView($vid, $cid);
-        !empty($conf['es_on']) and \App\Service\System\ElasticService::insertOne($vid, $video['name']);
+        $like_state = '';
+        $favorite_state = '';
         $adlist = array();
-        $likelist = \App\Service\Content\RelationService::ensureVideoTagsAndRelated($video, $vid, $cid);
-        $play_urls = $video['play_data'][0]['url'] ?? '';
+        $likelist = array();
+        $play_urls = '';
+        // 仅在校验有可读权限后执行浏览计数、榜单写入、ES 索引与相关推荐查询，防止未授权请求制造写放大
+        if ($user_access) {
+            $like_state = \App\Service\Content\LikeService::check($vid, $uid, 0) ? 'un' : '';
+            $favorite_state = \App\Service\Content\FavoriteService::check($vid, $uid, 0) ? 'un' : '';
+            \App\Service\Content\VideoService::incViews($vid);
+            \App\Service\Content\VideoService::recordTopView($vid, $cid);
+            !empty($conf['es_on']) and \App\Service\System\ElasticService::insertOne($vid, $video['name']);
+            $likelist = \App\Service\Content\RelationService::ensureVideoTagsAndRelated($video, $vid, $cid);
+            $play_urls = $video['play_data'][0]['url'] ?? '';
+        }
 
         return array(
             'found' => true,

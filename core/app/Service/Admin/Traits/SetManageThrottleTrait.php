@@ -77,9 +77,16 @@ trait SetManageThrottleTrait
         $throttle['verify_blacklist'] = admin_param_int('verify_blacklist', 1) ? true : false;
         $throttle['verify_robot'] = admin_param_int('verify_robot', 0) ? true : false;
 
-        $botListText = param('bot_list', '');
-        $botList = array_filter(array_map('trim', explode("\n", $botListText)));
-        $throttle['bot_list'] = $botList ?: array('Googlebot', 'Baiduspider', 'bingbot');
+        $botListText = (string)param('bot_list', '', FALSE);
+        $botLines = array_slice(explode("\n", str_replace("\r", '', $botListText)), 0, 200);
+        $botList = array();
+        foreach ($botLines as $line) {
+            $line = trim(substr($line, 0, 100));
+            if ($line !== '' && preg_match('/^[A-Za-z0-9._\-\/ ]{2,100}$/', $line)) {
+                $botList[] = $line;
+            }
+        }
+        $throttle['bot_list'] = $botList ? array_values(array_unique($botList)) : array('Googlebot', 'Baiduspider', 'bingbot');
 
         // URL 名称与扩展名不能证明请求是后台或静态资源，移除旧的宽泛豁免配置。
         unset($throttle['url_prefix_allow'], $throttle['static_ext']);
@@ -101,9 +108,13 @@ trait SetManageThrottleTrait
         $throttle['register_window'] = admin_param_int('register_window', 3600, 10, 86400);
 
         $content = "<?php\nreturn " . var_export($throttle, true) . ";\n";
-        if (false === file_put_contents_try($throttleFile, $content)) {
+        $written = file_put_contents_try($throttleFile, $content);
+        if (false === $written || $written !== strlen($content)) {
             xn_log('throttle save failed: ' . basename($throttleFile) . ' not writable', 'error');
             return array('code' => -1, 'message' => '保存限速配置失败（配置文件不可写）');
+        }
+        if (function_exists('opcache_invalidate')) {
+            @opcache_invalidate($throttleFile, true);
         }
 
         cache_delete('throttle_config');

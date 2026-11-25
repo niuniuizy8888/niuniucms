@@ -203,8 +203,8 @@ class MemberService
         $password_new = param('password_new');
         $password_new_repeat = param('password_new_repeat');
         // 修复：空/弱新密码会 password_hash('') 入库后被 password_verify_custom 空值拒绝，账号永久锁死
-        $password_new === '' and message('password', lang('please_input_password'));
-        is_password($password_new, $err) or message('password', $err);
+        $password_new === '' and message('password_new', lang('please_input_password'));
+        is_password($password_new, $err) or message('password_new', $err);
         $password_new_repeat != $password_new and message(-1, lang('repeat_password_incorrect'));
         password_verify_custom($password_old, $user['password'], (string)($user['salt'] ?? '')) or message(-1, lang('old_password_incorrect'));
         $password_new_hash = password_hash($password_new, PASSWORD_BCRYPT);

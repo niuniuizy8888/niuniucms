@@ -86,8 +86,12 @@ function _cache_key($k, $c = NULL) {
     if (!$c) return [null, null];
     // 安全审查 U-3：单驱动模式下若驱动是 MySQL，整页缓存键（page_ 前缀，page_content_ 版本令牌除外）不落库
     if ($c instanceof cache_mysql && strncmp((string)$k, 'page_', 5) === 0 && strncmp((string)$k, 'page_content_', 13) !== 0) return [null, null];
-    $k = $c->cachepre . $k;
-    strlen($k) > 32 AND $k = md5($k);
+    // cache_mysql::prefixed() 内部已统一加 cachepre 并做 32 字节 md5 截断，此处不再重复拼接前缀（避免单驱动下双重前缀/双重哈希）
+    if ($c instanceof cache_mysql) {
+        return [$c, (string)$k];
+    }
+    $prefix = isset($c->cachepre) ? (string)$c->cachepre : '';
+    $k = $prefix . $k;
     return [$c, $k];
 }
 
@@ -138,11 +142,19 @@ function cache_delete($k, $c = NULL) {
  * @return void
  */
 function content_cache_delete($prefix, $id) {
+    $readVer = ('vod_' === $prefix) ? (string)cache_shared_get('vod_read_ver') : '';
     foreach ((array)$id as $_id) {
         $k = $prefix . intval($_id);
         cache_delete($k);
         for ($rw = 0; $rw <= 3; $rw++) {
             cache_delete($k . '_rw' . $rw);
+        }
+        if ($readVer !== '') {
+            $kv = $k . '_rv' . $readVer;
+            cache_delete($kv);
+            for ($rw = 0; $rw <= 3; $rw++) {
+                cache_delete($kv . '_rw' . $rw);
+            }
         }
     }
 }
@@ -168,6 +180,14 @@ function cache_shared_get($k) {
     global $g_multi_cache;
     if ($g_multi_cache !== null && method_exists($g_multi_cache, 'sharedGet')) return $g_multi_cache->sharedGet($k);
     return cache_get($k);
+}
+
+/**
+ * 写入「跨进程共享层」值（与 cache_shared_get 配对，供重放保护与跨进程版本令牌使用）。
+ * 多层模式下 cache_set() 会同时写入共享层（redis/memcached/mysql）及本地层，确保所有 worker 均可见。
+ */
+function cache_shared_set($k, $v, $life = 0) {
+    return cache_set($k, $v, $life);
 }
 
 /**

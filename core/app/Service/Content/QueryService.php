@@ -248,26 +248,30 @@ class QueryService
         if (!$keyword) {
             return array('search_type' => $search_type, 'videolist' => $videolist, 'num' => 0);
         }
+        $visibleCids = ContentVisibilityService::categoryIds();
+        if (empty($visibleCids)) {
+            return array('search_type' => $search_type, 'videolist' => $videolist, 'num' => 0);
+        }
 
         if ($conf['es_on'] == 1) {
             $vidarr = self::elasticSearchIds($keyword);
             if (empty($vidarr)) {
                 $search_type = 'mysql_fallback';
-                $vidarr = VideoService::searchKeywordIds($keyword);
+                $vidarr = VideoService::searchKeywordIds($keyword, 60, NULL, $visibleCids);
                 $videolist = VideoService::findByIdsOrdered($vidarr, TRUE);
                 VideoService::listAccessFilter($videolist, $gid);
                 return array('search_type' => $search_type, 'videolist' => $videolist, 'num' => count($videolist));
             }
 
             if (count($vidarr) < 10) {
-                $vidarr = self::mergeUniqueIds($vidarr, VideoService::searchKeywordIds($keyword));
+                $vidarr = self::mergeUniqueIds($vidarr, VideoService::searchKeywordIds($keyword, 60, NULL, $visibleCids));
             }
             $videolist = VideoService::findByIdsOrdered($vidarr, TRUE);
             VideoService::listAccessFilter($videolist, $gid);
             return array('search_type' => $search_type, 'videolist' => $videolist, 'num' => count($videolist));
         }
 
-        $vidarr = VideoService::searchKeywordIds($keyword);
+        $vidarr = VideoService::searchKeywordIds($keyword, 60, NULL, $visibleCids);
         $videolist = VideoService::findByIdsOrdered($vidarr, TRUE);
         VideoService::listAccessFilter($videolist, $gid);
         return array('search_type' => $search_type, 'videolist' => $videolist, 'num' => count($videolist));
@@ -321,20 +325,25 @@ class QueryService
     protected static function channelArtChildCids($cid, $catelist): array
     {
         $cids = array();
+        $cidInt = intval($cid);
         if ($catelist) {
             foreach ($catelist as $val) {
-                if ($val['cup'] == $cid && 1 == $val['type'] && 1 == $val['model'] && 0 == $val['category']) {
-                    $cids[] = $val['cid'];
+                if (intval($val['cup'] ?? 0) === $cidInt && 1 == ($val['type'] ?? 0) && 1 == ($val['model'] ?? 0) && 0 == ($val['category'] ?? 0)) {
+                    $cids[] = intval($val['cid'] ?? 0);
                 }
             }
+            // 扁平频道（无子分类，文章直接挂在频道自身 cid 下）回落自身 cid
+            if (empty($cids) && isset($catelist[$cidInt]) && 1 == ($catelist[$cidInt]['type'] ?? 0) && 1 == ($catelist[$cidInt]['model'] ?? 0)) {
+                $cids[] = $cidInt;
+            }
         }
-        return self::normalizeCidList($cids);
+        $cids = self::normalizeCidList($cids);
+        return $cids ? ContentVisibilityService::intersectCategories($cids) : array();
     }
 
     /**
-     * 从全部分类行里挑出「挂在 $cid 下的可列表子分类」：cup==$cid 且 type==1 且 category==0。
-     * ⚠ 与 channelArtChildCids 不同，**不加 model 条件** ⇒ 文章型子分类也会进集合；
-     *   实际影响有限（视频索引表按文章分类 cid 取不到行），但 child_cids 与 total 的口径与文章侧不一致。
+     * 从全部分类行里挑出「挂在 $cid 下的可列表视频子分类」：cup==$cid 且 type==1 且 model==0 且 category==0；
+     * 若该频道无子分类（扁平分类直接挂视频），则回落自身 cid；结果与当前用户组可读分类求交集。
      * @param mixed $cid      父（频道）分类 ID
      * @param array $catelist 全部分类行；空 ⇒ 结果为空数组
      * @return array 归一化后的 int 子分类 ID 列表
@@ -342,14 +351,20 @@ class QueryService
     protected static function channelVideoChildCids($cid, $catelist): array
     {
         $cids = array();
+        $cidInt = intval($cid);
         if ($catelist) {
             foreach ($catelist as $val) {
-                if ($val['cup'] == $cid && 1 == $val['type'] && 0 == $val['category']) {
-                    $cids[] = $val['cid'];
+                if (intval($val['cup'] ?? 0) === $cidInt && 1 == ($val['type'] ?? 0) && 0 == ($val['model'] ?? 0) && 0 == ($val['category'] ?? 0)) {
+                    $cids[] = intval($val['cid'] ?? 0);
                 }
             }
+            // 扁平频道（无子分类，视频直接挂在频道自身 cid 下）回落自身 cid
+            if (empty($cids) && isset($catelist[$cidInt]) && 1 == ($catelist[$cidInt]['type'] ?? 0) && 0 == ($catelist[$cidInt]['model'] ?? 0)) {
+                $cids[] = $cidInt;
+            }
         }
-        return self::normalizeCidList($cids);
+        $cids = self::normalizeCidList($cids);
+        return $cids ? ContentVisibilityService::intersectCategories($cids) : array();
     }
 
     /**

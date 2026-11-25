@@ -20,18 +20,34 @@ function admin_cookie_opt(int $expires): array
     return $opt;
 }
 /**
+ * 归一化后台 IP 绑定键（同时支持 IPv4 与 IPv6，避免 IPv6 下 $longip 恒为 0 导致绑定失效）
+ */
+function admin_bind_ip_key(): string
+{
+    $raw = (string)(_SERVER('ip') ?: (function_exists('ip') ? ip() : ''));
+    if ($raw !== '' && filter_var($raw, FILTER_VALIDATE_IP)) {
+        $bin = @inet_pton($raw);
+        if ($bin !== false) {
+            $norm = @inet_ntop($bin);
+            if ($norm !== false) return $norm;
+        }
+    }
+    return $raw;
+}
+/**
  * 校验后台登录Token
  * 超时3600秒自动退出，1800秒自动续期
  */
 function admin_token_check(): void
 {
-    global $longip, $time, $useragent, $conf;
+    global $time, $useragent, $conf;
     // 匿名访问任何后台地址都可能返回带会话令牌的登录页，改名入口也走这里。
     header('Cache-Control: private, no-store, max-age=0');
     header('CDN-Cache-Control: no-store');
     header('Pragma: no-cache');
+    $bindIp = admin_bind_ip_key();
     $useragent_md5 = md5($useragent);
-    $key = md5((XN_ADMIN_BIND_IP ? $longip : '') . $useragent_md5 . xn_key());
+    $key = md5((XN_ADMIN_BIND_IP ? $bindIp : '') . $useragent_md5 . xn_key());
     // 仅从 Cookie 读取（GET/POST 参数可伪造覆盖导致已登录管理员被强制登出）
     $admin_token = $_COOKIE[$conf['cookie_pre'] . 'admin_token'] ?? '';
     if (empty($admin_token)) {
@@ -47,7 +63,7 @@ function admin_token_check(): void
         // 视为失效（fail-closed），管理员需重新登录一次；改密码/换账号后旧令牌立即失效。
         list($_ip, $_time, $_uid, $_pwd) = array_pad(explode("\t", $s), 4, '');
         // 后台超过 3600 自动退出；若绑定 IP 则 IP 变化立即退出
-        if ($time - $_time > 3600 || (XN_ADMIN_BIND_IP && $_ip != $longip)) {
+        if ($time - intval($_time) > 3600 || (XN_ADMIN_BIND_IP && $_ip !== $bindIp)) {
             setcookie($conf['cookie_pre'] . 'admin_token', '', admin_cookie_opt($time - 86400));
             message(-1, lang('admin_token_expiry'));
         }
@@ -71,7 +87,7 @@ function admin_token_check(): void
             setcookie($conf['cookie_pre'] . 'admin_token', '', admin_cookie_opt($time - 86400));
             message(-1, lang('admin_token_expiry'));
         }
-        $time - $_time > 1800 AND admin_token_set(intval($_uid));
+        $time - intval($_time) > 1800 AND admin_token_set(intval($_uid));
     }
 }
 /**
@@ -79,14 +95,15 @@ function admin_token_check(): void
  */
 function admin_token_set(int $uid = 0): void
 {
-    global $longip, $time, $useragent, $conf;
+    global $time, $useragent, $conf;
     // S-7：未显式传 uid（续签路径）时从会话读取；uid 不可用/用户不存在则不发令牌（fail-closed）
     if ($uid < 1) $uid = intval(_SESSION('uid'));
     $user = $uid > 0 ? user_read($uid) : array();
     if (empty($user) || empty($user['password'])) return;
+    $bindIp = admin_bind_ip_key();
     $useragent_md5 = md5($useragent);
-    $key = md5((XN_ADMIN_BIND_IP ? $longip : '') . $useragent_md5 . xn_key());
-    $s = "$longip	$time	$uid	" . md5($user['password']);
+    $key = md5((XN_ADMIN_BIND_IP ? $bindIp : '') . $useragent_md5 . xn_key());
+    $s = "$bindIp\t$time\t$uid\t" . md5($user['password']);
     $admin_token = xn_encrypt($s, $key);
     setcookie($conf['cookie_pre'] . 'admin_token', $admin_token, admin_cookie_opt($time + 3600));
 }
@@ -127,7 +144,9 @@ function admin_param_text(string $key, string $default = '', int $max = 255, boo
     $decode and $val = xn_urldecode($val);
     $val = trim((string)$val);
     $val = str_replace(["\0", "\r", "\n", "\t"], '', $val);
-    $max and $val = substr($val, 0, $max);
+    if ($max > 0) {
+        $val = function_exists('mb_strcut') ? mb_strcut($val, 0, $max, 'UTF-8') : substr($val, 0, $max);
+    }
     return $val;
 }
 

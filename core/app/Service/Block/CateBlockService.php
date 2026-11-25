@@ -77,7 +77,8 @@ class CateBlockService
     public static function hotSearch($arr)
     {
         $n   = empty($arr['n']) ? '' : $arr['n'];
-        $key = block_key('hot_search', $n);
+        $ver = \App\Service\Content\KeywordService::cacheVersion();
+        $key = block_key('hot_search', $n, 'v' . $ver);
         return block_cache($key, 3600, function () use ($n) {
             return hot_search($n);
         });

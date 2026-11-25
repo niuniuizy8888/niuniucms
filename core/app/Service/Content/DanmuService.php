@@ -151,8 +151,8 @@ class DanmuService
      */
     public static function validateSendRequest($conf)
     {
-        if (_SERVER('REQUEST_METHOD') === 'GET') {
-            return array('ok' => false, 'msg' => '不允许GET访问');
+        if (strtoupper((string)_SERVER('REQUEST_METHOD')) !== 'POST') {
+            return array('ok' => false, 'msg' => '仅允许POST访问');
         }
 
         $allowed_origins = array($conf['cookie_domain'] ?: (_SERVER('HTTP_HOST') ?? ''));
@@ -214,11 +214,7 @@ class DanmuService
             $host = $authority;
             $port = '';
         }
-        $scheme = strtolower((string) (_SERVER('REQUEST_SCHEME') ?: ''));
-        if ($scheme === '') {
-            $https = (string) _SERVER('HTTPS', 'off');
-            $scheme = ($https !== '' && 'off' !== $https) ? 'https' : 'http';
-        }
+        $scheme = (function_exists('http_is_https') && http_is_https()) ? 'https' : 'http';
         if ($port === '') {
             $port = ('https' === $scheme) ? '443' : '80';
         }

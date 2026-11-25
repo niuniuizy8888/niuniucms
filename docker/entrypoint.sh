@@ -7,8 +7,15 @@ for d in data runtime runtime/cache runtime/log runtime/tmp upload; do
   mkdir -p "$d"
 done
 if [ ! -f data/.htaccess ]; then
-  printf '%s\n' 'Require all denied' > data/.htaccess 2>/dev/null \
-    || printf '%s\n' 'Deny from all' > data/.htaccess
+  cat <<'EOF' > data/.htaccess
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+EOF
 fi
 
 if [ ! -f data/install.lock ] && [ -n "${NN_DB_HOST:-}" ]; then

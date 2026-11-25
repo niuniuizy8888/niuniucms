@@ -24,12 +24,25 @@ class AttachmentStorage
 
     public static function normalize(array $input): array
     {
-        $c = self::settings(true);
+        // 读取公开设置，避免 auth_key 轮换后旧密码解密失败把保存/切回本地彻底锁死
+        $rawStored = array_merge(['backend'=>'local', 'local_url'=>'', 'local_aliases'=>[], 'host'=>'', 'port'=>21, 'user'=>'', 'password'=>'', 'directory'=>'/', 'public_url'=>'', 'passive'=>1, 'tls'=>0, 'keep_local'=>1, 'timeout'=>30], (array)kv_get(self::KEY));
+        $c = $rawStored;
+        $c['password'] = '';
         foreach (['backend','local_url','host','user','directory','public_url'] as $k) if (isset($input[$k]) && is_scalar($input[$k])) $c[$k] = trim((string)$input[$k]);
-        if (isset($input['password']) && is_string($input['password']) && $input['password'] !== '') $c['password'] = $input['password'];
         foreach (['passive','tls','keep_local'] as $k) $c[$k] = !empty($input[$k]) ? 1 : 0;
         $c['port'] = max(1, min(65535, (int)($input['port'] ?? 21)));
         $c['timeout'] = max(5, min(60, (int)($input['timeout'] ?? 30)));
+        $providedPass = (isset($input['password']) && is_string($input['password']) && $input['password'] !== '') ? $input['password'] : '';
+        $sameFtpEndpoint = ($c['host'] === (string)($rawStored['host'] ?? '')
+            && (int)$c['port'] === (int)($rawStored['port'] ?? 21)
+            && $c['user'] === (string)($rawStored['user'] ?? ''));
+        if ($providedPass !== '') {
+            $c['password'] = $providedPass;
+        } elseif ($c['backend'] === 'ftp' && $rawStored['password'] !== '' && $sameFtpEndpoint) {
+            $dec = xn_decrypt($rawStored['password']);
+            if ($dec === false || $dec === '') throw new \RuntimeException('FTP 密码无法解密（可能已更换站点密钥），请重新输入密码后保存');
+            $c['password'] = $dec;
+        }
         if (!in_array($c['backend'], ['local','ftp'], true)) throw new \InvalidArgumentException('请选择本地或 FTP 存储');
         foreach (['local_url','public_url'] as $k) {
             $c[$k] = rtrim($c[$k], '/');
@@ -159,9 +172,51 @@ class AttachmentStorage
         }
     }
 
+    private static function ftpPinnedResolve(array $c): array
+    {
+        $host = trim((string)($c['host'] ?? ''), '[]');
+        $port = (int)($c['port'] ?? 21);
+        if ($host === '' || $port < 1 || $port > 65535) {
+            throw new \RuntimeException('FTP 主机或端口无效');
+        }
+        $ips = function_exists('outbound_host_ips') ? outbound_host_ips($host) : false;
+        if (!is_array($ips) || empty($ips)) {
+            throw new \RuntimeException('FTP 主机解析失败');
+        }
+        $blockPrivate = function_exists('outbound_block_private') ? outbound_block_private() : true;
+        $v4 = [];
+        $v6 = [];
+        foreach ($ips as $ip) {
+            if ($blockPrivate) {
+                $ok = !str_contains($ip, ':')
+                    ? (function_exists('outbound_ipv4_safe') && outbound_ipv4_safe($ip))
+                    : (function_exists('outbound_ipv6_safe') && outbound_ipv6_safe($ip));
+                if (!$ok) {
+                    throw new \RuntimeException('FTP 主机命中内网或保留地址，已被出网安全策略拦截');
+                }
+            }
+            if (!str_contains($ip, ':')) $v4[] = $ip;
+            else $v6[] = '[' . trim($ip, '[]') . ']';
+        }
+        $pick = !empty($v4) ? $v4 : $v6;
+        return [$host . ':' . $port . ':' . implode(',', array_unique($pick))];
+    }
+
     private static function ftpOptions(array $c): array
     {
-        $opts = [CURLOPT_USERNAME=>$c['user'], CURLOPT_PASSWORD=>$c['password'], CURLOPT_RETURNTRANSFER=>true, CURLOPT_CONNECTTIMEOUT=>10, CURLOPT_TIMEOUT=>$c['timeout'], CURLOPT_FOLLOWLOCATION=>false, CURLOPT_PROTOCOLS=>CURLPROTO_FTP, CURLOPT_SSL_VERIFYPEER=>true, CURLOPT_SSL_VERIFYHOST=>2, CURLOPT_FTP_SKIP_PASV_IP=>true];
+        $opts = [
+            CURLOPT_USERNAME => $c['user'],
+            CURLOPT_PASSWORD => $c['password'],
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => $c['timeout'],
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROTOCOLS => CURLPROTO_FTP,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_FTP_SKIP_PASV_IP => true,
+            CURLOPT_RESOLVE => self::ftpPinnedResolve($c),
+        ];
         if ($c['tls']) $opts[CURLOPT_USE_SSL] = CURLUSESSL_ALL;
         if (!$c['passive']) $opts[CURLOPT_FTPPORT] = '-';
         return $opts;
@@ -224,7 +279,8 @@ class AttachmentStorage
             if (curl_exec($ch) === false) {
                 $error = curl_errno($ch);
                 if ($remove && $error===CURLE_FTP_QUOTE_ERROR && (int)curl_getinfo($ch,CURLINFO_RESPONSE_CODE)===550 && self::ftpMissing($c,rawurldecode($remote))) return;
-                throw new \RuntimeException('FTP 操作失败（错误 ' . $error . '），请检查账号、目录权限及连接模式');
+                if (function_exists('xn_log')) xn_log('FTP operation failed errno=' . $error, 'attachment_error');
+                throw new \RuntimeException('FTP 操作失败，请检查账号、目录权限及连接模式');
             }
         } finally { if (is_resource($stream)) fclose($stream); }
     }

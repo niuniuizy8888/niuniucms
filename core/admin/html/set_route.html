@@ -22,9 +22,9 @@
                             <tbody>
                                 <?php if ($arrlist) { foreach ($arrlist as $key => $val) { ?>
                                 <tr>
-                                    <td class="fw-semibold"><?php echo $key; ?></td>
+                                    <td class="fw-semibold"><?php echo xn_h($key); ?></td>
                                     <td>
-                                        <input type="text" class="form-control form-control-sm" name="data[<?php echo $key; ?>]" value="<?php echo $val; ?>" style="max-width:300px;">
+                                        <input type="text" class="form-control form-control-sm" name="data[<?php echo xn_h($key); ?>]" value="<?php echo xn_h($val); ?>" style="max-width:300px;">
                                     </td>
                                 </tr>
                                 <?php } } ?>

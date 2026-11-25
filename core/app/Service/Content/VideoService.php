@@ -179,7 +179,7 @@ class VideoService
         $rewrite = $conf['url_rewrite_on'] ?? 0;
         $path    = $conf['path'] ?? './';
         $useAlias = $rewrite > 1 && !empty($alias);
-        $routePrefix = $useAlias ? urlencode($alias) : $route_page_vodplay;
+        $routePrefix = $useAlias ? xn_urlencode($alias) : $route_page_vodplay;
         /** @var string|null sprintf 模板，null 时降级调 url() */
         switch ($rewrite) {
             case 0: $urlTpl = "?{$routePrefix}-%d-%d-%d.html"; break;
@@ -229,23 +229,40 @@ class VideoService
         $db = _SERVER('db') ?? NULL;
         if (!$db) return array();
         $rows = \App\Repository\RepositoryFactory::vod()->builder()
-            ->select(array('name', 'GROUP_CONCAT(vid) as vids', 'COUNT(*) as count'))
+            ->select(array('name', 'COUNT(*) as count'))
             ->groupBy('name')
             ->having('count', '>', 1)
             ->orderBy('count', 'DESC')
+            ->limit(200)
             ->get();
         if (empty($rows)) return array();
 
+        $names = array_values(array_unique(array_column($rows, 'name')));
+        $byName = array();
+        foreach (array_chunk($names, 200) as $chunk) {
+            $vidRows = \App\Repository\RepositoryFactory::vod()->builder()
+                ->select(array('vid', 'name'))
+                ->whereIn('name', $chunk)
+                ->orderBy('vid', 'ASC')
+                ->get();
+            foreach ((array)$vidRows as $vr) {
+                $n = (string)($vr['name'] ?? '');
+                if (!isset($byName[$n])) $byName[$n] = array();
+                if (count($byName[$n]) < 200) {
+                    $byName[$n][] = intval($vr['vid']);
+                }
+            }
+        }
+
         $duplicates = array();
         foreach ($rows as $row) {
-            $vids = array_map('intval', explode(',', (string)$row['vids']));
-            $videos = self::findAsc($vids, 20, true);
-            $videos = $videos ? array_values($videos) : array();
-            if (!$videos) continue;
+            $name = (string)$row['name'];
+            $vids = $byName[$name] ?? array();
+            if (count($vids) < 2) continue;
             $duplicates[] = array(
                 'group_vid' => $vids[0],
-                'name' => $row['name'],
-                'vids' => self::findAscVids($vids, 20),
+                'name' => $name,
+                'vids' => $vids,
                 'count' => intval($row['count']),
             );
         }
@@ -253,26 +270,15 @@ class VideoService
     }
 
     /**
-     * 取 vid 列表的真实在库键集（vid 升序、上限 $limit，只查 vid 列）。
-     * findDuplicates() 专用：把 GROUP_CONCAT 得到的原始 vids 规整为 vod 表实际存在且按 vid 升序的键数组。
-     * @param array $vids 候选 vid 数组
-     * @param int $limit 条数上限
-     * @return array vid 键数组；查询无结果时回退返回入参 $vids（不返回空数组）
-     */
-    private static function findAscVids(array $vids, int $limit): array
-    {
-        $rows = \App\Repository\RepositoryFactory::vod()->find(array('vid' => $vids), array('vid' => 1), 1, $limit, 'vid', array('vid'));
-        if (!$rows) return $vids;
-        $keys = array_keys($rows);
-        return $keys ?: $vids;
-    }
-
-    /**
      * 合并重复视频：把来源视频的播放地址追加到目标视频，成功后删除来源
      */
     public static function mergeVideos($target_vid, array $source_vids)
     {
-        if (empty($target_vid) || empty($source_vids)) return FALSE;
+        $target_vid = intval($target_vid);
+        $source_vids = array_values(array_unique(array_filter(array_map('intval', $source_vids), static function ($v) use ($target_vid) {
+            return $v > 0 && $v !== $target_vid;
+        })));
+        if ($target_vid <= 0 || empty($source_vids)) return FALSE;
         $target = video__read(array('vid' => $target_vid));
         if (empty($target)) return FALSE;
 
@@ -380,7 +386,7 @@ class VideoService
         !empty($tagarr) && \App\Service\Content\TagFlowService::decrementTagCounts($relRowsByTag, $tagarr);
         if (!empty($sticky_vids)) {
             cache_delete('sticky_video_list');
-            cache_set('sticky_video_ver', time(), 86400);
+            cache_shared_set('sticky_video_ver', time(), 86400);
             \App\Repository\RepositoryFactory::stickyVod()->delete(array('vid' => $sticky_vids));
         }
 
@@ -388,6 +394,9 @@ class VideoService
             foreach ($vids as $_vid) content_cache_delete('vod_', $_vid);
             \App\Repository\RepositoryFactory::vod()->delete(array('vid' => $vids));
             \App\Repository\RepositoryFactory::vodVid()->delete(array('vid' => $vids));
+            if (!empty(_SERVER('conf')['es_on'])) {
+                foreach ($vids as $_vid) \App\Service\System\ElasticService::deleteOne((int)$_vid);
+            }
         }
         cache_delete('runtime'); // 计数缓存失效：彻底删除同样影响内容计数（与 ArtService::deleteAll 同口径，审计修复）
         return TRUE;
@@ -450,11 +459,14 @@ class VideoService
         !empty($tagarr) && \App\Service\Content\TagFlowService::decrementTagCounts($relRowsByTag, $tagarr);
         if (!empty($sticky_vids)) {
             cache_delete('sticky_video_list');
-            cache_set('sticky_video_ver', time(), 86400);
+            cache_shared_set('sticky_video_ver', time(), 86400);
             \App\Repository\RepositoryFactory::stickyVod()->delete(array('vid' => $sticky_vids));
         }
         if ($vids) {
             \App\Repository\RepositoryFactory::vodVid()->delete(array('vid' => $vids));
+            if (!empty(_SERVER('conf')['es_on'])) {
+                foreach ($vids as $_vid) \App\Service\System\ElasticService::deleteOne((int)$_vid);
+            }
         }
         if (is_array($vid)) {
             foreach ($vid as $_vid) content_cache_delete('vod_', $_vid);

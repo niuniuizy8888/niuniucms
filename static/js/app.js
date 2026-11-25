@@ -182,7 +182,10 @@ $.fn.button = function (status) {
             if (!jthis.data('default-html')) jthis.data('default-html', jthis.html());
             var lt = jthis.attr('loading-text') || jthis.data('loading-text') || jthis.attr('data-loading-text') || '提交中...';
             jthis.prop('disabled', true).addClass('disabled');
-            jthis.html('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:btnSpin 0.6s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span style="margin-left:6px">' + lt + '</span>');
+            jthis.empty().append(
+                '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:btnSpin 0.6s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>',
+                $('<span style="margin-left:6px"></span>').text(String(lt))
+            );
         } else if (status == 'disabled') {
             jthis.prop('disabled', true).addClass('disabled');
         } else if (status == 'enable' || status == 'reset') {
@@ -253,9 +256,9 @@ $.fn.fieldAlert = function (message) {
             if (tip && tip.length) {
                 tip.text(msg).show();
             } else {
-                var tipHtml = '<div class="invalid-feedback" style="display:block;">' + msg.replace(/</g, '&lt;') + '</div>';
-                if (wrap && wrap.length) { wrap.append(tipHtml); }
-                else { jthis.after(tipHtml); }
+                var tipEl = $('<div class="invalid-feedback" style="display:block;"></div>').text(msg);
+                if (wrap && wrap.length) { wrap.append(tipEl); }
+                else { jthis.after(tipEl); }
             }
         }
         if (window.showToast) window.showToast(message, 'error');
@@ -376,23 +379,27 @@ function showAlert(opts) {
         warning: { cls: 'btn-warning', confirm: '确认', showCancel: true, cancel: '取消' },
         danger:  { cls: 'btn-danger',  confirm: '重试', showCancel: true, cancel: '取消' }
     };
-    var cfg = btnConfigs[type] || btnConfigs.info;
+    var safeType = Object.prototype.hasOwnProperty.call(btnConfigs, type) ? type : 'info';
+    var cfg = btnConfigs[safeType];
+    var confirmLabel = opts.confirmText || cfg.confirm;
 
     var overlay = $('<div class="nn-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="nn-modal-title">\
         <div class="nn-modal-box">\
             <div class="nn-modal-head">\
-                <div class="nn-modal-icon ' + type + '">' + icons[type] + '</div>\
-                <div class="nn-modal-title" id="nn-modal-title">' + title + '</div>\
+                <div class="nn-modal-icon ' + safeType + '">' + icons[safeType] + '</div>\
+                <div class="nn-modal-title" id="nn-modal-title"></div>\
             </div>\
-            <div class="nn-modal-body">' + message + '</div>\
+            <div class="nn-modal-body"></div>\
             <div class="nn-modal-foot"></div>\
         </div></div>').appendTo('body');
+    overlay.find('.nn-modal-title').text(String(title));
+    overlay.find('.nn-modal-body').text(String(message));
 
     var foot = overlay.find('.nn-modal-foot');
     if (cfg.showCancel) {
-        foot.append('<button class="btn btn-outline-secondary nn-modal-cancel">' + cfg.cancel + '</button>');
+        foot.append($('<button type="button" class="btn btn-outline-secondary nn-modal-cancel"></button>').text(cfg.cancel));
     }
-    foot.append('<button class="btn ' + cfg.cls + ' nn-modal-confirm">' + cfg.confirm + '</button>');
+    foot.append($('<button type="button" class="btn ' + cfg.cls + ' nn-modal-confirm"></button>').text(String(confirmLabel)));
 
     var closeModal = function (callback) {
         overlay.find('.nn-modal-box').css('animation', 'nnFadeIn 0.15s ease reverse');
@@ -433,6 +440,7 @@ $.modal = function (type, title, message, options) {
         type: type,
         title: title,
         message: message,
+        confirmText: options.confirmText,
         onConfirm: options.onConfirm,
         onCancel: options.onCancel
     });

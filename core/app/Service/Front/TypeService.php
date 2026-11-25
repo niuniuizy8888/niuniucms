@@ -99,7 +99,7 @@ class TypeService
         static $done = FALSE;
         if ($done || !function_exists('cache_set')) return;
         $done = TRUE;
-        cache_set('nn_type_facet_ver', strval(microtime(TRUE)), 0);
+        cache_shared_set('nn_type_facet_ver', strval(microtime(TRUE)), 0);
     }
 
     /** 栏目树内三字段原始值分布：['area'=>[raw=>n],'year'=>..,'lang'=>..]。 */
@@ -108,15 +108,17 @@ class TypeService
         static $memo = array();
         $cids = array_values(array_filter(array_map('intval', $cids)));
         sort($cids);
-        $ver = function_exists('cache_get') ? strval(cache_get('nn_type_facet_ver')) : '';
-        $key = 'nn_type_facets_' . md5(implode(',', $cids) . '|' . $ver);
+        $ver = function_exists('cache_shared_get') ? strval(cache_shared_get('nn_type_facet_ver')) : '';
+        $vis = \App\Service\Content\ContentVisibilityService::fingerprint();
+        $key = 'nn_type_facets_' . md5(implode(',', $cids) . '|' . $ver . '|' . $vis);
         if (isset($memo[$key])) return $memo[$key];
         $c = function_exists('cache_get') ? cache_get($key) : NULL;
         if (is_array($c) && isset($c['lang'])) return $memo[$key] = $c;
         $out = array('area' => array(), 'year' => array(), 'lang' => array());
+        if (empty($cids)) return $memo[$key] = $out;
         $db = $_SERVER['db'];
         $tb = (isset($db->tablepre) ? $db->tablepre : 'nncms_') . 'vod';
-        $cond = $cids ? ' WHERE cid IN (' . implode(',', $cids) . ')' : '';
+        $cond = ' WHERE cid IN (' . implode(',', $cids) . ')';
         foreach (array('area', 'year', 'lang') as $f) {
             foreach ((array)$db->sql_find("SELECT `$f` AS v, COUNT(*) AS n FROM `$tb`$cond GROUP BY `$f`") as $r) {
                 $out[$f][(string)$r['v']] = intval($r['n']);
@@ -162,7 +164,7 @@ class TypeService
     {
         $db = $_SERVER['db'];
         $tb = (isset($db->tablepre) ? $db->tablepre : 'nncms_') . 'vod';
-        $ver = function_exists('cache_get') ? strval(cache_get('nn_type_facet_ver')) : '';
+        $ver = function_exists('cache_shared_get') ? strval(cache_shared_get('nn_type_facet_ver')) : '';
         $key = 'nn_type_cidnum_' . md5($ver);
         $cnt = function_exists('cache_get') ? cache_get($key) : NULL;
         if (!is_array($cnt)) {
@@ -221,6 +223,9 @@ class TypeService
             foreach ($catelist as $v) intval($v['cup'] ?? 0) == $cid && $cids[] = intval($v['cid']);
         }
         $cids = array_values(array_unique(array_filter($cids)));
+        // 与当前用户组可读分类求交集，禁止通过筛选面统计或结果泄漏受限分类影片
+        $visibleCids = \App\Service\Content\ContentVisibilityService::categoryIds();
+        $cids = array_values(array_intersect($cids, $visibleCids));
 
         // ---- 参数校验（非法 ⇒ 404，避免无限组合被收录） ----
         $raw = self::rawFacets($cids);
@@ -237,17 +242,19 @@ class TypeService
         }
 
         // ---- 查询条件：选中值展开为原始值 IN 列表（同义 + 多值 + 年份区间），仍走等值索引 ----
-        $where = array('cid' => count($cids) > 1 ? $cids : $cid);
-        $empty = FALSE;
+        $empty = empty($cids);
+        $where = $empty ? array() : array('cid' => count($cids) > 1 ? $cids : $cids[0]);
         foreach (array('area' => $req_area, 'year' => $req_year, 'lang' => $req_lang) as $f => $v) {
             if ($v === '') continue;
             $m = self::matchRaw($f, $v, $raw[$f]);
             $m ? $where[$f] = $m : $empty = TRUE;
         }
         $pagesize = max(1, intval($conf['pagesize'] ?? 20));
+        $listsize = max(1, intval($conf['listsize'] ?? 100));
         $num = $empty ? 0 : intval(\App\Service\Content\VideoService::count($where));
-        $totalpage = max(1, (int)ceil($num / $pagesize));
+        $totalpage = min($listsize, max(1, (int)ceil($num / $pagesize)));
         if ($page > $totalpage) {
+            $base['totalpage'] = $totalpage;
             $base['redirect'] = self::url($rt, $cid, $req_area, $req_year, $req_lang, $req_sort, $totalpage);
             return $base;
         }
@@ -256,8 +263,8 @@ class TypeService
             global $gid;
             $order = array(self::SORTS[$req_sort][1] => -1);
             $order['vid'] = -1;
-            $videolist = \App\Repository\RepositoryFactory::vod()->find($where, $order, $page, $pagesize, 'vid');
-            foreach ($videolist as &$video) \App\Service\Content\VideoService::format($video);
+            $videolist = \App\Repository\RepositoryFactory::vod()->find($where, $order, $page, $pagesize, 'vid', \App\Service\Content\VideoService::findColsLight());
+            foreach ($videolist as &$video) \App\Service\Content\VideoService::format($video, TRUE);
             unset($video);
             \App\Service\Content\VideoService::listAccessFilter($videolist, $gid);
         }

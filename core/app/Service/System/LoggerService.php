@@ -59,11 +59,22 @@ class LoggerService
      * 单文件大小控制：超过上限后直接清空当前文件，由下一次 append 重新起写。
      * 不保留历史轮转文件，口径对齐「日志大于 10MB 自动覆盖」。
      */
-    private static function truncateIfOversized(string $logfile, int $maxMb): void
+    private static function truncateIfOversized(string $logfile, int $maxMb, bool $isAudit = false): void
     {
         if ($maxMb <= 0 || !is_file($logfile)) return;
         clearstatcache(true, $logfile);
         if (filesize($logfile) <= $maxMb * 1048576) return;
+        if ($isAudit) {
+            // 审计通道保留最多 3 代轮转，避免高频错日志刷满 10MB 抹除历史审计记录
+            $base = preg_replace('/\.php$/', '', $logfile);
+            @unlink($base . '.3.php');
+            if (is_file($base . '.2.php')) @rename($base . '.2.php', $base . '.3.php');
+            if (is_file($base . '.1.php')) @rename($base . '.1.php', $base . '.2.php');
+            if (@rename($logfile, $base . '.1.php')) {
+                clearstatcache(true, $logfile);
+                return;
+            }
+        }
         @file_put_contents($logfile, '', LOCK_EX);
         clearstatcache(true, $logfile);
     }
@@ -90,20 +101,19 @@ class LoggerService
 
         $conf = _SERVER('conf');
         $time = intval(_SERVER('time')) ?: time();
-        $ip = _SERVER('ip');
+        $ip = str_replace(array("\r\n", "\n", "\r", "\t"), ' ', (string)_SERVER('ip'));
         $uid = intval(G('uid'));
         $day = date('Ym', $time); // 按照月存放，否则 Ymd 目录太多。
         $mtime = date('Y-m-d H:i:s');
-        // 审计修复（F-06）：日志行携带 REQUEST_URI，而退出/写操作链接把 safe_token
-        // （及 api.php 的 token）放查询串——原样落盘=令牌明文进日志。写入前统一掩码（nginx 侧
-        // log_format 只掩 token=，应用侧补齐 safe_token=）。
-        $url = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
-        $url = preg_replace('#([?&](?:safe_token|token)=)[^&\s"\']*#i', '$1***', $url);
-        $logpath = $conf['log_path'] . $day;
-        !is_dir($logpath) and mkdir($logpath, 0777, true);
+        $url = isset($_SERVER['REQUEST_URI']) ? (string)$_SERVER['REQUEST_URI'] : '';
+        $url = str_replace(array("\r\n", "\n", "\r", "\t"), ' ', $url);
+        $url = self::maskSecrets($url);
+        $logBase = (is_array($conf) && !empty($conf['log_path']))
+            ? (string)$conf['log_path']
+            : (defined('APP_PATH') ? APP_PATH . 'runtime/log/' : './runtime/log/');
+        $logpath = rtrim($logBase, '/\\') . '/' . $day;
+        !is_dir($logpath) and @mkdir($logpath, 0750, true);
 
-        // 上线前终检（N-07）：原仅剥 \r\n/\n/\t —— **孤立的 \r 未剥**，而日志正文可含攻击者可控文本
-        // （URL/采集远端文案），一旦 web 层放开 runtime 直访即可被用来伪造日志行（日志文件自带 `<?php exit;` 头）。
         $s = str_replace(array("\r\n", "\n", "\r", "\t"), ' ', self::maskSecrets((string)$msg));
         if (!empty($context)) {
             $s .= "\t" . self::maskSecrets(xn_json_encode($context));
@@ -112,9 +122,8 @@ class LoggerService
 
         $logfile = $logpath . "/$channel.php";
 
-        // 自动覆盖：文件超过限制后清空当前文件，避免线上日志越积越大。
         $maxMb = (int)($conf['log_max_size'] ?? 10);
-        self::truncateIfOversized($logfile, $maxMb);
+        self::truncateIfOversized($logfile, $maxMb, self::isAuditChannel($channel));
 
         @error_log($s, 3, $logfile);
     }

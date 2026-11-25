@@ -222,7 +222,7 @@ class ArtService
         $route_page_art = $conf['route']['art'];
         $art['url'] = url($route_page_art . '-' . $art['aid'], '', FALSE);
         if ($conf['url_rewrite_on'] > 1) {
-            !empty($cate['alias']) and $art['url'] = url(urlencode($cate['alias']) . '-' . $art['aid'], '', FALSE);
+            !empty($cate['alias']) and $art['url'] = url(xn_urlencode($cate['alias']) . '-' . $art['aid'], '', FALSE);
         }
         $art['tag_fmt'] = $art['tag'] ? xn_json_decode($art['tag']) : array();
         if (!is_array($art['tag_fmt'])) $art['tag_fmt'] = array();
@@ -310,7 +310,7 @@ class ArtService
             $cate = array_value($catelist, $art['cid']);
             $art['url'] = url($route_page_art . '-' . $art['aid'], '', FALSE);
             if (is_array($conf) && intval($conf['url_rewrite_on'] ?? 0) > 1 && !empty($cate['alias'])) {
-                $art['url'] = url(urlencode($cate['alias']) . '-' . $art['aid'], '', FALSE);
+                $art['url'] = url(xn_urlencode($cate['alias']) . '-' . $art['aid'], '', FALSE);
             }
         }
         unset($art);

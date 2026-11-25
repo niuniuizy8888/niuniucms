@@ -97,16 +97,19 @@
             const playerContainer = document.getElementById('artplayer');
             if (!playerContainer) return;
             playerContainer.style.position = 'relative';
+            const safeStopAd = (typeof config.stop_ad === 'string' && /^(https?:\/\/|\/(?!\/))/i.test(config.stop_ad)) ? config.stop_ad : '';
             const adHTML = `
                 <div id="pauseAdContainer" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 9999; cursor: pointer; overflow: hidden;">
                     <div style="position: relative; max-width: 80%; max-height: 80%; transform: translateY(-10px); animation: fadeIn 0.5s ease-out; box-sizing: border-box;">
-                        <img alt="广告" src="config.stop_ad" style="max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border: 3px solid rgba(255,255,255,0.1); backdrop-filter: blur(2px); box-sizing: border-box;">
+                        <img id="pauseAdImg" alt="广告" style="max-width: 100%; max-height: 280px; object-fit: contain; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); border: 3px solid rgba(255,255,255,0.1); backdrop-filter: blur(2px); box-sizing: border-box;">
                         <button id="closeAdButton" style="position: absolute; top: -15px; right: -15px; background: linear-gradient(135deg, #ff6b6b, #ee5a52); color: white; border: 2px solid white; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 10px rgba(0,0,0,0.2); transition: all 0.3s ease; font-family: Arial, sans-serif; box-sizing: border-box;">✕</button>
                       <div id="pauseAdText" style="position: absolute; bottom: -35px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg, #2ed573, #19b886); color: white; font-size: 14px; padding: 8px 20px; border-radius: 20px; box-shadow: 0 4px 12px rgba(46, 213, 115, 0.4); cursor: pointer; transition: all 0.3s ease; white-space: nowrap; box-sizing: border-box;">点击继续播放</div>
                     </div>
                 </div>
             `;
             playerContainer.insertAdjacentHTML('beforeend', adHTML);
+            const pauseImgEl = document.getElementById('pauseAdImg');
+            if (pauseImgEl && safeStopAd) pauseImgEl.setAttribute('src', safeStopAd);
             function applyResponsiveStyles() {
                 const playerContainer = document.getElementById('artplayer');
                 if (!playerContainer) return;
@@ -165,7 +168,9 @@
                         adImage.onclick = function () {
                             // 修复：原为字符串字面量 'config.stop_ad_url'（永不生效，点击打开站内相对路径）。
                             // 与开始广告的 `url: config.start_ad_url`（见下方 __o 装配）保持同一取值口径。
-                            if (config.stop_ad_url) window.open(config.stop_ad_url, '_blank');
+                            if (typeof config.stop_ad_url === 'string' && /^(https?:\/\/|\/(?!\/))/i.test(config.stop_ad_url.trim())) {
+                                window.open(config.stop_ad_url.trim(), '_blank', 'noopener,noreferrer');
+                            }
                         };
                     } 
                     const pauseAdText = document.getElementById('pauseAdText');
@@ -272,7 +277,11 @@
                             canBeClosed: '%s秒后可关闭广告'
                         }
                     };
-                    if (config.start_ad === 0) { __o.html = '<img alt="广告" src="' + config.start_img_ad + '">'; }
+                    if (config.start_ad === 0) {
+                        var safeImg = (typeof config.start_img_ad === 'string' && /^(https?:\/\/|\/(?!\/))/i.test(config.start_img_ad)) ? config.start_img_ad : '';
+                        var escImg = safeImg.replace(/[&"'<>]/g, function(ch){ return ({'&':'&amp;','"':'&quot;',"'":'&#39;','<':'&lt;','>':'&gt;'})[ch]; });
+                        __o.html = escImg ? '<img alt="广告" src="' + escImg + '">' : '';
+                    }
                     else if (config.start_ad === 1) { __o.video = config.start_mp4_ad; }
                     return __o;
                 })())] : []),

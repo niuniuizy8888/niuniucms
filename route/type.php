@@ -1,7 +1,7 @@
 <?php
 !defined('DEBUG') and exit('Access Denied.');
 // 页面级缓存 1800s（仅 DEBUG=0 线上模式启用）
-$cacheKey = "page_type_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_u' . intval($uid) . '_g' . $gid . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
+$cacheKey = "page_type_" . md5(page_cache_uri_key($_SERVER['REQUEST_URI']) . '_u' . intval($uid) . '_g' . $gid . '_v' . \App\Service\Content\ContentVisibilityService::fingerprint() . '_r' . ($conf['url_rewrite_on'] ?? 0) . '_j' . ($json ? 1 : 0));
 if (page_cache_start($cacheKey)) return;
 
 // hook route_type_start.php
@@ -21,8 +21,24 @@ if (!empty($data['not_found'])) {
     include _include(APP_PATH . '404.html');
     return;
 }
-if (!empty($data['redirect']) && !$json) {
-    http_location($data['redirect']);
+if (!empty($data['redirect'])) {
+    if (!$json) {
+        http_location($data['redirect']);
+        return;
+    }
+    if ($conf['api_on']) {
+        message(0, array(
+            'cid' => intval($data['cid'] ?? 0),
+            'page' => intval($page),
+            'totalpage' => intval($data['totalpage'] ?? 1),
+            'videolist' => array(),
+            'redirect' => $data['redirect'],
+        ));
+    } else {
+        http_response_code(403);
+        message(-1, lang('closed'));
+    }
+    return;
 }
 extract($data);
 $_SESSION['cid'] = $cid;

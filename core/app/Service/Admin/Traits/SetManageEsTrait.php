@@ -39,15 +39,29 @@ trait SetManageEsTrait
     public static function saveEs(int $uid): array
     {
         self::verifyToken($uid, 'admin_set_es');
+        $conf = (array)_SERVER('conf');
+        $oldEs = is_array($conf['es'] ?? null) ? $conf['es'] : array();
+        $newHost = trim(admin_param_text('host', '', 255));
+        $sameHost = ($newHost !== '' && $newHost === trim((string)($oldEs['host'] ?? '')));
+        $pass = admin_param_text('pass', '', 255);
+        $apiKey = admin_param_text('apikey', '', 255);
+        // 表单不再回显明文密码/API Key；仅在主机未变更、留空且未勾选清除时保留原密钥，防止换 Host 外带凭据
+        if ('' === $pass && $sameHost && !admin_param_int('clear_pass', 0, 0, 1)) {
+            $pass = (string)($oldEs['pass'] ?? '');
+        }
+        if ('' === $apiKey && $sameHost && !admin_param_int('clear_apikey', 0, 0, 1)) {
+            $apiKey = (string)($oldEs['api_key'] ?? '');
+        }
         $payload = array(
-            'host' => admin_param_text('host', '', 255),
+            'host' => $newHost,
             'index' => admin_param_text('index', '', 100),
             'user' => admin_param_text('user', '', 100),
-            'pass' => admin_param_text('pass', '', 255),
-            'api_key' => admin_param_text('apikey', '', 255),
+            'pass' => $pass,
+            'api_key' => $apiKey,
         );
         $result = ConfigRuntimeService::saveEsConfig($payload);
-        return array('code' => 0, 'message' => jump($result['msg'], url('set-es', array(), TRUE), 3));
+        $ok = !empty($result['success']);
+        return array('code' => $ok ? 0 : -1, 'message' => $ok ? jump($result['msg'], url('set-es', array(), TRUE), 3) : (string)$result['msg']);
     }
 
     /**

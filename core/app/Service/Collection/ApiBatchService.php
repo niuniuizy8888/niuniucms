@@ -99,9 +99,17 @@ class ApiBatchService
         
         $batch_item_supports_result_status = api_import_batch_item_supports_field('result_status');
         if (!empty($batch_item_supports_result_status) && !empty($batchlist)) {
+            $skipBatchIds = array();
+            foreach ($batchlist as $row) {
+                if (intval($row['duplicate_num'] ?? 0) > 0 && intval($row['id'] ?? 0) > 0) {
+                    $skipBatchIds[] = intval($row['id']);
+                }
+            }
+            $skipMap = $skipBatchIds ? ApiBatchItemService::skipBreakdownBatch($skipBatchIds) : array();
             foreach ($batchlist as $idx => $row) {
-                if (intval($row['duplicate_num'] ?? 0) > 0) {
-                    $batchlist[$idx] = api_import_batch_attach_skip_breakdown($row);
+                $bid = intval($row['id'] ?? 0);
+                if (isset($skipMap[$bid])) {
+                    $batchlist[$idx]['_skip_breakdown'] = $skipMap[$bid];
                 }
             }
         }
@@ -756,8 +764,48 @@ class ApiBatchService
         if (intval($batch['status']) === 2) {
             return array('code' => -1, 'message' => '该批次已回滚');
         }
-        $items = api_import_batch_item_find_by_batch($batch_id, 1, 100000);
-        if (empty($items)) {
+        if (!api_import_batch_item_supports_field('action_type')
+            && (CollectionBatchStateService::read($batch_id)['items_version'] ?? 0) !== 1) {
+            return ['code'=>-1, 'message'=>'旧批次明细无法区分新增和更新，不能安全自动回滚；现有内容已保留，请先核对批次明细'];
+        }
+        $hasActionType = api_import_batch_item_supports_field('action_type');
+        // 分页扫全批次明细（消除 100,000 条截断导致静默漏删），同时收集受影响分类重算 cate.videos
+        $chunkSize = 2000;
+        $scanPage = 1;
+        $hasAnyItem = false;
+        $affectedCids = array();
+        $deletedVids = array();
+        while (true) {
+            $chunk = api_import_batch_item_find_by_batch($batch_id, $scanPage, $chunkSize);
+            if (empty($chunk)) break;
+            $hasAnyItem = true;
+            $chunkVids = array();
+            foreach ($chunk as $item) {
+                if ($hasActionType && ($item['action_type'] ?? 'create') !== 'create') continue;
+                $vid = intval($item['vid'] ?? 0);
+                if ($vid > 0 && !isset($deletedVids[$vid])) {
+                    $chunkVids[] = $vid;
+                    $deletedVids[$vid] = true;
+                    $itemCid = intval($item['cid'] ?? 0);
+                    if ($itemCid > 0) $affectedCids[$itemCid] = true;
+                }
+            }
+            if (!empty($chunkVids)) {
+                foreach (array_chunk($chunkVids, 200) as $delPart) {
+                    // 跳过已被手工删除的视频，避免空块导致 VideoService::deleteAll 返回 FALSE 中止整批回滚
+                    $existingRows = video__find(array('vid' => $delPart), array('vid' => 1), 1, count($delPart), 'vid', array('vid'));
+                    if (empty($existingRows)) continue;
+                    $existingVids = array_map('intval', array_keys($existingRows));
+                    if (FALSE === \App\Service\Content\VideoService::deleteAll($existingVids)) {
+                        xn_log('rollback aborted: VideoService::deleteAll returned FALSE, batch=' . $batch_id, 'api_batch_error');
+                        return array('code' => -1, 'message' => '回滚失败：内容未被删除（多为回收站快照写入失败），批次保持未回滚，请检查回收站表结构后重试');
+                    }
+                }
+            }
+            if (count($chunk) < $chunkSize) break;
+            $scanPage++;
+        }
+        if (!$hasAnyItem) {
             $saved = api_import_batch_update($batch_id, array(
                 'status' => 2,
                 'rollback_date' => time(),
@@ -767,45 +815,21 @@ class ApiBatchService
             if (!$saved) throw new \RuntimeException('批次回滚状态保存失败');
             return array('code' => 0, 'message' => '批次无可回滚内容', 'rollback_num' => 0);
         }
-        if (!api_import_batch_item_supports_field('action_type')
-            && (CollectionBatchStateService::read($batch_id)['items_version'] ?? 0) !== 1) {
-            return ['code'=>-1, 'message'=>'旧批次明细无法区分新增和更新，不能安全自动回滚；现有内容已保留，请先核对批次明细'];
-        }
-        $vids = array();
-        foreach ($items as $item) {
-            $vid = intval($item['vid'] ?? 0);
-            if ($vid > 0) $vids[] = $vid;
-        }
-        $vids = array_values(array_unique($vids));
-        if (api_import_batch_item_supports_field('action_type')) {
-            $create_vids = array();
-            foreach ($items as $item) {
-                if (($item['action_type'] ?? 'create') === 'create') {
-                    $vid = intval($item['vid'] ?? 0);
-                    if ($vid > 0) $create_vids[] = $vid;
-                }
-            }
-            $vids = array_values(array_unique($create_vids));
-        }
-        if (!empty($vids)) {
-            // ⚠ 不再吞返回值（复核修正）：旧写法忽略 FALSE 仍把批次置 status=2「已回滚」⇒ 内容其实一条没删，
-            //   而事后所有回滚入口都被 status=2 的 fail-closed 闸拦住（永久无法再滚）。现失败即如实返回，
-            //   批次保持未回滚状态（明细不删、状态不改），管理员可修复后重试。
-            if (FALSE === \App\Service\Content\VideoService::deleteAll($vids)) {
-                xn_log('rollback aborted: VideoService::deleteAll returned FALSE, batch=' . $batch_id, 'api_batch_error');
-                return array('code' => -1, 'message' => '回滚失败：内容未被删除（多为回收站快照写入失败），批次保持未回滚，请检查回收站表结构后重试');
-            }
+        // 重算受影响分类视频计数，避免回滚后 cate.videos 虚高
+        foreach (array_keys($affectedCids) as $acid) {
+            $cnt = \App\Service\Content\VideoService::countByCid($acid);
+            \App\Service\Content\CateService::update($acid, array('videos' => $cnt));
         }
         if (api_import_batch_item__delete(array('batch_id' => $batch_id)) === false) throw new \RuntimeException('批次明细清理失败');
         $saved = api_import_batch_update($batch_id, array(
             'status' => 2,
             'rollback_date' => time(),
-            'rollback_num' => count($vids),
+            'rollback_num' => count($deletedVids),
             'note' => '已回滚批次导入内容',
         ));
         if (!$saved) throw new \RuntimeException('批次回滚状态保存失败');
         cate_list_cache_delete();
-        return array('code' => 0, 'message' => '回滚成功', 'rollback_num' => count($vids));
+        return array('code' => 0, 'message' => '回滚成功', 'rollback_num' => count($deletedVids));
     }
 
 }

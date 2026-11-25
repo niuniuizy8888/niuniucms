@@ -1,4 +1,8 @@
 <?php
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit('CLI only');
+}
 /**
  * 模板表达式/主题钩子安全闸自测（审查轮 U-1 步骤 5）。不随 build.sh 发布（tools/ 不打包）。
  * 用法：php tools/tmpl_selftest.php   （退出码 0=全过，非 0=有用例未达预期）
@@ -117,11 +121,16 @@ $hook_bad = array(
     '<?php foreach($x as $y){ unlink($y); } ?>',
     '<?php kv_set($evil); ?>',
     '<?php echo 1; ?>',
+    '<?php ("system")("id"); ?>',
+    '<?php ["Closure", "fromCallable"]("system"); ?>',
+    "<?php db_exec('UPDATE niuniucms_user SET gid=1'); ?>",
+    "<?php db_query('DELETE FROM nc_block WHERE name=?', 'x'); ?>",
+    '<?php kv_set("runtime_conf", array("tpl_allow_php" => 1)); ?>',
+    '<?php kv_delete("setting"); ?>',
 );
 $hook_good = array(
     '<?php kv_delete("theme_abc_cfg"); ?>',
-    "<?php db_query('DELETE FROM nc_block WHERE name=?', 'x'); ?>",
-    '<?php kv_set("k","v"); kv_delete("j"); ?>',
+    '<?php kv_set("theme_abc_cfg", array("k" => "v")); kv_delete("theme_abc_old"); ?>',
     '',
     '<div>pure html</div>',
 );
@@ -135,14 +144,26 @@ foreach ($hook_bad as $c) hook_reject($c, $fail, $pass);
 echo "== theme hooks good (must allow) ==\n";
 foreach ($hook_good as $c) hook_allow($c, $fail, $pass);
 
-echo "\nRESULT: pass={$pass} fail={$fail}\n";
-exit($fail === 0 ? 0 : 1);
-
 // R3-1：变量根白名单 —— 机密根名必须被拒；常用展示根名必须放行
-echo "R3-1 var-root whitelist\n";
+echo "== R3-1 var-root whitelist ==\n";
 foreach (array('$secret_value','$secret_conf.auth_key','$dbConf','$sid','$GLOBALS["conf"]') as $e) {
     expr_reject($e, $fail, $pass);
 }
 foreach (array('$videolist','$cate.name','$user.username','$gid','$uid','$conf.sitename') as $e) {
     expr_allow($e, $fail, $pass);
 }
+
+// R2-P0：HTML 压缩禁止将 \t 删成空串（否则 <\t?php 可在安全闸之后重组为合法 PHP 开标签）
+echo "== R2-P0 template tab-compress guard ==\n";
+foreach (array('core/model/view.php', 'core/app/Service/System/AddonService.php') as $relFile) {
+    $srcCode = (string)@file_get_contents($ROOT . '/' . $relFile);
+    if ($srcCode === '' || preg_match('/str_replace\s*\(\s*(?:"\\\\t"|\'\\\\t\')\s*,\s*(?:""|\'\')/', $srcCode)) {
+        echo "  [FAIL tab-compress] {$relFile} still strips \\t to empty string\n";
+        $fail++;
+    } else {
+        $pass++;
+    }
+}
+
+echo "\nRESULT: pass={$pass} fail={$fail}\n";
+exit($fail === 0 ? 0 : 1);

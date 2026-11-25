@@ -212,7 +212,8 @@ class cache_mysql implements CacheInterface
         foreach ($keys as $k) { $map[$this->prefixed($k)] = $k; }
         $time = time();
         try {
-            $rows = db_table($this->table)->whereIn('k', array_keys($map))->get();
+            if (!$this->db) return $result;
+            $rows = (new QueryBuilder($this->db, $this->db->tablepre . $this->table))->whereIn('k', array_keys($map))->get();
         } catch (\Throwable $e) {
             return $result;
         }
@@ -265,12 +266,12 @@ class cache_mysql implements CacheInterface
         $time = time();
         $k = $this->prefixed($key);
         $expiry = $ttl ? $time + $ttl : 0;
-        $sql = 'UPDATE ' . $this->db->tablepre . $this->table . ' SET v = CAST(v AS SIGNED) + ?, expiry = ? WHERE k = ?';
+        $sql = 'UPDATE ' . $this->db->tablepre . $this->table . ' SET v = CASE WHEN expiry > 0 AND expiry < ? THEN ? ELSE CAST(v AS SIGNED) + ? END, expiry = ? WHERE k = ?';
         try {
-            $st = $this->db->prepare_execute($sql, array($step, $expiry, $k));
+            $st = $this->db->prepare_execute($sql, array($time, $step, $step, $expiry, $k));
             if (!$st || $st->rowCount() < 1) {
                 $this->set($key, 0);
-                $st = $this->db->prepare_execute($sql, array($step, $expiry, $k));
+                $st = $this->db->prepare_execute($sql, array($time, $step, $step, $expiry, $k));
                 if (!$st || $st->rowCount() < 1) return false;
             }
         } catch (\Throwable $e) {

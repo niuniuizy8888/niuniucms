@@ -80,27 +80,20 @@ trait ContentRankTrait
                     $update[$_id] = array('views+' => intval($cnt));
                 }
                 $pending = array();
-                static::rankViewsRepo()->bigUpdate(array(static::rankTopIdCol() => array_keys($update)), $update);
+                // 浏览量自增不推进全站 page_content_ver，避免每次访问击穿全站页/区块缓存
+                static::rankViewsRepo()->bigUpdate(array(static::rankTopIdCol() => array_keys($update)), $update, NULL, false);
             });
         }
     }
 
-    /**
-     * 记一条热度流水（播放/详情页访问时调用，供 hits_day/week/month 时间窗榜聚合）：
-     * 同「内容 id + 访问者 IP」60s 内去重（缓存键 = rankIpCachePrefix + id_ips），命中去重不写库。
-     * @param mixed $id 内容主键（intval 后 <=0 直接拒绝）
-     * @param mixed $cid 所属分类 id（仅记录，不校验）
-     * @return int|false 成功=插入 ID；FALSE=id 非法或 60s 去重命中
-     */
     public static function recordTopView($id, $cid)
     {
         $id = intval($id);
         $cid = intval($cid);
         if (empty($id)) return FALSE;
-        $ipstr = ip();
-        $ips = ip2long($ipstr);
-        if ($ips === false) $ips = 0;
-        $cacheKey = static::rankIpCachePrefix() . $id . '_' . $ips;
+        $ipstr = (string)ip();
+        $ipKey = md5($ipstr !== '' ? $ipstr : 'unknown');
+        $cacheKey = static::rankIpCachePrefix() . $id . '_' . $ipKey;
         if (cache_get($cacheKey)) return FALSE;
         cache_set($cacheKey, 1, 60);
         $time = $GLOBALS['time'] ?? time();
@@ -196,42 +189,44 @@ trait ContentRankTrait
      */
     protected static function rankByHitBase($type, $cidarr, int $page, int $pagesize, bool $countEmpty = FALSE)
     {
+        // 统一强制按当前用户组可见分类求交集，阻断 -hits* 路由越权读取受限分类
+        $allowedCids = \App\Service\Content\ContentVisibilityService::intersectCategories($cidarr);
+        if (empty($allowedCids)) {
+            return array('list' => array(), 'total' => 0, 'page' => $page, 'pagesize' => $pagesize);
+        }
         if ('hits' == $type) {
-            $rows = self::topByCid($cidarr, $page, $pagesize);
+            $rows = self::topByCid($allowedCids, $page, $pagesize);
             if (!$rows) {
-                return array('list' => array(), 'total' => $countEmpty ? self::countByCid($cidarr) : 0, 'page' => $page, 'pagesize' => $pagesize);
+                return array('list' => array(), 'total' => $countEmpty ? self::countByCid($allowedCids) : 0, 'page' => $page, 'pagesize' => $pagesize);
             }
             $ids = array_column($rows, static::rankTopIdCol());
             $items = static::rankFindAsc($ids, $pagesize);
-            $items = arrlist_multisort($items, 'views', false);
+            $items = \App\Service\Content\ContentVisibilityService::filter(is_array($items) ? $items : array());
+            if (!empty($items)) {
+                $items = arrlist_multisort($items, 'views', false);
+            }
             $i = 0;
             foreach ($items as &$item) {
                 $i++;
                 $item['n'] = $i;
             }
             unset($item);
-            return array('list' => $items, 'total' => self::countByCid($cidarr), 'page' => $page, 'pagesize' => $pagesize);
+            return array('list' => $items, 'total' => self::countByCid($allowedCids), 'page' => $page, 'pagesize' => $pagesize);
         }
-        return self::hitList($type, $cidarr, $page, $pagesize, static::rankTopTable(), static::rankTopIdCol(), static::rankHitCachePrefix());
+        return self::hitList($type, $allowedCids, $page, $pagesize, static::rankTopTable(), static::rankTopIdCol(), static::rankHitCachePrefix());
     }
 
-    /**
-     * 时间窗热度榜装配（带 300s 结果缓存）：hitRankIds 从排行明细表按窗口取本页 id 集 + total，
-     * 再经 rankFindAsc 拉内容、按 views 降序整理。缓存键 = cachePrefix + type + cid(md5) + page + pagesize。
-     * @param string $type 时间窗类型（原样拼入缓存键与查询，调用方应已归一）
-     * @param mixed $cid 分类（数组则 md5 归并成缓存键片段）
-     * @param int $page 页码
-     * @param int $pagesize 每页条数
-     * @param string $table 排行明细表名（rankTopTable）
-     * @param string $idCol 明细表内容主键列（rankTopIdCol）
-     * @param string $cachePrefix 缓存键前缀（rankHitCachePrefix）
-     * @return array ['list'=>条目数组(无数据为空数组), 'total'=>int(时间窗内明细总数), 'page'=>int, 'pagesize'=>int]
-     *         缓存命中（含负缓存）原样返回，避免每请求重算
-     */
     protected static function hitList($type, $cid, int $page, int $pagesize, string $table, string $idCol, string $cachePrefix)
     {
+        $cid = \App\Service\Content\ContentVisibilityService::intersectCategories($cid);
+        if (empty($cid)) {
+            return array('list' => array(), 'total' => 0, 'page' => $page, 'pagesize' => $pagesize);
+        }
         $cid_key = is_array($cid) ? md5(implode(',', $cid)) : (string)$cid;
-        $cache_key = $cachePrefix . $type . '_' . $cid_key . '_' . $page . '_' . $pagesize;
+        $vis = \App\Service\Content\ContentVisibilityService::fingerprint();
+        $rw = intval(_SERVER('conf')['url_rewrite_on'] ?? 0);
+        $site = function_exists('page_cache_site_suffix') ? page_cache_site_suffix() : '';
+        $cache_key = $cachePrefix . $type . '_' . $cid_key . '_' . $page . '_' . $pagesize . '_v' . $vis . '_r' . $rw . $site;
         $r = cache_get($cache_key);
         if (NULL !== $r) return $r;
 
@@ -240,11 +235,21 @@ trait ContentRankTrait
         if (!empty($ranked['ids'])) {
             $ids = $ranked['ids'];
             $items = static::rankFindAsc($ids, $pagesize);
-            $items = arrlist_multisort($items, 'views', false);
-            $list = $items ?: array();
+            $items = \App\Service\Content\ContentVisibilityService::filter(is_array($items) ? $items : array());
+            if (!empty($items)) {
+                // 保持时间窗热度排名顺序（不再按历史总 views 覆盖）
+                $byId = array();
+                foreach ($items as $it) {
+                    if (isset($it[$idCol])) $byId[intval($it[$idCol])] = $it;
+                }
+                foreach ($ids as $rid) {
+                    $rid = intval($rid);
+                    if (isset($byId[$rid])) $list[] = $byId[$rid];
+                }
+            }
         }
 
-        $r = array('list' => $list ?: array(), 'total' => intval($ranked['total']), 'page' => $page, 'pagesize' => $pagesize);
+        $r = array('list' => $list, 'total' => intval($ranked['total']), 'page' => $page, 'pagesize' => $pagesize);
         cache_set($cache_key, $r, 300);
         return $r;
     }

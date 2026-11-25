@@ -478,7 +478,7 @@ function block_poster_rand($arr)
 
     $cid  = empty($arr['cid']) ? '' : $arr['cid'];
     $n    = empty($arr['n']) ? 10 : intval($arr['n']);
-    $sticky_ver = (int)cache_get('sticky_video_ver');
+    $sticky_ver = (int)cache_shared_get('sticky_video_ver');
     $key  = block_key('poster_rand', 'cid' . $cid, 'n' . $n, 'v' . $sticky_ver);
     // hook model_block_vod_block_poster_rand_end.php
     return block_cache($key, 3600, function () use ($cid, $n) {
@@ -506,7 +506,7 @@ function block_sticky_index_video($arr)
 
 
     $n   = empty($arr['n']) ? 10 : intval($arr['n']);
-    $sticky_ver = (int)cache_get('sticky_video_ver');
+    $sticky_ver = (int)cache_shared_get('sticky_video_ver');
     $key = block_key('sticky_index', $n, 'v' . $sticky_ver);
     // hook model_block_vod_block_sticky_index_video_end.php
     $list = block_cache($key, 3600, function () use ($n) {

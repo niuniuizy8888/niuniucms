@@ -41,7 +41,6 @@ class ConfigRuntimeService
             'linksize' => intval($payload['linksize'] ?? 20),
             'tagsize' => intval($payload['tagsize'] ?? 20),
             'tag_num' => intval($payload['tag_num'] ?? 5),
-            'cdn_on' => intval($payload['cdn_on'] ?? 0),
             'api_on' => intval($payload['api_on'] ?? 0),
             'search_on' => intval($payload['search_on'] ?? 1),
             'sitemap_tag' => intval($payload['sitemap_tag'] ?? 0),
@@ -58,6 +57,17 @@ class ConfigRuntimeService
         // ⚠ 写失败如实上报（审查修复）：旧实现无视 kv REPLACE 返回值，库写失败仍回「保存成功」。
         if (FALSE === config_runtime_set_values(array_merge($replace, $matchSettings))) {
             return array('success' => false, 'msg' => lang('save_failed'));
+        }
+        // cdn_on 属于启动期安全边界配置（禁止进入 runtime_conf KV），仅超级管理员变更时写入物理 config.php
+        if (array_key_exists('cdn_on', $payload) && intval($GLOBALS['gid'] ?? 0) === 1) {
+            $cdnOn = intval($payload['cdn_on']) ? 1 : 0;
+            $curConf = _SERVER('conf');
+            $curCdn = is_array($curConf) ? intval($curConf['cdn_on'] ?? 0) : 0;
+            if ($cdnOn !== $curCdn && function_exists('nncms_runtime_path_w') && function_exists('file_replace_var')) {
+                if (FALSE === file_replace_var(\nncms_runtime_path_w('config.php'), array('cdn_on' => $cdnOn))) {
+                    return array('success' => false, 'msg' => '保存失败：配置文件不可写（CDN 开关未更新）');
+                }
+            }
         }
 
         $setting = array_value($config, 'setting');
@@ -148,6 +158,13 @@ class ConfigRuntimeService
      */
     public static function saveDanmu(array $payload): array
     {
+        $safeAdUrl = static function ($raw): string {
+            $u = trim((string)preg_replace('/[\x00-\x1F\x7F<>"\'`]/', '', (string)$raw));
+            if ($u === '') return '';
+            if (preg_match('#^https?://#i', $u)) return $u;
+            if ($u[0] === '/' && !preg_match('#^[/\\\\]{2}#', $u)) return $u;
+            return '';
+        };
         $replace = array();
         $replace['danmu'] = array(
             'on' => intval($payload['on'] ?? 0),
@@ -159,13 +176,13 @@ class ConfigRuntimeService
             'pause_ad' => intval($payload['pause_ad'] ?? 0),
             'selec_col' => intval($payload['selec_col'] ?? 0),
             'start_ad_on' => intval($payload['start_ad_on'] ?? 0),
-            'start_img_ad' => $payload['start_img_ad'] ?? '',
-            'start_mp4_ad' => $payload['start_mp4_ad'] ?? '',
-            'start_ad_url' => $payload['start_ad_url'] ?? '',
+            'start_img_ad' => $safeAdUrl($payload['start_img_ad'] ?? ''),
+            'start_mp4_ad' => $safeAdUrl($payload['start_mp4_ad'] ?? ''),
+            'start_ad_url' => $safeAdUrl($payload['start_ad_url'] ?? ''),
             'start_all_time' => intval($payload['start_all_time'] ?? 10),
             'start_close_time' => intval($payload['start_close_time'] ?? 5),
-            'stop_ad' => $payload['stop_ad'] ?? '',
-            'stop_ad_url' => $payload['stop_ad_url'] ?? '',
+            'stop_ad' => $safeAdUrl($payload['stop_ad'] ?? ''),
+            'stop_ad_url' => $safeAdUrl($payload['stop_ad_url'] ?? ''),
         );
         // ⚠ 写失败如实上报（审查修复）：KV 写失败不再回「保存成功」。
         if (FALSE === config_runtime_set_values($replace)) {
@@ -222,13 +239,18 @@ class ConfigRuntimeService
         if ($es_host !== '' && !preg_match('#^https?://[A-Za-z0-9._\-:\[\]]+$#i', $es_host)) {
             return array('success' => false, 'msg' => 'ES 主机需为合法 http/https 地址');
         }
+        $es_index = trim((string)($payload['index'] ?? ''));
+        if ($es_index !== '' && (!preg_match('/^[a-z0-9][a-z0-9._-]{0,127}$/', $es_index) || str_contains($es_index, '..'))) {
+            return array('success' => false, 'msg' => 'ES 索引名仅允许小写字母、数字、点、下划线和连字符，且不能包含 ..');
+        }
+        $es_api_key = trim((string)preg_replace('/[\r\n\x00]/', '', (string)($payload['api_key'] ?? '')));
         $replace = array(
             'es' => array(
                 'host' => $es_host,
-                'index' => $payload['index'] ?? '',
-                'user' => $payload['user'] ?? '',
-                'pass' => $payload['pass'] ?? '',
-                'api_key' => $payload['api_key'] ?? '',
+                'index' => $es_index,
+                'user' => trim((string)preg_replace('/[\r\n\x00]/', '', (string)($payload['user'] ?? ''))),
+                'pass' => (string)preg_replace('/[\r\n\x00]/', '', (string)($payload['pass'] ?? '')),
+                'api_key' => $es_api_key,
             ),
         );
         // ⚠ 写失败如实上报（审查修复）：KV 写失败不再回「保存成功」。

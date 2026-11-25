@@ -57,6 +57,7 @@ class SessionService
         }
         if (empty($arr)) {
             self::$loadedFrom = 'none';       // 服务端没有这份会话（被回收/从未落库）
+            self::$initialKeys = array();
             self::newSession($sid);
             return '';
         }
@@ -67,7 +68,9 @@ class SessionService
             $arr['data'] = (string)($arr2['data'] ?? '');
         }
         $g_session = $arr;
-        return $arr ? (string)$arr['data'] : '';
+        $raw = $arr ? (string)$arr['data'] : '';
+        self::$initialKeys = $raw !== '' ? array_keys(self::parseSessionData($raw)) : array();
+        return $raw;
     }
 
     /**
@@ -86,7 +89,7 @@ class SessionService
         // 干掉同 ip 的 sid，仅仅在遭受攻击的时候
         //session_delete(array('ip'=>$longip));
         $cookie_test = _COOKIE('cookie_test');
-        $https = (!empty(_SERVER('HTTPS')) && strtolower(_SERVER('HTTPS')) != 'off') || (NULL !== _SERVER('HTTP_X_FORWARDED_PROTO') && _SERVER('HTTP_X_FORWARDED_PROTO') === 'https');
+        $https = function_exists('http_is_https') ? http_is_https($conf) : (!empty(_SERVER('HTTPS')) && strtolower(_SERVER('HTTPS')) != 'off');
         $cookie_opt = array(
             'expires' => $time + 86400,
             'path' => $conf['cookie_path'],
@@ -209,10 +212,17 @@ class SessionService
                 }
             }
         }
-        if ($data !== '') {
+        if ($data !== '' || $curData !== '') {
             $parsedCur = self::parseSessionData($curData);
+            $parsedNew = $data !== '' ? self::parseSessionData($data) : array();
             $merged = $parsedCur;
-            foreach (self::parseSessionData($data) as $k => $v) {
+            // 本请求启动时已存在但被本次 unset 的键应显式删除，避免合并时“复活”（如 admin_ok）
+            foreach (self::$initialKeys as $initKey) {
+                if (!array_key_exists($initKey, $parsedNew)) {
+                    unset($merged[$initKey]);
+                }
+            }
+            foreach ($parsedNew as $k => $v) {
                 $merged[$k] = $v; // 本请求为准
             }
             // 无实际变化时保留原字节（避免无谓重写/格式化漂移）
@@ -361,6 +371,9 @@ class SessionService
      */
     public static $loadedFrom = NULL;
 
+    /** 本次请求 read() 读出的会话键清单，供 write() 合并时识别本请求显式 unset 的键 */
+    public static $initialKeys = array();
+
     /** 服务端确实没读到这份会话（新会话 / 被回收 / 写入失败） */
     /**
      * 会话主行文本列的列宽（字符数）。默认按 install.sql 迁移后的宽度；
@@ -382,13 +395,13 @@ class SessionService
         return $pre . 'session';
     }
 
-    /** 列宽文件缓存位置（与 .sess_breaker_state.php 同目录同套路） */
+    /** 列宽文件缓存位置（JSON 格式，不受 OPcache 滞后与 PHP 文件执行面影响） */
     public static function limitsFile()
     {
         if (NULL !== self::$limitsFile) return self::$limitsFile;
         $conf = function_exists('_SERVER') ? _SERVER('conf') : (isset($GLOBALS['conf']) ? $GLOBALS['conf'] : array());
         $dir = !empty($conf['cache_path']) ? $conf['cache_path'] : (defined('APP_PATH') ? APP_PATH . 'runtime/cache/' : './runtime/cache/');
-        return rtrim($dir, '/') . '/.sess_col_limits.php';
+        return rtrim($dir, '/') . '/.sess_col_limits.json';
     }
 
     /**
@@ -413,7 +426,8 @@ class SessionService
         if (!$force && is_array(self::$probedLimits) && self::$probedLimits) return self::$probedLimits;
         $file = self::limitsFile();
         if (!$force && $file && is_readable($file)) {
-            $cached = @include $file;
+            $raw = @file_get_contents($file);
+            $cached = is_string($raw) ? json_decode($raw, true) : null;
             if (is_array($cached) && $cached) {
                 self::$probedLimits = $cached + self::$softLimits;
                 return self::$probedLimits;
@@ -431,8 +445,16 @@ class SessionService
         self::$probedLimits = $limits;
         if ($probed && $file) {
             $dir = dirname($file);
-            if (!is_dir($dir)) @mkdir($dir, 0777, TRUE);
-            @file_put_contents($file, "<?php return " . var_export($limits, TRUE) . ";", LOCK_EX);
+            if (!is_dir($dir)) @mkdir($dir, 0750, TRUE);
+            $encoded = json_encode($limits);
+            if (is_string($encoded)) {
+                $tmp = $file . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.tmp';
+                if (@file_put_contents($tmp, $encoded, LOCK_EX) !== false) {
+                    if (!@rename($tmp, $file)) @unlink($tmp);
+                } else {
+                    @unlink($tmp);
+                }
+            }
         }
         return $limits;
     }
@@ -596,7 +618,7 @@ class SessionService
     public static function start()
     {
         $conf = _SERVER('conf');         global $sid, $g_session;
-        $https = (!empty(_SERVER('HTTPS')) && strtolower(_SERVER('HTTPS')) != 'off') || (NULL !== _SERVER('HTTP_X_FORWARDED_PROTO') && _SERVER('HTTP_X_FORWARDED_PROTO') === 'https');
+        $https = function_exists('http_is_https') ? http_is_https($conf) : (!empty(_SERVER('HTTPS')) && strtolower(_SERVER('HTTPS')) != 'off');
         ini_set('session.name', $conf['cookie_pre'] . 'sid');
         ini_set('session.use_cookies', TRUE);
         ini_set('session.use_only_cookies', TRUE);
@@ -719,52 +741,83 @@ class SessionService
      * 使用 pconnect + 独立 persistent_id 避免与主缓存连接冲突
      * @return \Redis|null
      */
+    private static ?\Redis $redisInstance = null;
+    private static int $redisFailedAt = 0;
+
+    private static function redisBreakerFile(): string
+    {
+        $conf = _SERVER('conf');
+        $dir = is_array($conf) && !empty($conf['cache_path']) ? (string)$conf['cache_path'] : './runtime/cache/';
+        return rtrim($dir, '/\\') . '/.sess_breaker_state.json';
+    }
+
+    /** 标记会话 Redis 故障：丢弃坏连接并原子写入 30s 跨进程熔断状态文件（JSON） */
+    public static function markRedisFail(): void
+    {
+        self::$redisInstance = null;
+        self::$redisFailedAt = time();
+        try {
+            $breakerFile = self::redisBreakerFile();
+            $breakerDir = dirname($breakerFile);
+            if (!is_dir($breakerDir)) @mkdir($breakerDir, 0750, true);
+            $content = json_encode(['tripped' => ['redis' => self::$redisFailedAt]]);
+            if (is_string($content)) {
+                $tmp = $breakerFile . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.tmp';
+                if (@file_put_contents($tmp, $content, LOCK_EX) !== false) {
+                    if (!@rename($tmp, $breakerFile)) @unlink($tmp);
+                } else {
+                    @unlink($tmp);
+                }
+            }
+        } catch (\Throwable $e) {}
+    }
+
     public static function redis(): ?\Redis
     {
-        static $redis = null;
-        static $failedAt = 0;
-        if ($failedAt && time() - $failedAt < 30) return null;
+        if (self::$redisFailedAt && time() - self::$redisFailedAt < 30) return null;
 
-        // 跨请求熔断器（会话独立文件，不与缓存层互相污染）
-        $conf = _SERVER('conf');
-        $breakerFile = ($conf['cache_path'] ?? './runtime/cache/') . '.sess_breaker_state.php';
-        if (file_exists($breakerFile)) {
-            $breakerData = @include $breakerFile;
+        // 跨请求熔断器（JSON 原子状态，避免 PHP include 执行面与 OPcache 滞后）
+        $breakerFile = self::redisBreakerFile();
+        if (is_file($breakerFile)) {
+            $raw = @file_get_contents($breakerFile);
+            $breakerData = is_string($raw) ? json_decode($raw, true) : null;
             if (is_array($breakerData) && isset($breakerData['tripped']['redis'])) {
-                $trippedAt = $breakerData['tripped']['redis'];
+                $trippedAt = (int)$breakerData['tripped']['redis'];
                 if (time() - $trippedAt < 30) {
-                    $failedAt = time();
+                    self::$redisFailedAt = time();
                     return null;
                 }
             }
         }
 
-        if ($redis) {
+        if (self::$redisInstance) {
             try {
-                $redis->ping();
-                return $redis;
+                if (false !== self::$redisInstance->ping()) {
+                    return self::$redisInstance;
+                }
+                self::$redisInstance = null;
             } catch (\Throwable $e) {
-                $redis = null; // 死连接：直接走下方重建，不记失败、不写熔断
+                self::$redisInstance = null; // 死连接：直接走下方重建，不记失败、不写熔断
             }
         }
         $cfg = self::redisConfig();
-        if (empty($cfg)) { $failedAt = time(); return null; }
+        if (empty($cfg)) { self::$redisFailedAt = time(); return null; }
         try {
             $r = new \Redis();
             $pid = !empty($cfg['persistent_id']) ? $cfg['persistent_id'] . '_sess' : 'nncms_sess';
-            $r->pconnect($cfg['host'] ?? '127.0.0.1', (int)($cfg['port'] ?? 6379), 1, $pid);
-            if (!empty($cfg['auth'])) $r->auth($cfg['auth']);
-            $r->select((int)($cfg['db'] ?? 2));
-            $redis = $r;
-            return $redis;
+            if (true !== $r->pconnect($cfg['host'] ?? '127.0.0.1', (int)($cfg['port'] ?? 6379), 1, $pid)) {
+                throw new \RuntimeException('Redis pconnect failed');
+            }
+            if (!empty($cfg['auth']) && true !== $r->auth($cfg['auth'])) {
+                throw new \RuntimeException('Redis auth failed');
+            }
+            if (true !== $r->select((int)($cfg['db'] ?? 2))) {
+                throw new \RuntimeException('Redis select failed');
+            }
+            self::$redisInstance = $r;
+            return self::$redisInstance;
         } catch (\Throwable $e) {
-            $failedAt = time();
-            try {
-                $breakerDir = dirname($breakerFile);
-                if (!is_dir($breakerDir)) @mkdir($breakerDir, 0777, true);
-                $content = '<?php return ' . var_export(['tripped' => ['redis' => time()]], true) . ';';
-                @file_put_contents($breakerFile, $content, LOCK_EX);
-            } catch (\Throwable $e2) {}
+            self::markRedisFail();
             return null;
         }
     }
@@ -779,17 +832,19 @@ class SessionService
         $redis = self::redis();
         if (!$redis) return $sessions;
         $it = null;
-        while ($keys = $redis->scan($it, 'sess_*', 1000)) {
+        do {
+            $keys = $redis->scan($it, 'sess_*', 1000);
+            if (!is_array($keys)) break;
             if (empty($keys)) continue;
             $vals = $redis->mget($keys);
-            foreach ($vals as $v) {
+            foreach ((array)$vals as $v) {
                 if ($v === false || $v === null) continue;
                 $arr = @unserialize($v, ['allowed_classes' => false]);
                 if (is_array($arr)) {
                     $sessions[] = $arr;
                 }
             }
-        }
+        } while ($it > 0);
         return $sessions;
     }
 

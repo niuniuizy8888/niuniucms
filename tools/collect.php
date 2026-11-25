@@ -16,9 +16,12 @@ try {
     if ($hours === null) throw new \InvalidArgumentException('采集窗口必须为 1–8760 小时');
     $task = \App\Service\Collection\CollectionScheduleService::enqueue(array($options['source']), $hours)[0];
     echo ($task['reused'] ? '复用已有任务 #' : '新建任务 #') . $task['id'] . '，来源 ' . $task['source'] . '，最近 ' . $hours . " 小时\n";
+    $steps = 0;
+    $maxSteps = 5000;
     do {
         $result = \App\Service\System\TaskQueueService::processTask($task['id']);
-    } while ($result['attempted'] && $result['status'] === \App\Service\System\TaskQueueService::STATUS_PENDING && $result['error'] === '');
+        $steps++;
+    } while ($steps < $maxSteps && $result['attempted'] && $result['status'] === \App\Service\System\TaskQueueService::STATUS_PENDING && $result['error'] === '');
     if ($result['attempted'] && $result['error'] !== '') {
         throw new \RuntimeException('任务 #' . $task['id'] . ' 采集失败：' . $result['error'] . '；重试 ' . $result['retry'] . '/3，请查看后台任务管理');
     }

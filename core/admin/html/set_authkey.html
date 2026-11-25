@@ -41,8 +41,13 @@ $('#authkeyForm').on('submit', function() {
     jsubmit.prop('disabled', true);
     $.xpost(jform.attr('action'), jform.serialize(), function(code, message) {
         if (code == 0) {
-            // 结果只显示这一次（含新 api 令牌），不自动跳转；会话已清空，刷新后会回到登录页
-            $('#authkeyResult').html(message + '<br><a href="' + location.href + '">重新登录</a>').removeClass('d-none');
+            // 安全 DOM 构造，避免 raw location.href 拼进 .html() 引发 DOM XSS
+            var $res = $('#authkeyResult').empty().append(document.createTextNode(String(message || '')));
+            $res.append(document.createElement('br'));
+            var a = document.createElement('a');
+            a.href = location.pathname + location.search;
+            a.textContent = '重新登录';
+            $res.append(a).removeClass('d-none');
             jform.remove();
         } else {
             $.alert(message);

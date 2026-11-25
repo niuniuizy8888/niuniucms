@@ -65,7 +65,7 @@ class ArticleTagService
     }
 
     /** Idempotent totals across both indexed model-specific tables. Zero-count labels stay restorable. */
-    public static function recount(array $ids): void
+    public static function recount(array $ids, bool $bumpPageCache = true): void
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $ids), static fn($id) => $id > 0)));
         if ($ids) ++self::$revision;
@@ -75,7 +75,7 @@ class ArticleTagService
             Schema::sql('UPDATE ' . $tag . ' t SET t.`count`=(SELECT COUNT(DISTINCT v.vid) FROM ' . $vod . ' v WHERE v.tagid=t.tagid)+(SELECT COUNT(*) FROM ' . $art . ' a WHERE a.tagid=t.tagid) WHERE t.tagid IN (' . $marks . ')', $chunk);
             foreach ($chunk as $id) cache_delete('web_tag_' . $id);
         }
-        if ($ids && function_exists('page_cache_bump')) page_cache_bump(true);
+        if ($bumpPageCache && $ids && function_exists('page_cache_bump')) page_cache_bump(true);
     }
 
     public static function post(int $aid, int $cid, string $str): string
@@ -192,12 +192,17 @@ class ArticleTagService
         return $query === '' ? 0 : (int)Schema::sql('SELECT COUNT(*) FROM (' . $query . ') visible', $args)->fetchColumn();
     }
 
-    public static function relatedVideos(array $tagids, int $limit): array
+    public static function relatedVideos(array $tagids, int $limit, int $exclude = 0): array
     {
         [$query, $args] = self::visibleBindings($tagids, true);
         if ($query === '') return [];
         $limit = max(1, min(100, $limit));
-        $ids = Schema::sql('SELECT DISTINCT content_id FROM (' . $query . ') visible ORDER BY content_id DESC LIMIT ' . $limit, $args)->fetchAll(\PDO::FETCH_COLUMN);
+        $whereExclude = '';
+        if ($exclude > 0) {
+            $whereExclude = ' WHERE content_id<>?';
+            $args[] = $exclude;
+        }
+        $ids = Schema::sql('SELECT DISTINCT content_id FROM (' . $query . ') visible' . $whereExclude . ' ORDER BY content_id DESC LIMIT ' . $limit, $args)->fetchAll(\PDO::FETCH_COLUMN);
         return $ids ? ContentVisibilityService::filter((array)VideoService::findAsc($ids, count($ids), true)) : [];
     }
 

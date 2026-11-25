@@ -20,33 +20,71 @@
 function file_replace_var($filepath, $replace = array(), $pretty = FALSE)
 {
     $ext = file_ext($filepath);
-    if ('php' == $ext) {
-        // 文件不存在/不可读/内容不是 return array(...) 时返回 FALSE，由调用方给出明确提示，
-        // 不再把 include 的 FALSE 直接喂给 array_merge()（PHP 8 下 TypeError → 空白 500）
-        if (!is_file($filepath) || !is_readable($filepath)) return FALSE;
-        $arr = include $filepath;
-        if (!is_array($arr)) return FALSE;
-        $arr = array_merge($arr, $replace);
-        $s = "<?php\r\nreturn " . var_export($arr, true) . ";\r\n?>";
-        // 备份文件
-        file_backup($filepath);
-        $r = file_put_contents_try($filepath, $s);
-        $r != strlen($s) ? file_backup_restore($filepath) : file_backup_unlink($filepath);
-        // 写入成功后清除 OPcache，确保后续请求读到最新配置
-        if ($r && function_exists('opcache_invalidate')) {
-            opcache_invalidate($filepath, true);
+    if ('php' !== $ext && 'js' !== $ext && 'json' !== $ext) {
+        return FALSE;
+    }
+
+    // 跨进程互斥锁：串行化同一配置文件的 读→合并→写 周期，防止并发覆盖丢失更新
+    $lockDir = defined('APP_PATH') ? (APP_PATH . 'runtime/tmp/') : (rtrim(sys_get_temp_dir(), '/\\') . '/');
+    if (!is_dir($lockDir)) @mkdir($lockDir, 0755, true);
+    $real = @realpath($filepath);
+    $lockPath = $lockDir . 'file_replace_' . sha1($real !== FALSE ? $real : $filepath) . '.lock';
+    $lockFp = @fopen($lockPath, 'cb');
+    $locked = false;
+    if ($lockFp) {
+        $locked = @flock($lockFp, LOCK_EX);
+    }
+
+    try {
+        clearstatcache(true, $filepath);
+        if ('php' == $ext) {
+            if (!is_file($filepath) || !is_readable($filepath)) return FALSE;
+            if (function_exists('opcache_invalidate')) {
+                @opcache_invalidate($filepath, true);
+            }
+            $arr = include $filepath;
+            if (!is_array($arr)) return FALSE;
+            $arr = array_merge($arr, $replace);
+            $s = "<?php\r\nreturn " . var_export($arr, true) . ";\r\n?>";
+            $bak = $filepath . '.bak.' . getmypid() . '.' . mt_rand(1000, 9999);
+            $hasBak = xn_copy($filepath, $bak);
+            $r = file_put_contents_try($filepath, $s);
+            if ($r != strlen($s)) {
+                if ($hasBak) {
+                    xn_copy($bak, $filepath);
+                    @unlink($bak);
+                }
+                return FALSE;
+            }
+            if ($hasBak) @unlink($bak);
+            if (function_exists('opcache_invalidate')) {
+                @opcache_invalidate($filepath, true);
+            }
+            return $r;
+        } else {
+            $s = file_get_contents_try($filepath);
+            $arr = xn_json_decode($s);
+            if (empty($arr)) return FALSE;
+            $arr = array_merge($arr, $replace);
+            $s = xn_json_encode($arr, $pretty);
+            $bak = $filepath . '.bak.' . getmypid() . '.' . mt_rand(1000, 9999);
+            $hasBak = xn_copy($filepath, $bak);
+            $r = file_put_contents_try($filepath, $s);
+            if ($r != strlen($s)) {
+                if ($hasBak) {
+                    xn_copy($bak, $filepath);
+                    @unlink($bak);
+                }
+                return FALSE;
+            }
+            if ($hasBak) @unlink($bak);
+            return $r;
         }
-        return $r;
-    } elseif ('js' == $ext || 'json' == $ext) {
-        $s = file_get_contents_try($filepath);
-        $arr = xn_json_decode($s);
-        if (empty($arr)) return FALSE;
-        $arr = array_merge($arr, $replace);
-        $s = xn_json_encode($arr, $pretty);
-        file_backup($filepath);
-        $r = file_put_contents_try($filepath, $s);
-        $r != strlen($s) ? file_backup_restore($filepath) : file_backup_unlink($filepath);
-        return $r;
+    } finally {
+        if ($lockFp) {
+            if ($locked) @flock($lockFp, LOCK_UN);
+            @fclose($lockFp);
+        }
     }
 }
 
@@ -110,7 +148,10 @@ function file_get_contents_try($file, $times = 3)
         $fp = fopen($file, 'rb');
         if ($fp) {
             $size = filesize($file);
-            if (0 == $size) return '';
+            if (0 == $size) {
+                fclose($fp);
+                return '';
+            }
             $s = fread($fp, $size);
             fclose($fp);
             return $s;
@@ -187,8 +228,13 @@ function file_name($path)
 function glob_recursive($pattern, $flags = 0)
 {
     $files = glob($pattern, $flags);
-    foreach (glob(dirname($pattern) . '/*', GLOB_ONLYDIR | GLOB_NOSORT) as $dir) {
-        $files = array_merge($files, glob_recursive($dir . '/' . basename($pattern), $flags));
+    if (!is_array($files)) $files = array();
+    $dirs = glob(dirname($pattern) . '/*', GLOB_ONLYDIR | GLOB_NOSORT);
+    if (is_array($dirs)) {
+        foreach ($dirs as $dir) {
+            if (is_link($dir)) continue;
+            $files = array_merge($files, glob_recursive($dir . '/' . basename($pattern), $flags));
+        }
     }
     return $files;
 }
@@ -197,16 +243,20 @@ function glob_recursive($pattern, $flags = 0)
 function rmdir_recusive($dir, $keepdir = 0)
 {
     if ('/' == $dir || './' == $dir || '../' == $dir) return FALSE; // 不允许删除根目录，避免程序意外删除数据。
-    if (!is_dir($dir)) return FALSE;
+    if (!is_dir($dir) || is_link($dir)) return FALSE;
     '/' != substr($dir, -1) and $dir .= '/';
     $files = glob($dir . '*'); // +glob($dir.'.*')
-    foreach (glob($dir . '.*') as $v) {
-        if (substr($v, -1) != '.' && substr($v, -2) != '..') $files[] = $v;
+    if (!is_array($files)) $files = array();
+    $hidden = glob($dir . '.*');
+    if (is_array($hidden)) {
+        foreach ($hidden as $v) {
+            if (substr($v, -1) != '.' && substr($v, -2) != '..') $files[] = $v;
+        }
     }
     $filearr = $dirarr = array();
     if ($files) {
         foreach ($files as $file) {
-            if (is_dir($file)) {
+            if (!is_link($file) && is_dir($file)) {
                 $dirarr[] = $file;
             } else {
                 $filearr[] = $file;
@@ -261,7 +311,7 @@ function xn_rmdir($dir)
  */
 function xn_unlink($file)
 {
-    $r = is_file($file) ? unlink($file) : FALSE;
+    $r = (is_link($file) || is_file($file)) ? @unlink($file) : FALSE;
     return $r;
 }
 
@@ -288,7 +338,11 @@ function copy_recusive($src, $dst, &$errors = NULL)
 {
     '/' == substr($src, -1) and $src = substr($src, 0, -1);
     '/' == substr($dst, -1) and $dst = substr($dst, 0, -1);
-    $dir = opendir($src);
+    $dir = @opendir($src);
+    if (!$dir) {
+        is_array($errors) and $errors[] = $src . '（目录无法打开）';
+        return;
+    }
     if (!is_dir($dst) && !@mkdir($dst, 0777, TRUE) && !is_dir($dst)) {
         is_array($errors) and $errors[] = $dst . '（目录无法创建）';
         closedir($dir);
@@ -296,6 +350,9 @@ function copy_recusive($src, $dst, &$errors = NULL)
     }
     while (FALSE !== ($file = readdir($dir))) {
         if (($file != '.') && ($file != '..')) {
+            if (is_link($src . '/' . $file)) {
+                continue;
+            }
             if (is_dir($src . '/' . $file)) {
                 copy_recusive($src . '/' . $file, $dst . '/' . $file, $errors);
             } else {

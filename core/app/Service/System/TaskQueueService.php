@@ -75,8 +75,11 @@ class TaskQueueService
             cache_delete(self::EMPTY_FLAG);
             return array('id' => $id, 'status' => self::STATUS_PENDING, 'reused' => false);
         } finally {
-            $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
-            $stmt->execute(array($lock));
+            try {
+                $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+                $stmt->execute(array($lock));
+            } catch (\Throwable $ignore) {
+            }
         }
     }
     /**
@@ -94,9 +97,14 @@ class TaskQueueService
         if (cache_get(self::EMPTY_FLAG)) return array();
         $limit = max(1, min(20, $limit));
         $results = array();
-        $repo = \App\Repository\RepositoryFactory::table('scheduler_tasks', 'id');
-        $running = $repo->builder()->select(array('id', 'run_date'))->where('status', '=', self::STATUS_RUNNING)->limit(100)->get();
-        if ($running === false) throw new \RuntimeException('执行中任务读取失败');
+        // 强制走主库读取队列状态，避免读写分离下从库延迟导致漏消费/误判空队列
+        $db = _SERVER('db');
+        $pdo = $db->connect();
+        if (!$pdo) throw new \RuntimeException('队列读取失败：数据库不可用');
+        $table = $db->qi($db->tablepre . 'scheduler_tasks');
+        $stRun = $pdo->prepare('SELECT id, run_date FROM ' . $table . ' WHERE status = ? LIMIT 100');
+        if (!$stRun || !$stRun->execute(array(self::STATUS_RUNNING))) throw new \RuntimeException('执行中任务读取失败');
+        $running = $stRun->fetchAll(\PDO::FETCH_ASSOC);
         foreach ($running as $row) {
             if (count($results) >= $limit) break;
             if ((int)$row['run_date'] > 0 && time() - (int)$row['run_date'] > 1800) {
@@ -104,8 +112,9 @@ class TaskQueueService
                 if ($result['attempted']) $results[] = $result;
             }
         }
-        $pending = $repo->builder()->select(array('id'))->where('status', '=', self::STATUS_PENDING)->orderBy('id', 'ASC')->limit($limit)->get();
-        if ($pending === false) throw new \RuntimeException('待执行任务读取失败');
+        $stPend = $pdo->prepare('SELECT id FROM ' . $table . ' WHERE status = ? ORDER BY id ASC LIMIT ' . (int)$limit);
+        if (!$stPend || !$stPend->execute(array(self::STATUS_PENDING))) throw new \RuntimeException('待执行任务读取失败');
+        $pending = $stPend->fetchAll(\PDO::FETCH_ASSOC);
         $attempted = array_column($results, 'id');
         foreach ($pending as $row) {
             if (count($results) >= $limit) break;
@@ -121,7 +130,9 @@ class TaskQueueService
     public static function readTask(int $id): array
     {
         $db = _SERVER('db');
-        $stmt = $db->connect()->prepare('SELECT id,type,param,status,retry,error,create_date,run_date,finish_date FROM '
+        $pdo = $db->connect();
+        if (!$pdo) throw new \RuntimeException('任务读取失败：数据库不可用');
+        $stmt = $pdo->prepare('SELECT id,type,param,status,retry,error,create_date,run_date,finish_date FROM '
             . $db->qi($db->tablepre . 'scheduler_tasks') . ' WHERE id=?');
         $stmt->execute(array($id));
         $row = $stmt->fetch(\PDO::FETCH_ASSOC);
@@ -136,7 +147,9 @@ class TaskQueueService
         if (!$ids) return array();
         $keys = array_map(static fn($id) => 'task_progress_' . (int)$id, $ids);
         $db = _SERVER('db');
-        $stmt = $db->connect()->prepare('SELECT k,v FROM ' . $db->qi($db->tablepre . 'kv')
+        $pdo = $db->connect();
+        if (!$pdo) throw new \RuntimeException('采集进度读取失败：数据库不可用');
+        $stmt = $pdo->prepare('SELECT k,v FROM ' . $db->qi($db->tablepre . 'kv')
             . ' WHERE k IN (' . implode(',', array_fill(0, count($keys), '?')) . ')');
         $stmt->execute($keys);
         $result = array();
@@ -158,6 +171,7 @@ class TaskQueueService
     {
         $db = _SERVER('db');
         $pdo = $db->connect();
+        if (!$pdo) throw new \RuntimeException('任务执行失败：数据库不可用');
         $lock = 'nnrun_' . hash('sha224', $pdo->query('SELECT DATABASE()')->fetchColumn() . '|' . $db->tablepre . '|' . $id);
         $stmt = $pdo->prepare('SELECT GET_LOCK(?, 0)');
         $stmt->execute(array($lock));
@@ -197,7 +211,13 @@ class TaskQueueService
             if (!$repo->update(array('id' => $id, 'status' => self::STATUS_RUNNING), $changes)) throw new \RuntimeException('任务结果保存失败，请检查任务状态');
             return array_merge($row, $changes, array('attempted' => true));
         } finally {
-            if ($acquired) { $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)'); $stmt->execute(array($lock)); }
+            if ($acquired) {
+                try {
+                    $stmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+                    $stmt->execute(array($lock));
+                } catch (\Throwable $ignore) {
+                }
+            }
         }
     }
 
@@ -281,9 +301,13 @@ class TaskQueueService
         );
         $ids = array_values(arrlist_values((array)$rows, 'id'));
         if (count($ids) <= $keep) return 0;
-        $del = array_slice($ids, $keep);
-        foreach ($del as $did) {
-            if ($repo->delete(array('id' => (int)$did))) kv_delete('task_progress_' . (int)$did);
+        $del = array_map('intval', array_slice($ids, $keep));
+        foreach (array_chunk($del, 200) as $chunk) {
+            if ($repo->delete(array('id' => $chunk))) {
+                foreach ($chunk as $did) {
+                    kv_delete('task_progress_' . $did);
+                }
+            }
         }
         return count($del);
     }

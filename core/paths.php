@@ -55,7 +55,7 @@ if (!function_exists('nncms_runtime_path_w')) {
         if (is_dir($dir)) {
             $hta = $dir . '.htaccess';
             if (!is_file($hta)) {
-                @file_put_contents($hta, "Require all denied\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n");
+                @file_put_contents($hta, "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n");
                 @chmod($hta, 0644);
             }
         }

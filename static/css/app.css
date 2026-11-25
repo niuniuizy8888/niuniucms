@@ -5,6 +5,8 @@
 
 /* ---------- 设计 Tokens ---------- */
 :root {
+  color-scheme: light;
+  --nn-scrollbar-thumb: #d5dde9;
   --nn-primary: #4f46e5;
   --nn-primary-hover: #4338ca;
   --nn-primary-light: #eef2ff;
@@ -404,7 +406,7 @@ hr { border: none; border-top: 1px solid var(--nn-border); margin: 24px 0; }
 .form-control:focus { border-color: var(--nn-primary-500); outline: none; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
 .form-control::placeholder { color: var(--nn-text-disabled); }
 .form-control-sm { height: 32px; padding: 4px 10px; font-size: 13px; }
-select.form-control { appearance: auto; cursor: pointer; }
+select.form-control { cursor: pointer; }
 textarea.form-control { min-height: 80px; resize: vertical; height: auto; }
 .form-label { display: block; font-size: 13px; font-weight: 500; color: var(--nn-text); margin-bottom: 6px; }
 .form-label .required { color: var(--nn-danger); margin-left: 2px; }
@@ -885,12 +887,15 @@ label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
    ================================================ */
 
 /* ---------- 全局滚动条 ---------- */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d5dde9; border-radius: 8px; border: 2px solid var(--nn-bg); }
-::-webkit-scrollbar-thumb:hover { background: #b9c4d6; }
-::-webkit-scrollbar-corner { background: transparent; }
-* { scrollbar-width: thin; scrollbar-color: #d5dde9 transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--nn-scrollbar-thumb) transparent; }
+@supports not (scrollbar-color: auto) {
+  * { scrollbar-width: auto; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--nn-scrollbar-thumb); border-radius: 8px; border: 2px solid var(--nn-bg); }
+  ::-webkit-scrollbar-thumb:hover { background: #b9c4d6; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+}
 html { scrollbar-gutter: stable; }
 
 /* ---------- 侧栏（深空蓝渐变 + 哑光药丸导航 + 主色渐变激活） ---------- */
@@ -987,13 +992,15 @@ html { scrollbar-gutter: stable; }
 .btn-danger:hover, .btn-warning:hover, .btn-success:hover, .btn-info:hover { box-shadow: 0 6px 14px rgba(16,24,40,0.14); transform: translateY(-1px); }
 
 /* ---------- 表单（42px 高、圆角 10、聚焦光环统一） ---------- */
-.form-control { height: 42px; border-radius: var(--nn-radius-sm); border-color: #dbe2ec; background: #fdfefe; }
+.form-control { height: 42px; border-radius: var(--nn-radius-sm); border-color: #dbe2ec; background-color: #fdfefe; }
+.form-control-sm { height: 32px; padding: 4px 10px; font-size: 13px; }
 .form-control:hover:not(:focus):not(:disabled) { border-color: #c7d2e0; }
-.form-control:focus { background: #fff; border-color: var(--nn-primary-500); box-shadow: 0 0 0 3px rgba(99,102,241,0.14); }
-select.form-control { appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 36px; }
+.form-control:focus { background-color: #fff; border-color: var(--nn-primary-500); box-shadow: 0 0 0 3px rgba(99,102,241,0.14); }
+select.form-control { -webkit-appearance: none; -moz-appearance: none; appearance: none; overflow: hidden; background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 14px 14px; padding-right: 36px; }
+select.form-control::picker-icon { display: none; }
 textarea.form-control { min-height: 96px; }
 .form-label { font-size: 13px; color: var(--nn-text-secondary); }
-.input-group .form-control { background: #fdfefe; }
+.input-group .form-control { background-color: #fdfefe; }
 .input-group .btn { border-radius: 0 var(--nn-radius-sm) var(--nn-radius-sm) 0; }
 
 /* ---------- 徽章 / 状态点（柔和浅底 + 高辨识色） ---------- */
@@ -1103,7 +1110,7 @@ textarea.form-control { min-height: 96px; }
   padding: 11px 24px; border-bottom: 1px solid var(--nn-border-light);
 }
 .info-rows .info-row:last-child { border-bottom: none; }
-.info-rows .info-key { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--nn-text-muted); }
+.info-rows .info-key { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--nn-text-muted); white-space: nowrap; flex-shrink: 0; }
 .info-rows .info-key svg { width: 15px; height: 15px; color: var(--nn-primary); }
 .info-rows .info-val { font-size: 13px; color: var(--nn-text); font-weight: 500; text-align: right; word-break: break-all; }
 
@@ -1157,6 +1164,8 @@ textarea.form-control { min-height: 96px; }
 
 /* ---------- 暗黑模式（html[data-theme="dark"] 全量令牌反转，组件走变量自动适配） ---------- */
 html[data-theme="dark"] {
+  color-scheme: dark;
+  --nn-scrollbar-thumb: #33405a;
   --nn-bg: #0d1119;
   --nn-bg-alt: #161d2b;
   --nn-surface: #151c28;
@@ -1197,10 +1206,11 @@ html[data-theme="dark"] .table tbody tr:hover { background: #1b2433; }
 html[data-theme="dark"] .table.table-striped tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
 html[data-theme="dark"] .table.table-striped tbody tr:nth-child(even):hover { background: #1b2433; }
 html[data-theme="dark"] .card-footer { background: var(--nn-bg-alt); }
-html[data-theme="dark"] .form-control { background: var(--nn-bg-alt); border-color: var(--nn-border); }
+html[data-theme="dark"] .form-control { background-color: var(--nn-bg-alt); border-color: var(--nn-border); }
 html[data-theme="dark"] .form-control:hover:not(:focus):not(:disabled) { border-color: #33405a; }
-html[data-theme="dark"] .form-control:focus { background: var(--nn-surface); color: var(--nn-text); }
-html[data-theme="dark"] .input-group .form-control { background: var(--nn-bg-alt); }
+html[data-theme="dark"] .form-control:focus { background-color: var(--nn-surface); color: var(--nn-text); }
+html[data-theme="dark"] .input-group .form-control { background-color: var(--nn-bg-alt); }
+html[data-theme="dark"] select.form-control { background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); }
 html[data-theme="dark"] .badge.bg-secondary { background: #232c3d !important; color: var(--nn-text-secondary); }
 html[data-theme="dark"] .badge.bg-primary { background: #222b4d !important; color: #a5b4fc; }
 html[data-theme="dark"] .filter-bar, html[data-theme="dark"] .list-toolbar, html[data-theme="dark"] .set-tabs { background: var(--nn-surface); }
@@ -1208,7 +1218,7 @@ html[data-theme="dark"] .pagination li a, html[data-theme="dark"] .pagination li
 html[data-theme="dark"] .hero-banner { box-shadow: 0 12px 32px rgba(0,0,0,0.45); }
 html[data-theme="dark"] .quick-tile:hover { border-color: #36427d; }
 html[data-theme="dark"] .login-shell { background: var(--nn-surface); }
-html[data-theme="dark"] .login-form .form-control { background: var(--nn-bg-alt); color: var(--nn-text); }
+html[data-theme="dark"] .login-form .form-control { background-color: var(--nn-bg-alt); color: var(--nn-text); }
 html[data-theme="dark"] .toast { background: var(--nn-surface); }
 html[data-theme="dark"] .nn-modal-box, html[data-theme="dark"] .modal-content { background: var(--nn-surface); }
 html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #33405a; border-color: var(--nn-bg); }

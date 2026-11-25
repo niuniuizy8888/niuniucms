@@ -40,7 +40,8 @@ class ConnectionPool
     public function __construct(array $config)
     {
         $this->config = $config;
-        $this->type = $config['type'] ?? 'mysql';
+        $rawType = strtolower((string)($config['type'] ?? 'mysql'));
+        $this->type = ('postgres' === $rawType) ? 'pgsql' : $rawType;
         $this->tablepre = $config['master']['tablepre'] ?? '';
         $this->breakSeconds = (int)($config['breaker_seconds'] ?? 30);
         $this->maxSize = (int)($config['pool_max'] ?? 10);
@@ -70,7 +71,7 @@ class ConnectionPool
      */
     public function put(?PDO $pdo, bool $isWrite = false): void
     {
-        if (!$pdo) return;
+        if (!$pdo || $this->isMemorySqlite()) return;
         $oid = spl_object_id($pdo);
         $nodeKey = self::$pdoNode[$oid] ?? $this->masterNodeKey($isWrite);
         unset(self::$pdoNode[$oid]);
@@ -126,11 +127,17 @@ class ConnectionPool
             if ($this->isCircuitBreaker($nodeKey)) continue;
             $pdo = $this->takeIdle($nodeKey);
             if ($pdo !== null) {
-                if ($this->ping($pdo)) return $this->track($pdo, $nodeKey);
+                if ($this->ping($pdo)) {
+                    unset(self::$circuitBreaker[$nodeKey]);
+                    return $this->track($pdo, $nodeKey);
+                }
                 $this->reportError($nodeKey); // ping 失败视作节点异常
             }
             $pdo = $this->createConnectionFor($node);
-            if ($pdo !== null) return $this->track($pdo, $nodeKey);
+            if ($pdo !== null) {
+                unset(self::$circuitBreaker[$nodeKey]);
+                return $this->track($pdo, $nodeKey);
+            }
             $this->reportError($nodeKey);
         }
         return null;
@@ -146,8 +153,16 @@ class ConnectionPool
         if ($isWrite) return array($master);
         $slaves = $this->config['slaves'] ?? [];
         if (empty($slaves) || !is_array($slaves)) return array($master);
-        $candidates = array($this->selectSlaveNode(array_values($slaves)));
-        $candidates[] = $master; // 从库失败/熔断 → 主库兜底
+        $slaves = array_values($slaves);
+        $primary = $this->selectSlaveNode($slaves);
+        $candidates = array($primary);
+        $primaryKey = $this->nodeKey($primary, false);
+        foreach ($slaves as $s) {
+            if ($this->nodeKey($s, false) !== $primaryKey) {
+                $candidates[] = $s;
+            }
+        }
+        $candidates[] = $master; // 全部从库失败/熔断后降级主库
         return $candidates;
     }
 

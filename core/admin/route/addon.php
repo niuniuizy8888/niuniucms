@@ -16,6 +16,9 @@ if ('GET' == $method) {
         $header = array('title' => '插件设置');
         $dir = admin_param_text('dir', '', 128);
         (is_string($dir) && 1 === preg_match('#^[A-Za-z0-9_-]+$#', $dir)) or message(-1, lang('data_malformation'));
+        $conffile = APP_PATH . 'plugins/' . $dir . '/conf.json';
+        $pconf = is_file($conffile) ? xn_json_decode((string)file_get_contents($conffile)) : null;
+        (is_array($pconf) && !empty($pconf['installed'])) or message(-1, '插件尚未安装，无法打开设置页');
         $settingfile = APP_PATH . 'plugins/' . $dir . '/setting.php';
         is_file($settingfile) or message(-1, lang('not_exists'));
         // 注：插件设置页渲染在后台 head/foot 包裹内，但各 plugin/setting.php 仅输出 <div class="card">，
@@ -41,6 +44,9 @@ if ('GET' == $method) {
         // admin_audit_log，保存后 message/jump 退出），与 GET 分支同契约。
         $dir = admin_param_text('dir', '', 128);
         (is_string($dir) && 1 === preg_match('#^[A-Za-z0-9_-]+$#', $dir)) or message(-1, lang('data_malformation'));
+        $conffile = APP_PATH . 'plugins/' . $dir . '/conf.json';
+        $pconf = is_file($conffile) ? xn_json_decode((string)file_get_contents($conffile)) : null;
+        (is_array($pconf) && !empty($pconf['installed'])) or message(-1, '插件尚未安装，无法打开设置页');
         $settingfile = APP_PATH . 'plugins/' . $dir . '/setting.php';
         is_file($settingfile) or message(-1, lang('not_exists'));
         include _include($settingfile);

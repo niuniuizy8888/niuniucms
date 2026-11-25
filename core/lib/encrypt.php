@@ -30,6 +30,9 @@ function xn_key() {
  */
 function xn_encrypt($txt, $key = '') {
 	empty($key) AND $key = xn_key();
+	if (!is_string($key) || $key === '') {
+		throw new \RuntimeException('xn_encrypt: empty encryption key refused (fail-closed)');
+	}
 	// 派生 256 位密钥（SHA-256 确保长度和熵）
 	$enc_key = hash('sha256', $key, true);
 	// 12 字节 IV (GCM 推荐)
@@ -59,6 +62,9 @@ function xn_encrypt($txt, $key = '') {
  */
 function xn_decrypt($txt, $key = '') {
 	empty($key) AND $key = xn_key();
+	if (!is_string($key) || $key === '') {
+		return FALSE;
+	}
 	// 兼容旧版 URL-encoded 格式（由 xn_urlencode 处理过的 XXTEA 密文）
 	$txt = str_replace(' ', '+', $txt);
 	$data = base64_decode($txt);

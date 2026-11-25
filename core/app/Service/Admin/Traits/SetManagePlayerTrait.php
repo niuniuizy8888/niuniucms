@@ -66,10 +66,14 @@ trait SetManagePlayerTrait
         $type = admin_param_int('type');
         admin_audit_log('player_modify', array('type' => $type));
         if (2 == $type) {
-            $result = PlayerConfigService::sort(_POST('data'));
-            return array('code' => 0, 'message' => $result['msg']);
+            $data = _POST('data');
+            if (!is_array($data)) {
+                message(-1, lang('data_malformation'));
+            }
+            $result = PlayerConfigService::sort($data);
+            return array('code' => empty($result['success']) ? -1 : 0, 'message' => $result['msg']);
         }
         $result = PlayerConfigService::delete(admin_param_text('from', '', 50));
-        return array('code' => 0, 'message' => $result['msg']);
+        return array('code' => empty($result['success']) ? -1 : 0, 'message' => $result['msg']);
     }
 }

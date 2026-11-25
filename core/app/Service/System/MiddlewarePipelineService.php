@@ -14,16 +14,18 @@ class MiddlewarePipelineService
      */
     public static function run(): bool
     {
+        $request = self::makeRequest();
+
         // 0. 请求 ID 注入（日志/审计关联）
-        self::runRequestId();
+        self::runRequestId($request);
 
         // 1. XSS 过滤中间件
-        if (!self::runXssFilter()) {
+        if (!self::runXssFilter($request)) {
             return false;
         }
         
         // 2. 限流中间件
-        if (!self::runThrottle()) {
+        if (!self::runThrottle($request)) {
             return false;
         }
         
@@ -33,7 +35,7 @@ class MiddlewarePipelineService
     /**
      * 注入请求 ID（REQUEST_ID + X-Request-Id 响应头）
      */
-    private static function runRequestId(): void
+    private static function runRequestId(\App\Request $request): void
     {
         try {
             $middleware = new \App\Middleware\RequestIdMiddleware();
@@ -46,7 +48,7 @@ class MiddlewarePipelineService
                     return true;
                 }
             };
-            $middleware->process(self::makeRequest(), $handler);
+            $middleware->process($request, $handler);
         } catch (\Throwable $e) {
             // 请求 ID 失败不阻断请求，仅记录日志（审计修复：logger 不存在，改走 xn_log）
             xn_log('RequestId failed: ' . $e->getMessage(), 'middleware_error');
@@ -71,7 +73,7 @@ class MiddlewarePipelineService
     /**
      * 执行 XSS 过滤
      */
-    private static function runXssFilter(): bool
+    private static function runXssFilter(\App\Request $request): bool
     {
         $config = self::loadConfig('xss');
         if (empty($config['enable'])) {
@@ -92,7 +94,7 @@ class MiddlewarePipelineService
                 }
             };
 
-            $middleware->process(self::makeRequest(), $handler);
+            $middleware->process($request, $handler);
             return true;
         } catch (\Throwable $e) {
             // XSS 过滤失败不阻断请求，仅记录日志（审计修复：logger 不存在，改走 xn_log）
@@ -104,7 +106,7 @@ class MiddlewarePipelineService
     /**
      * 执行限流中间件
      */
-    private static function runThrottle(): bool
+    private static function runThrottle(\App\Request $request): bool
     {
         $config = self::loadConfig('throttle');
         if (empty($config['enable'])) {
@@ -125,7 +127,7 @@ class MiddlewarePipelineService
                 }
             };
 
-            $result = $middleware->process(self::makeRequest(), $handler);
+            $result = $middleware->process($request, $handler);
             
             // 如果返回 false，说明被限流拦截
             if ($result === false) {
@@ -145,7 +147,9 @@ class MiddlewarePipelineService
      */
     private static function loadConfig(string $name): array
     {
-        $file = APP_PATH . 'core/config/' . $name . '.php';
+        $file = function_exists('nncms_runtime_path')
+            ? nncms_runtime_path($name . '.php')
+            : (APP_PATH . 'core/config/' . $name . '.php');
         if (!is_file($file)) {
             return [];
         }

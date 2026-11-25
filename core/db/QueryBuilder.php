@@ -148,14 +148,48 @@ class QueryBuilder
      * @return $this 链式
      * @throws \InvalidArgumentException 列名非法
      */
-    public function where(string $column, string $operator, $value = null)
+    public function where(string $column, $operator, $value = null)
     {
         // 列名白名单（防 SQL 注入，与 orderBy/having 口径一致）
         if (!preg_match('#^[a-zA-Z_][a-zA-Z0-9_]*$#', $column)) {
             throw new \InvalidArgumentException("Invalid where column: " . $column);
         }
-        if ($value === null) { $value = $operator; $operator = '='; }
-        $op = in_array(strtoupper($operator), self::OPERATORS, true) ? strtoupper($operator) : '=';
+        if (func_num_args() === 2) {
+            $opCheck = is_string($operator) ? strtoupper(trim($operator)) : '';
+            if ($opCheck === 'IS NULL' || $opCheck === 'IS NOT NULL') {
+                $this->wheres[] = [$column, $opCheck, null, 'RAW' => $this->qi($column) . ' ' . $opCheck];
+                return $this;
+            }
+            $value = $operator;
+            $operator = '=';
+        }
+        $opUpper = strtoupper(trim((string)$operator));
+        if ($opUpper === 'IS NULL' || $opUpper === 'IS NOT NULL') {
+            $this->wheres[] = [$column, $opUpper, null, 'RAW' => $this->qi($column) . ' ' . $opUpper];
+            return $this;
+        }
+        if ($opUpper === 'IN' || $opUpper === 'NOT IN') {
+            if (!is_array($value)) {
+                throw new \InvalidArgumentException("Operator {$opUpper} requires an array value");
+            }
+            if (empty($value)) {
+                $this->wheres[] = [$column, $opUpper, [], 'RAW' => ($opUpper === 'IN' ? '1=0' : '1=1')];
+                return $this;
+            }
+            $vals = array_values($value);
+            $placeholders = implode(',', array_fill(0, count($vals), '?'));
+            $this->wheres[] = [$column, $opUpper, $vals, 'RAW' => $this->qi($column) . " {$opUpper} ($placeholders)"];
+            return $this;
+        }
+        if ($value === null) {
+            if ($opUpper === '!=' || $opUpper === '<>') {
+                $this->wheres[] = [$column, 'IS NOT NULL', null, 'RAW' => $this->qi($column) . ' IS NOT NULL'];
+                return $this;
+            }
+            $this->wheres[] = [$column, 'IS NULL', null, 'RAW' => $this->qi($column) . ' IS NULL'];
+            return $this;
+        }
+        $op = in_array($opUpper, self::OPERATORS, true) ? $opUpper : '=';
         $this->wheres[] = [$column, $op, $value];
         return $this;
     }
@@ -458,21 +492,15 @@ class QueryBuilder
      */
     public function limit(int $limit, int $offset = 0)
     {
-        $this->limit = $limit;
-        $this->offset = $offset;
+        $this->limit = max(0, $limit);
+        $this->offset = max(0, $offset);
         return $this;
     }
 
-    /**
-     * 以页码语义设置分页：limit=pageSize、offset=(page-1)*pageSize。
-     * ⚠ 不做 page≥1 钳制——page<=0 会算出负 offset（toSql 真值判断下负数仍拼入，生成非法 SQL），
-     *   调用方须先 max(1,$page)（DbTableRepository::find 已在内部钳制）。
-     * @param int $page 页码（1 起）
-     * @param int $pageSize 每页条数
-     * @return $this 链式
-     */
     public function page(int $page, int $pageSize = 20)
     {
+        $page = max(1, $page);
+        $pageSize = max(0, $pageSize);
         $this->limit = $pageSize;
         $this->offset = ($page - 1) * $pageSize;
         return $this;
@@ -500,8 +528,8 @@ class QueryBuilder
             $this->params[] = $this->having[2];
         }
         if ($this->orderBy) $sql .= ' ORDER BY ' . implode(',', $this->orderBy);
-        if ($this->limit) $sql .= " LIMIT {$this->limit}";
-        if ($this->offset) $sql .= " OFFSET {$this->offset}";
+        if ($this->limit !== null) $sql .= ' LIMIT ' . max(0, (int)$this->limit);
+        if ($this->offset !== null && (int)$this->offset > 0) $sql .= ' OFFSET ' . max(0, (int)$this->offset);
         // 悲观行锁（R04 配套）：仅 mysql/pgsql 生成；sqlite 无此语法，忽略以免非法 SQL
         if ($this->forUpdate && 'sqlite' !== $this->type) $sql .= ' FOR UPDATE';
         return $sql;
@@ -545,16 +573,16 @@ class QueryBuilder
     }
 
     /**
-     * 写入：INSERT，返回自增 ID（无自增返回 0）
+     * 写入：INSERT，失败返回 false，成功返回自增 ID（显式主键或无自增列时返回 0）
      */
-    public function insert(array $data): int
+    public function insert(array $data): int|false
     {
-        if (empty($data)) return 0;
+        if (empty($data)) return false;
         $data = $this->safeColumns($data);
-        if (empty($data)) return 0;
+        if (empty($data)) return false;
         $sql = $this->insertSql($data);
         $stmt = $this->db->prepare_execute($sql, array_values($data));
-        if (!$stmt) return 0;
+        if (!$stmt) return false;
         $pdo = $this->db->wlink;
         return $pdo ? (int)$pdo->lastInsertId() : 0;
     }
@@ -747,9 +775,21 @@ class QueryBuilder
     public function count(): int
     {
         $cols = $this->columns;
-        $this->columns = ['COUNT(*) AS n'];
-        $sql = $this->toSql();
-        $this->columns = $cols;
+        $limit = $this->limit;
+        $offset = $this->offset;
+        $orderBy = $this->orderBy;
+        try {
+            $this->columns = ['COUNT(*) AS n'];
+            $this->limit = null;
+            $this->offset = null;
+            $this->orderBy = [];
+            $sql = $this->toSql();
+        } finally {
+            $this->columns = $cols;
+            $this->limit = $limit;
+            $this->offset = $offset;
+            $this->orderBy = $orderBy;
+        }
         $params = $this->params;
         $attempts = max(1, $this->retryCount + 1);
         for ($i = 0; $i < $attempts; $i++) {
@@ -794,14 +834,14 @@ class QueryBuilder
                 // 据此 bump 页缓存并上报成功。不重试：
                 // 回调副作用可能已发生，重复执行风险大于收益（docblock 口径一致）。
                 if (!$db->commit()) {
-                    DEBUG && xn_log('Transaction commit failed (rolled back), giving up', 'db_error');
+                    function_exists('xn_log') && xn_log('Transaction commit failed (rolled back), giving up', 'db_error');
                     return false;
                 }
                 return $result;
             } catch (\Throwable $e) {
                 $db->rollBack();
                 if ($attempt >= $retries) {
-                    DEBUG && xn_log("Transaction failed: " . $e->getMessage(), 'db_error');
+                    function_exists('xn_log') && xn_log("Transaction failed: " . $e->getMessage(), 'db_error');
                     return false;
                 }
                 usleep(100 * ($attempt + 1));

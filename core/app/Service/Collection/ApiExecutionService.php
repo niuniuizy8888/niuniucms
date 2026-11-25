@@ -644,7 +644,8 @@ class ApiExecutionService
             if ($strict) throw new \RuntimeException('采集取页失败：' . $code . ' page=' . (int)$pg);
             $res .= lang('api_err');
         } else {
-            for ($i = 1; $i <= $apidate['page']['pagecount']; $i++) {
+            $maxPages = min(max(0, (int)$apidate['page']['pagecount']), 5000);
+            for ($i = 1; $i <= $maxPages; $i++) {
                 $pg = $i;
                 $apires = call_user_func($fetch, $encodeurl, $t, $pg, $h);
                 if (!isset($apires['page']['pagecount'])) {
@@ -702,7 +703,7 @@ class ApiExecutionService
         $config = $conf['api_api']['vod'];
         $players = $conf['vodplayer'];
         if (!isset($conf['bind'][$code])) {
-            exit(lang('api_no_set'));
+            throw new \RuntimeException(lang('api_no_set'));
         }
         $savedBindings = (array)$conf['bind'][$code];
         // 分类目录在采集锁外获取；入库时仍在事务内重新校验本地分类和父级。
@@ -913,7 +914,7 @@ class ApiExecutionService
                 try {
                     $save = static fn()=>video_update($item['vid'], $vod_update);
                     $saved = !empty($vod_update['pic']) ? \App\Service\System\AttachmentService::withUrlReference($vod_update['pic'], $save) : $save();
-                    if ($saved === false) message(-1, lang('update_thread_failed'));
+                    if ($saved === false) throw new \RuntimeException(lang('update_thread_failed'));
                 } catch (\Throwable $e) {
                     // Image cleanup by another task must never replace a working external URL with a missing file.
                     xn_log('collection image reference deferred: '.$e->getMessage(), 'attachment_error');
@@ -1133,27 +1134,27 @@ class ApiExecutionService
     private static function videoRowPayload($v, $cid, $players, $param): array
     {
         $arr = array();
-        $arr['vod_id'] = intval($v['vod_id']);
+        $arr['vod_id'] = max(0, min(4294967295, intval($v['vod_id'] ?? 0)));
         $arr['name'] = self::storedVodName($v['vod_name']);
-        $arr['en'] = htmlspecialchars($v['vod_en'], ENT_QUOTES);
-        $arr['sub'] = htmlspecialchars($v['vod_sub'], ENT_QUOTES);
-        $arr['letter'] = htmlspecialchars($v['vod_letter'], ENT_QUOTES);
-        $arr['status'] = intval($v['vod_status']);
-        $arr['views'] = intval($v['vod_hits']);
-        $arr['total'] = intval($v['vod_total']);
-        $arr['serial'] = intval($v['vod_serial']);
-        $arr['actor'] = htmlspecialchars(bull_format_text($v['vod_actor'], true), ENT_QUOTES);
-        $arr['director'] = htmlspecialchars(bull_format_text($v['vod_director'], true), ENT_QUOTES);
-        $arr['writer'] = htmlspecialchars(bull_format_text($v['vod_writer'], true), ENT_QUOTES);
-        $arr['blurb'] = htmlspecialchars($v['vod_blurb'], ENT_QUOTES);
-        $arr['remarks'] = htmlspecialchars(bull_format_text($v['vod_remarks'] ?? '', true), ENT_QUOTES);
-        $arr['area'] = htmlspecialchars($v['vod_area'], ENT_QUOTES);
-        $arr['lang'] = htmlspecialchars($v['vod_lang'], ENT_QUOTES);
-        $arr['year'] = intval($v['vod_year']);
-        $arr['douban_id'] = intval($v['vod_douban_id']);
-        $arr['douban_score'] = floatval($v['vod_douban_score']);
+        $arr['en'] = htmlspecialchars((string)($v['vod_en'] ?? ''), ENT_QUOTES);
+        $arr['sub'] = htmlspecialchars((string)($v['vod_sub'] ?? ''), ENT_QUOTES);
+        $arr['letter'] = htmlspecialchars((string)($v['vod_letter'] ?? ''), ENT_QUOTES);
+        $arr['status'] = max(0, min(9, intval($v['vod_status'] ?? 0)));
+        $arr['views'] = max(0, min(4294967295, intval($v['vod_hits'] ?? 0)));
+        $arr['total'] = max(0, min(16777215, intval($v['vod_total'] ?? 0)));
+        $arr['serial'] = max(0, min(16777215, intval($v['vod_serial'] ?? 0)));
+        $arr['actor'] = htmlspecialchars(bull_format_text((string)($v['vod_actor'] ?? ''), true), ENT_QUOTES);
+        $arr['director'] = htmlspecialchars(bull_format_text((string)($v['vod_director'] ?? ''), true), ENT_QUOTES);
+        $arr['writer'] = htmlspecialchars(bull_format_text((string)($v['vod_writer'] ?? ''), true), ENT_QUOTES);
+        $arr['blurb'] = htmlspecialchars((string)($v['vod_blurb'] ?? ''), ENT_QUOTES);
+        $arr['remarks'] = htmlspecialchars(bull_format_text((string)($v['vod_remarks'] ?? ''), true), ENT_QUOTES);
+        $arr['area'] = htmlspecialchars((string)($v['vod_area'] ?? ''), ENT_QUOTES);
+        $arr['lang'] = htmlspecialchars((string)($v['vod_lang'] ?? ''), ENT_QUOTES);
+        $arr['year'] = max(0, min(9999, intval($v['vod_year'] ?? 0)));
+        $arr['douban_id'] = max(0, min(4294967295, intval($v['vod_douban_id'] ?? 0)));
+        $arr['douban_score'] = min(9.9, max(0.0, round(floatval($v['vod_douban_score'] ?? 0), 1)));
         $arr['content'] = xn_html_safe($v['vod_content'] ?? '');
-        $arr['pic'] = preg_match('#^https?://#i', $v['vod_pic']) ? xn_url_strip($v['vod_pic']) : '';
+        $arr['pic'] = preg_match('#^https?://#i', (string)($v['vod_pic'] ?? '')) ? xn_url_strip((string)$v['vod_pic']) : '';
         $arr['create_date'] = time();
         $arr['cid'] = intval($cid);
         $get_tag = get_tag($v['vod_name']);
@@ -1360,14 +1361,22 @@ class ApiExecutionService
         \App\Service\System\ArticleTagSchema::ensureReady();
         $conf = _SERVER('conf');
         if (!isset($conf['bind'][$code])) {
-            if ($strict) throw new \RuntimeException(lang('api_no_set'));
-            exit(lang('api_no_set'));
+            throw new \RuntimeException(lang('api_no_set'));
         }
         $apicate = [];
         $ress = array();
         $db = _SERVER('db');
+        $pdo = $db->connect();
+        if (!$pdo) throw new \RuntimeException('采集数据库暂不可用，请稍后重试');
+        // 同站文章采集按页串行写入，防止并发 cron/手动任务重复插入同名文章
+        $lock = 'collect_art_' . substr(hash('sha256', $db->tablepre . $pdo->query('SELECT DATABASE()')->fetchColumn()), 0, 32);
+        $lockStmt = $pdo->prepare('SELECT GET_LOCK(?, 30)');
+        $lockStmt->execute(array($lock));
+        if ((int)$lockStmt->fetchColumn() !== 1) throw new \RuntimeException('其他文章采集正在入库，请稍后重试当前页');
         $touched = $tagCache = array();
         if ($strict && ($db->inTransaction() || !$db->beginTransaction())) {
+            $relStmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+            $relStmt->execute(array($lock));
             throw new \RuntimeException('无法开始文章采集事务，请重试');
         }
         try {
@@ -1378,15 +1387,14 @@ class ApiExecutionService
                 $msg = '';
                 $arr = array();
                 if (!isset($apicate[$v['type_name']])) {
-                    // 上线前审计修复（H-A2）：$v['type_name'] 来自远端采集接口，
-                    // 原样拼入 $ress 后经 api_res.html 裸 echo（采集=任意第三方源的信任边界，存储型后台 XSS）。
                     $des = lang('api_type_ok') . htmlspecialchars((string)$v['type_name'], ENT_QUOTES, 'UTF-8');
                 } elseif (empty($v['art_name'])) {
                     $des = '名称不得为空';
                 } else {
-                    $arr['name'] = htmlspecialchars($v['art_name'], ENT_QUOTES, 'UTF-8');
-                    $arr['views'] = intval($v['art_hits']);
-                    $arr['pic'] = preg_match('#^https?://#i', $v['art_pic']) ? xn_url_strip(html_entity_decode($v['art_pic'])) : '';
+                    $arr['name'] = \App\Service\Content\VideoService::fitText(htmlspecialchars((string)$v['art_name'], ENT_QUOTES, 'UTF-8'), 255);
+                    $arr['views'] = max(0, min(4294967295, intval($v['art_hits'] ?? 0)));
+                    $picRaw = preg_match('#^https?://#i', (string)($v['art_pic'] ?? '')) ? xn_url_strip(html_entity_decode((string)$v['art_pic'])) : '';
+                    $arr['pic'] = \App\Service\Content\VideoService::fitText($picRaw, 1024);
                     $arr['create_date'] = time();
                     $cid = $apicate[$v['type_name']];
                     $arr['cid'] = $cid;
@@ -1400,34 +1408,36 @@ class ApiExecutionService
                     $info = $rows[0] ?? null;
                     if (!$info) {
                         $aid = \App\Repository\RepositoryFactory::art()->insert($arr);
-                        if ($strict && !$aid) throw new \RuntimeException('文章入库失败，本页已回滚，请重试');
-                        if ($aid) $touched[$aid] = $aid;
-                        $art_aid = array('aid' => $aid, 'cid' => $cid);
-                        $indexed = art_aid_create($art_aid);
-                        if ($strict && $indexed === false) throw new \RuntimeException('文章分类关联写入失败，本页已回滚，请重试');
-                        $counted = cate_update($cid, array('arts+' => 1));
-                        if ($strict && !$counted) throw new \RuntimeException('文章分类计数更新失败，本页已回滚，请重试');
-                        if ($aid > 0) {
-                            $color = 'green';
-                            $des = lang('api_db_ok');
-                        } else {
+                        if (!$aid || (int)$aid <= 0) {
+                            if ($strict) throw new \RuntimeException('文章入库失败，本页已回滚，请重试');
                             $color = 'red';
                             $des = lang('api_db_err');
-                        }
-                        $vod_update = array();
-                        $tag_json = \App\Service\Content\ArticleTagService::post($aid, $cid, $tags);
-                        $tagCache += (array)json_decode($tag_json, true);
-                        if (xn_strlen($tag_json) >= 120) {
-                            $s = xn_substr($tag_json, -1, NULL);
-                            if ('}' != $s) {
-                                $len = mb_strripos($tag_json, ',', 0, 'UTF-8');
-                                $tag_json = $len ? xn_substr($tag_json, 0, $len) . '}' : '';
+                        } else {
+                            $aid = (int)$aid;
+                            $touched[$aid] = $aid;
+                            $art_aid = array('aid' => $aid, 'cid' => $cid);
+                            $indexed = art_aid_create($art_aid);
+                            if ($strict && $indexed === false) throw new \RuntimeException('文章分类关联写入失败，本页已回滚，请重试');
+                            $counted = cate_update($cid, array('arts+' => 1));
+                            if ($strict && !$counted) throw new \RuntimeException('文章分类计数更新失败，本页已回滚，请重试');
+                            $color = 'green';
+                            $des = lang('api_db_ok');
+                            $vod_update = array();
+                            $tag_json = \App\Service\Content\ArticleTagService::post($aid, $cid, $tags);
+                            $tagCache += (array)json_decode($tag_json, true);
+                            if (xn_strlen($tag_json) >= 120) {
+                                $s = xn_substr($tag_json, -1, NULL);
+                                if ('}' != $s) {
+                                    $len = mb_strripos($tag_json, ',', 0, 'UTF-8');
+                                    $tag_json = $len ? xn_substr($tag_json, 0, $len) . '}' : '';
+                                }
                             }
-                        }
-                        !empty($tag_json) and $vod_update['tag'] = $tag_json;
-                        if (!empty($vod_update) && FALSE === art_update($aid, $vod_update)) {
-                            if ($strict) throw new \RuntimeException('文章标签保存失败，本页已回滚，请重试');
-                            message(-1, lang('update_thread_failed'));
+                            !empty($tag_json) and $vod_update['tag'] = $tag_json;
+                            if (!empty($vod_update) && FALSE === art_update($aid, $vod_update)) {
+                                if ($strict) throw new \RuntimeException('文章标签保存失败，本页已回滚，请重试');
+                                xn_log('article tag update failed: aid=' . $aid, 'error');
+                                $msg .= '（标签写入失败）';
+                            }
                         }
                     } else {
                         $art_update = array();
@@ -1442,9 +1452,11 @@ class ApiExecutionService
                             $touched[$aid] = $aid;
                             if (FALSE === art_update($aid, $art_update)) {
                                 if ($strict) throw new \RuntimeException('文章更新失败，本页已回滚，请重试');
-                                message(-1, lang('update_thread_failed'));
+                                xn_log('article content patch failed: aid=' . $aid, 'error');
+                                $des .= '内容补全失败。';
+                            } else {
+                                $des .= '内容补全成功。';
                             }
-                            $des .= '内容补全成功。';
                         } else {
                             $des .= '内容存在 跳过。';
                         }
@@ -1457,6 +1469,11 @@ class ApiExecutionService
             if ($strict) $db->rollBack();
             throw $e;
         } finally {
+            try {
+                $relStmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+                $relStmt->execute(array($lock));
+            } catch (\Throwable $ignore) {
+            }
             if ($strict && $touched) {
                 // 事务结束后再次失效，避免其他请求在提交前重新缓存旧文章或分类计数。
                 foreach ($touched as $aid) content_cache_delete('art_', $aid);
@@ -1549,41 +1566,138 @@ class ApiExecutionService
      */
     private static function sanitizeImportedArtContent($html): string
     {
-        $html = html_entity_decode((string)$html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $html = (string)$html;
+        if (function_exists('mb_scrub')) {
+            $html = mb_scrub($html, 'UTF-8');
+        }
+        $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $html = str_replace('mac://', 'https://', $html);
-        $html = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $html);
-        if ('' === trim((string)$html)) return '';
+        $html = (string)preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $html);
+        if ('' === trim($html)) return '';
 
-        $html = preg_replace('#<(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|base)[^>]*>.*?</\\1>#is', '', $html);
-        $html = preg_replace('#<!--.*?-->#s', '', $html);
-        $allowedTags = '<img><p><br><b><strong><i><em><u><ul><ol><li><a><span><div><blockquote><code><pre><h1><h2><h3><h4><h5><h6>'
-            . '<hr><table><thead><tbody><tr><th><td>'
-            . '<section><article><aside><nav><header><footer><figure><figcaption>';
+        $allowedTagList = array(
+            'img', 'p', 'br', 'b', 'strong', 'i', 'em', 'u', 'ul', 'ol', 'li', 'a', 'span', 'div',
+            'blockquote', 'code', 'pre', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr',
+            'table', 'thead', 'tbody', 'tr', 'th', 'td',
+            'section', 'article', 'aside', 'nav', 'header', 'footer', 'figure', 'figcaption',
+        );
+        $allowedTagSet = array_fill_keys($allowedTagList, true);
+        $voidTagSet = array('img' => true, 'br' => true, 'hr' => true);
+        $dropSubtreeSet = array_fill_keys(array(
+            'script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button',
+            'textarea', 'select', 'meta', 'link', 'base', 'svg', 'math', 'template', 'noscript',
+        ), true);
+        $allowedCommon = array('class', 'id', 'style', 'title');
+        $allowedMap = array(
+            'a'   => array('href', 'target', 'rel'),
+            'img' => array('src', 'alt', 'width', 'height'),
+            'ol'  => array('type', 'start'),
+            'ul'  => array('type'),
+        );
+
+        // 优先走 DOMDocument 白名单序列化（彻底免疫引号夹带标签 / 畸形闭合标签 / strip_tags 状态机绕过）
+        if (class_exists('\DOMDocument')) {
+            $prevErrors = libxml_use_internal_errors(true);
+            try {
+                $dom = new \DOMDocument('1.0', 'UTF-8');
+                $wrapped = '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><div id="__nn_art_root__">' . $html . '</div></body></html>';
+                $loaded = @$dom->loadHTML($wrapped, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+                if ($loaded) {
+                    $root = $dom->getElementById('__nn_art_root__');
+                    if ($root) {
+                        $serialize = static function (\DOMNode $node, int $depth) use (&$serialize, $allowedTagSet, $voidTagSet, $dropSubtreeSet, $allowedCommon, $allowedMap): string {
+                            if ($depth > 48) return '';
+                            $out = '';
+                            foreach ($node->childNodes as $child) {
+                                if ($child->nodeType === XML_TEXT_NODE || $child->nodeType === XML_CDATA_SECTION_NODE) {
+                                    $out .= htmlspecialchars((string)$child->nodeValue, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                    continue;
+                                }
+                                if ($child->nodeType !== XML_ELEMENT_NODE) {
+                                    continue;
+                                }
+                                $tag = strtolower((string)$child->nodeName);
+                                if (isset($dropSubtreeSet[$tag])) {
+                                    continue;
+                                }
+                                $inner = isset($voidTagSet[$tag]) ? '' : $serialize($child, $depth + 1);
+                                if (!isset($allowedTagSet[$tag])) {
+                                    $out .= $inner;
+                                    continue;
+                                }
+                                $allowedList = array_merge($allowedCommon, $allowedMap[$tag] ?? array());
+                                $cleanMap = array();
+                                if ($child->hasAttributes()) {
+                                    foreach ($child->attributes as $attr) {
+                                        $aname = strtolower((string)$attr->nodeName);
+                                        if (!in_array($aname, $allowedList, true)) continue;
+                                        $aval = self::sanitizeImportedArtAttributeValue($tag, $aname, (string)$attr->nodeValue);
+                                        if (null !== $aval) {
+                                            $cleanMap[$aname] = (string)$aval;
+                                        }
+                                    }
+                                }
+                                if ('a' === $tag && isset($cleanMap['target']) && '_blank' === strtolower($cleanMap['target'])) {
+                                    $cleanMap['rel'] = 'noopener noreferrer';
+                                }
+                                $attrParts = array();
+                                foreach ($cleanMap as $aname => $aval) {
+                                    $attrParts[] = sprintf('%s="%s"', $aname, htmlspecialchars($aval, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+                                }
+                                $open = '<' . $tag . (empty($attrParts) ? '' : ' ' . implode(' ', $attrParts)) . '>';
+                                $out .= isset($voidTagSet[$tag]) ? $open : ($open . $inner . '</' . $tag . '>');
+                            }
+                            return $out;
+                        };
+                        return trim($serialize($root, 0));
+                    }
+                }
+            } finally {
+                libxml_clear_errors();
+                libxml_use_internal_errors($prevErrors);
+            }
+        }
+
+        // 无 ext-dom 兜底：迭代剔除危险块标签（含闭合标签尾随空白），并严格校检开始/结束标签白名单
+        for ($i = 0; $i < 4; $i++) {
+            $next = (string)preg_replace('#<(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|base|svg|math)[^>]*>.*?</\\1\s*>#is', '', $html);
+            if ($next === $html) break;
+            $html = $next;
+        }
+        $html = (string)preg_replace('#<!--.*?-->#s', '', $html);
+        $allowedTags = '<' . implode('><', $allowedTagList) . '>';
         $html = strip_tags($html, $allowedTags);
 
-        $html = preg_replace_callback('/<([a-z1-6]+)\s*([^>]*)>/i', function ($matches) {
-            $tagName = strtolower((string)$matches[1]);
-            $attrs = self::parseImportedArtAttributes((string)$matches[2]);
-            $allowedCommon = array('class', 'id', 'style', 'title');
-            $allowedMap = array(
-                'a'   => array('href', 'target', 'rel'),
-                'img' => array('src', 'alt', 'width', 'height'),
-                'ol'  => array('type', 'start'),
-                'ul'  => array('type'),
-            );
+        $html = (string)preg_replace_callback('#<(/?)([a-z][a-z0-9]*)(\s[^>]*)?>#i', function ($matches) use ($allowedTagSet, $allowedCommon, $allowedMap) {
+            $closing = ($matches[1] === '/');
+            $tagName = strtolower((string)$matches[2]);
+            if (!isset($allowedTagSet[$tagName])) {
+                return '';
+            }
+            if ($closing) {
+                return '</' . $tagName . '>';
+            }
+            $attrs = self::parseImportedArtAttributes((string)($matches[3] ?? ''));
             $allowedList = array_merge($allowedCommon, $allowedMap[$tagName] ?? array());
-            $cleanAttrs = array();
+            $cleanMap = array();
             foreach ($attrs as $name => $val) {
                 if (!in_array($name, $allowedList, TRUE)) continue;
                 $val = self::sanitizeImportedArtAttributeValue($tagName, $name, $val);
                 if (NULL !== $val) {
-                    $cleanAttrs[] = sprintf('%s="%s"', $name, htmlspecialchars((string)$val, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
+                    $cleanMap[$name] = (string)$val;
                 }
+            }
+            if ('a' === $tagName && isset($cleanMap['target']) && '_blank' === strtolower($cleanMap['target'])) {
+                $cleanMap['rel'] = 'noopener noreferrer';
+            }
+            $cleanAttrs = array();
+            foreach ($cleanMap as $name => $val) {
+                $cleanAttrs[] = sprintf('%s="%s"', $name, htmlspecialchars($val, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));
             }
             return '<' . $tagName . (empty($cleanAttrs) ? '' : ' ' . implode(' ', $cleanAttrs)) . '>';
         }, $html);
 
-        return trim((string)$html);
+        return trim($html);
     }
 
     /** 解析 HTML 开始标签上的属性。 */
@@ -1603,11 +1717,19 @@ class ApiExecutionService
     /** 资讯正文属性值白名单。 */
     private static function sanitizeImportedArtAttributeValue(string $tag, string $name, string $val): ?string
     {
-        if ('src' === $name && preg_match('#^data:image/(?:jpg|jpeg|gif|png);base64,[A-Za-z0-9+/=]+$#i', $val)) {
-            return $val;
+        if ('img' === $tag && 'src' === $name && preg_match('#^data:image/(?:jpg|jpeg|gif|png|webp);base64,[A-Za-z0-9+/=]+$#i', trim($val))) {
+            return trim($val);
         }
-        if (in_array($name, array('href', 'src', 'action'), TRUE) && self::isDangerousImportedArtProtocol($val)) {
-            return '#';
+        if (in_array($name, array('href', 'src', 'action'), TRUE)) {
+            $trimmed = trim($val);
+            if ($trimmed === '' || self::isDangerousImportedArtProtocol($trimmed)) {
+                return 'href' === $name ? '#' : NULL;
+            }
+            return $trimmed;
+        }
+        if ('target' === $name) {
+            $t = strtolower(trim($val));
+            return in_array($t, array('_blank', '_self'), TRUE) ? $t : NULL;
         }
         if ('style' === $name) {
             return self::auditImportedArtInlineStyle($val);
@@ -1619,32 +1741,37 @@ class ApiExecutionService
         return $val;
     }
 
-    /** 危险协议拦截。 */
+    /** URL 协议正向白名单：仅允许 http/https、单斜杠站内路径、#锚点或无协议前缀的相对路径。 */
     private static function isDangerousImportedArtProtocol(string $val): bool
     {
         $normalized = html_entity_decode($val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        $normalized = preg_replace('/[\s\x00-\x1F\x7F-\x9F\xAD]/u', '', $normalized);
-        $normalized = strtolower((string)$normalized);
-        foreach (array('javascript:', 'data:', 'vbscript:', 'mocha:', 'livescript:') as $prefix) {
-            if (0 === strpos($normalized, $prefix)) return TRUE;
+        $normalized = (string)preg_replace('/[\s\x00-\x1F\x7F-\x9F\xAD]/u', '', $normalized);
+        if ($normalized === '' || 0 === strpos($normalized, '//') || 0 === strpos($normalized, '\\\\')) {
+            return TRUE;
         }
-        return FALSE;
+        if (preg_match('#^(https?://|/(?!/)|\#)#i', $normalized)) {
+            return FALSE;
+        }
+        // 无冒号且在首个 / ? # 之前不含协议分隔符的相对路径放行
+        if (!preg_match('#^[^/?\#]*:#', $normalized)) {
+            return FALSE;
+        }
+        return TRUE;
     }
 
-    /** 行内样式审计：拒绝脚本式样与非 http(s) 的 url()。 */
+    /** 行内样式审计：先解码 CSS 转义与注释，拒绝脚本、外部 url() 及覆盖页面布局的定位属性。 */
     private static function auditImportedArtInlineStyle(string $style): ?string
     {
-        $normalized = strtolower($style);
-        foreach (array('expression', 'javascript', 'behavior', 'vmlframe', '-moz-binding', '@import') as $word) {
+        $decoded = (string)preg_replace('#/\*.*?\*/#s', '', $style);
+        $decoded = (string)preg_replace_callback('/\\\\([0-9a-fA-F]{1,6})\s?/', static function ($m) {
+            $cp = hexdec($m[1]);
+            if ($cp <= 0 || $cp > 0x10FFFF) return '';
+            return mb_chr($cp, 'UTF-8');
+        }, $decoded);
+        $decoded = str_replace('\\', '', $decoded);
+        $normalized = strtolower((string)preg_replace('/[\x00-\x20\x7F]+/', '', $decoded));
+        foreach (array('expression', 'javascript', 'vbscript', 'behavior', 'vmlframe', '-moz-binding', '@import', 'url(', 'position:', 'z-index:', 'inset:') as $word) {
             if (FALSE !== strpos($normalized, $word)) return NULL;
-        }
-        if (FALSE !== strpos($normalized, 'url')) {
-            $n = preg_match_all('#url\s*\(\s*([\'"]?)(.*?)\1\s*\)#is', $style, $matches);
-            if (!$n) return NULL;
-            foreach ((array)$matches[2] as $u) {
-                $u = trim((string)$u);
-                if ('' === $u || !preg_match('#^https?://#i', $u)) return NULL;
-            }
         }
         return $style;
     }

@@ -17,13 +17,21 @@ class RecycleManageService
      * @param int $uid 当前管理员 uid（签名已声明）
      * @return array 模板变量集：input/arrlist/pagination/safe_token/header（签名声明 array）
      */
-    public static function listPage(int $uid): array
+    public static function listPage(int $uid, array $allowedTypes = array()): array
     {
-        $type = admin_param_text('type', '', 32);   // ⚠ 第二参是**默认值**、第三参才是长度上限；误写成 32 会让无 type 参数时按 '32' 过滤 ⇒ 首次进入恒空列表（审计修复）
+        $type = admin_param_text('type', '', 32);
+        if (!empty($allowedTypes)) {
+            if ('' !== $type && !in_array($type, $allowedTypes, true)) {
+                $type = count($allowedTypes) === 1 ? $allowedTypes[0] : '';
+            }
+            if ('' === $type && count($allowedTypes) === 1) {
+                $type = $allowedTypes[0];
+            }
+        }
         $page = max(1, admin_param_int('page', 1));
         $pagesize = 20;
-        $arrlist = \App\Service\Content\RecycleService::list($type, $page, $pagesize);
-        $total = \App\Service\Content\RecycleService::count($type);
+        $arrlist = \App\Service\Content\RecycleService::list($type, $page, $pagesize, $allowedTypes);
+        $total = \App\Service\Content\RecycleService::count($type, $allowedTypes);
         // ⚠ 标题来源修正：RecycleService::list() 按 R10 故意不取 data(text) 大字段，
         //   而旧代码在此直接读 $row['data'] ⇒ PHP 8 抛 `Undefined array key "data"`，
         //   且 $row['title'] 恒为空串（回收站列表看不出删的是什么）。

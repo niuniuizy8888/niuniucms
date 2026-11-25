@@ -31,8 +31,8 @@
     <script>
         var debug = DEBUG = <?php echo DEBUG; ?>;
         var cid = <?php echo isset($cid) ? intval($cid) : 0; ?>;
-        var admin_route = <?php echo isset($route) ? json_encode($route) : '""'; ?>;
-        var admin_action = <?php echo isset($action) ? json_encode($action) : '""'; ?>;
+        var admin_route = <?php echo isset($route) ? json_encode((string)$route, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE) : '""'; ?>;
+        var admin_action = <?php echo isset($action) ? json_encode((string)$action, JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE) : '""'; ?>;
         var url_rewrite_on = <?php echo intval($conf['url_rewrite_on'] ?? 0);?>;
         var url_access = true;
         var admin_entry = <?php echo json_encode((string)($conf['admin_entry'] ?? 'admin.php'), JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_UNESCAPED_UNICODE); ?>;

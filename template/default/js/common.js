@@ -484,7 +484,7 @@ $(function () {
         }  
     );  
 
-    $('.share-icn').click(function() {  
+    $('.share-icn').click(function(event) {  
         event.stopPropagation(); 
         $('.share-box-bg').removeClass('hidden').addClass('block');  
         $('.share-box').removeClass('hidden').addClass('block');  

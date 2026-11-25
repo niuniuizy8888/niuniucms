@@ -121,10 +121,53 @@ function http_host_allowed($host = null, $domain = null, $conf = null)
     return false;
 }
 
+/**
+ * 判断当前请求是否为 HTTPS：
+ * - 优先认 conf['force_https']、SERVER_PORT=443、HTTPS!=off；
+ * - 仅当开启 cdn_on 且直连 REMOTE_ADDR 命中 cdn_trusted_ips 白名单时，才采信 X-Forwarded-Proto，
+ *   防止直连客户端伪造转发头触发 HTTPS 判定或缓存键/Origin 校验绕过。
+ *
+ * @param array|null $conf 站点配置；NULL 时取 _SERVER('conf') / $GLOBALS['conf']
+ * @return bool
+ */
+function http_is_https($conf = null): bool
+{
+    if (!is_array($conf)) {
+        $conf = function_exists('_SERVER') ? _SERVER('conf') : null;
+        if (!is_array($conf)) {
+            $conf = (isset($GLOBALS['conf']) && is_array($GLOBALS['conf'])) ? $GLOBALS['conf'] : array();
+        }
+    }
+    if (!empty($conf['force_https'])) {
+        return true;
+    }
+    if (443 == _SERVER('SERVER_PORT')) {
+        return true;
+    }
+    $https = strtolower((string)_SERVER('HTTPS', 'off'));
+    if ($https !== '' && $https !== 'off') {
+        return true;
+    }
+    if (!empty($conf['cdn_on']) && !empty($conf['cdn_trusted_ips'])) {
+        $remote = (string)_SERVER('REMOTE_ADDR');
+        $raw = $conf['cdn_trusted_ips'];
+        $trusted = array_filter(array_map('trim', is_array($raw) ? $raw : explode(',', (string)$raw)));
+        if ($remote !== '' && in_array($remote, $trusted, TRUE)) {
+            $proto = strtolower(trim((string)_SERVER('HTTP_X_FORWARDED_PROTO')));
+            if (str_contains($proto, ',')) {
+                $proto = trim(explode(',', $proto)[0]);
+            }
+            if ('https' === $proto) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 function http_url_path()
 {
     $conf = _SERVER('conf');
-    $port = _SERVER('SERVER_PORT');
     $host = _SERVER('HTTP_HOST');
     // 审计修复（XSS-01）+ WEB-01：净化 Host；不在白名单时回退 site_host / SERVER_NAME，避免 canonical/og:url 反射攻击者域名。
     $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', (string)$host);
@@ -136,16 +179,13 @@ function http_url_path()
         $host = preg_replace('#[^A-Za-z0-9._:\[\]-]#', '', $fallback);
     }
     if ('' === $host) $host = 'localhost';
-    $https_off = _SERVER('HTTPS', 'off');
-    $https = $https_off ? strtolower($https_off) : '';
-    $http_proto = _SERVER('HTTP_X_FORWARDED_PROTO');
-    $proto = $http_proto ? strtolower(_SERVER('HTTP_X_FORWARDED_PROTO')) : '';
-    $len = strrpos($_SERVER['PHP_SELF'], '//');
-    FALSE === $len and $len = strrpos($_SERVER['PHP_SELF'], '/');
-    $path = substr($_SERVER['PHP_SELF'], 0, $len);
+    $phpSelf = (string)($_SERVER['PHP_SELF'] ?? '/index.php');
+    $len = strrpos($phpSelf, '//');
+    FALSE === $len and $len = strrpos($phpSelf, '/');
+    $path = FALSE === $len ? '' : substr($phpSelf, 0, $len);
     !isset($conf['url_rewrite_on']) and $conf['url_rewrite_on'] = 0;
     $conf['url_rewrite_on'] < 2 and $path = $path . '/';
-    $http = (!empty($conf['force_https']) || (443 == $port) || 'https' == $proto || ($https && 'off' != $https)) ? 'https' : 'http';
+    $http = http_is_https(is_array($conf) ? $conf : array()) ? 'https' : 'http';
     return "$http://$host$path";
 }
 

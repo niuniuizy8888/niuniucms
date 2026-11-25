@@ -185,11 +185,17 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">ES密码</label>
-                            <input type="password" class="form-control" name="pass" value="<?php echo xn_h($conf['es']['pass']); ?>" autocomplete="new-password">
+                            <input type="password" class="form-control" name="pass" value="" placeholder="<?php echo !empty($conf['es']['pass']) ? '已配置，留空保持不变' : '未配置'; ?>" autocomplete="new-password">
+                            <?php if(!empty($conf['es']['pass'])): ?>
+                            <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="clear_pass" value="1" id="es_clear_pass"><label class="form-check-label small text-muted" for="es_clear_pass">清空已保存密码</label></div>
+                            <?php endif; ?>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">API Key（可选）</label>
-                            <input type="password" class="form-control" name="apikey" value="<?php echo xn_h($conf['es']['api_key']); ?>" autocomplete="new-password">
+                            <input type="password" class="form-control" name="apikey" value="" placeholder="<?php echo !empty($conf['es']['api_key']) ? '已配置，留空保持不变' : '未配置'; ?>" autocomplete="new-password">
+                            <?php if(!empty($conf['es']['api_key'])): ?>
+                            <div class="form-check mt-1"><input class="form-check-input" type="checkbox" name="clear_apikey" value="1" id="es_clear_apikey"><label class="form-check-label small text-muted" for="es_clear_apikey">清空已保存 API Key</label></div>
+                            <?php endif; ?>
                         </div>
                         <div class="modal-footer px-0 pb-0">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>

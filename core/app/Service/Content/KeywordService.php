@@ -40,7 +40,8 @@ class KeywordService
         $hours <= 0 and $hours = 6;
         NULL === $ttl and $ttl = $hours * 3600;
 
-        $cache_key = 'hot_search_items_v3_' . $limit . '_' . self::cacheVersion() . '_' . (_SERVER('HTTP_HOST') ?? 'default');
+        $rw = intval($conf['url_rewrite_on'] ?? 0);
+        $cache_key = 'hot_search_items_v4_' . $limit . '_' . self::cacheVersion() . '_r' . $rw;
         $items = cache_get($cache_key);
         if (is_array($items)) {
             return $items;
@@ -63,7 +64,7 @@ class KeywordService
      */
     public static function invalidateCache(): void
     {
-        cache_set(self::cacheVersionKey(), time() . '_' . mt_rand(1000, 9999));
+        cache_shared_set(self::cacheVersionKey(), time() . '_' . mt_rand(1000, 9999));
     }
 
     /**
@@ -116,7 +117,11 @@ class KeywordService
             // 都要在 keyword 唯一索引上做一次 upsert 写入（行锁 + 二级索引维护 + binlog），
             // 高并发重复搜索时写 QPS 与搜索词数成正比、与访客数无关。
             // 限流位用 ThrottleService 的 APCu 原子计数，自身无读改写竞态，不引入额外表写。
-            $throttle_key = (string)(_SERVER('longip') ?: ip());
+            $throttle_key = (string)ip();
+            // 叠加按 IP 的全局写入限速（60s 内最多落库 20 个不同关键词），防止随机词灌满 search_hot 表
+            if (!\App\Service\System\ThrottleService::check('search_hot_ip', $throttle_key, 20, 60)) {
+                return;
+            }
             if (!\App\Service\System\ThrottleService::check('search_hot', $throttle_key . '|' . md5($kw), 1, 60)) {
                 return;
             }
@@ -141,9 +146,9 @@ class KeywordService
      * 读取热词缓存版本令牌（键见 cacheVersionKey）；未设置过返回 '0'。
      * @return string 版本令牌
      */
-    protected static function cacheVersion(): string
+    public static function cacheVersion(): string
     {
-        $version = cache_get(self::cacheVersionKey());
+        $version = cache_shared_get(self::cacheVersionKey());
         return $version ? (string)$version : '0';
     }
 
@@ -153,7 +158,7 @@ class KeywordService
      */
     protected static function cacheVersionKey(): string
     {
-        return 'hot_search_items_v3_ver_' . (_SERVER('HTTP_HOST') ?? 'default');
+        return 'hot_search_items_v4_ver';
     }
 
     /**
@@ -165,17 +170,17 @@ class KeywordService
      */
     protected static function searchUrl(string $keyword, $conf): string
     {
-        $keyword = trim($keyword);
+        $keyword = trim(html_entity_decode($keyword, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
         if ($keyword === '') return '';
 
         if ($conf['url_rewrite_on'] == 0) {
             return '/?search.html&keyword=' . urlencode($keyword);
         } elseif ($conf['url_rewrite_on'] == 1) {
-            return '/search-' . urlencode($keyword) . '.html';
+            return '/search-' . rawurlencode($keyword) . '.html';
         } elseif ($conf['url_rewrite_on'] == 2) {
-            return '/search/' . urlencode($keyword) . '.html';
+            return '/search/' . rawurlencode($keyword) . '.html';
         } elseif ($conf['url_rewrite_on'] == 3) {
-            return '/search/' . urlencode($keyword) . '/';
+            return '/search/' . rawurlencode($keyword) . '/';
         }
 
         return url('search', array('keyword' => $keyword), false);

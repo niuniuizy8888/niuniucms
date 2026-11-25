@@ -72,7 +72,8 @@ function pagination_tpl($url, $text, $active = '')
 {
     global $g_pagination_tpl;
     empty($g_pagination_tpl) and $g_pagination_tpl = '<li class="page-item{active}"><a href="{url}" class="page-link">{text}</a></li>';
-    return str_replace(array('{url}', '{text}', '{active}'), array($url, $text, $active), $g_pagination_tpl);
+    $safeUrl = htmlspecialchars((string)$url, ENT_QUOTES, 'UTF-8', false);
+    return str_replace(array('{url}', '{text}', '{active}'), array($safeUrl, $text, $active), $g_pagination_tpl);
 }
 
 /**
@@ -109,23 +110,26 @@ function index_page($url_tpl, $totalnum, $page, $pagesize = 20)
     $left = $page - $shownum;
     $left < 0 && $end = min($totalpage, $end - $left);
     $html = '';
+    $pageHref = static function ($p) use ($url_tpl): string {
+        return htmlspecialchars(str_replace('{page}', (string)$p, (string)$url_tpl), ENT_QUOTES, 'UTF-8', false);
+    };
     // 首页 / 上一页
     if ($page > 1) {
-        $html .= '<a href="' . str_replace('{page}', 1, $url_tpl) . '" class="page-number page-previous" title="首页">首页</a>';
-        $html .= '<a href="' . str_replace('{page}', $page - 1, $url_tpl) . '" class="page-number page-previous" title="上一页">上一页</a>';
+        $html .= '<a href="' . $pageHref(1) . '" class="page-number page-previous" title="首页">首页</a>';
+        $html .= '<a href="' . $pageHref($page - 1) . '" class="page-number page-previous" title="上一页">上一页</a>';
     }
     // 中部页码
     for ($i = $start; $i <= $end; $i++) {
         if ($i == $page) {
             $html .= '<span class="page-number page-current desktop">' . $i . '</span>';
         } else {
-            $html .= '<a href="' . str_replace('{page}', $i, $url_tpl) . '" class="page-number desktop" title="第' . $i . '页">' . $i . '</a>';
+            $html .= '<a href="' . $pageHref($i) . '" class="page-number desktop" title="第' . $i . '页">' . $i . '</a>';
         }
     }
     // 下一页 / 尾页
     if ($page < $totalpage) {
-        $html .= '<a href="' . str_replace('{page}', $page + 1, $url_tpl) . '" class="page-number page-next" title="下一页">下一页</a>';
-        $html .= '<a href="' . str_replace('{page}', $totalpage, $url_tpl) . '" class="page-number page-next" title="尾页">尾页</a>';
+        $html .= '<a href="' . $pageHref($page + 1) . '" class="page-number page-next" title="下一页">下一页</a>';
+        $html .= '<a href="' . $pageHref($totalpage) . '" class="page-number page-next" title="尾页">尾页</a>';
     }
     return $html;
 }

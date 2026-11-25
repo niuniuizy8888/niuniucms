@@ -25,7 +25,7 @@ class LinkManageService
                 'name' => form_text('name', '', FALSE, lang('site_name')),
                 'url' => form_text('url', '', FALSE, lang('site_url')),
             ),
-            'arrlist' => link_get($page, $n),
+            'arrlist' => link_get($page, $pagesize),
             'pagination' => pagination(url('link', $extra, TRUE), $n, $page, $pagesize),
             'header' => array(
                 'title' => lang('friends_link'),

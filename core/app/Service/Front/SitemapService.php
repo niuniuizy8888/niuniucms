@@ -14,7 +14,8 @@ class SitemapService
         $pagesize = max(1, intval($conf['sitemap_num'] ?? 1000));
         $action = (string)$action;
         if ('' === $action || 'list' === $action || 'xml' === $action) return false;
-        if (str_starts_with($action, 'art')) {
+        if ('art' === $action) {
+            if ($sub !== '' && $sub !== null && !ctype_digit((string)$sub)) return true;
             $n = intval($sub);
             return $n < 0 || $n >= max(1, (int)ceil(self::artCount() / $pagesize));
         }
@@ -36,7 +37,7 @@ class SitemapService
             return self::buildXml($conf, $http, $pagesize);
         } elseif (self::shardOutOfRange($action, param(2, 0), $conf)) {
             $urls = [];
-        } elseif (str_starts_with($action, 'art')) {
+        } elseif ('art' === $action) {
             $urls = self::articleUrls(max(0, intval(param(2, 0))) + 1, $pagesize, $http);
         } else {
             $urls = self::videoUrls(max(0, intval($action)) + 1, $pagesize, $conf, $http);

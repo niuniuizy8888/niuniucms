@@ -22,6 +22,7 @@ class UserManageService
         $pagesize = 20;
         $keyword = trim((string)($filters['keyword'] ?? ''));
         $srchtype = trim((string)($filters['srchtype'] ?? ''));
+        in_array($srchtype, array('', 'uid', 'username', 'email', 'gid', 'create_ip'), TRUE) or $srchtype = '';
         $extra = array('page' => '{page}');
         $cond = self::searchCond($keyword, $srchtype);
         $srchtype = array_key_exists('srchtype', $cond) ? $cond['srchtype'] : $srchtype;
@@ -214,18 +215,27 @@ class UserManageService
         FALSE === group_access($gid, 'managegroup') and message(1, lang('user_group_insufficient_privilege'));
 
         $rows = self::groupBatchPayload($grouplist);
-        foreach ($rows as $row) {
-            // 越权守卫（与 updateGroup 同口径，上线前加固）：非超管仅可编辑本组，
-            // 不得创建新组（防凭空建组授满权限提权）
-            if (1 != $gid && (intval($row['gid']) != intval($gid) || empty($row['exists']))) {
+        if (empty($rows)) {
+            message(1, lang('parameter_error'));
+        }
+        $deletearr = array_diff_key($grouplist, $rows);
+        // 所有鉴权检查前置在任何写库操作之前，防止部分落库与越权/空数组删光自定义组
+        if (1 != $gid) {
+            if (!empty($deletearr)) {
                 message(1, lang('user_group_insufficient_privilege'));
             }
+            foreach ($rows as $row) {
+                if (intval($row['gid']) != intval($gid) || empty($row['exists'])) {
+                    message(1, lang('user_group_insufficient_privilege'));
+                }
+            }
+        }
+        foreach ($rows as $row) {
             $perm = array();
             foreach (self::GROUP_PERM_KEYS as $p) {
                 $vals = param($p, array());
                 $perm[$p] = (is_array($vals) && !empty($vals[$row['gid']])) ? 1 : 0; // 组权限复选框读写
             }
-            // 审计修复：非超管只能保留自己组已持有的权限位（防自授 manageplugin 等 → RCE）
             $perm = self::clampPermsToOperator($perm, $gid);
             $row['name'] = filter_all_html($row['name']); // 组名入库净化（防后台存储型 XSS）
             if (!empty($row['exists'])) {
@@ -233,12 +243,6 @@ class UserManageService
             } else {
                 group_create(array('gid' => $row['gid'], 'name' => $row['name']) + $perm);
             }
-        }
-
-        $deletearr = array_diff_key($grouplist, $rows);
-        if (1 != $gid && !empty($deletearr)) {
-            // 非超管禁止删除任何组（防删他组破坏权限体系）
-            message(1, lang('user_group_insufficient_privilege'));
         }
         foreach ($deletearr as $groupId => $group) {
             if (in_array($groupId, $systemGroup)) continue;

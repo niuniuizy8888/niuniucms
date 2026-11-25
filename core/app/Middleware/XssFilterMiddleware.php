@@ -111,7 +111,8 @@ class XssFilterMiddleware implements MiddlewareInterface
     private function sanitize($value, array $path = [], int $depth = 0)
     {
         if ($depth > $this->maxDepth) {
-            return $value;
+            // 超过最大嵌套深度时 fail-closed，避免将未清洗的原始数据透传回超全局
+            return is_scalar($value) ? $this->htmlEncode((string)$value) : '';
         }
         
         if (is_array($value)) {
@@ -280,8 +281,9 @@ class XssFilterMiddleware implements MiddlewareInterface
         // 还原 HTML 实体
         $normalized = html_entity_decode($val, ENT_QUOTES | ENT_HTML5, 'UTF-8');
         
-        // 移除控制字符
-        $normalized = preg_replace('/[\s\x00-\x1F\x7F-\x9F\xAD]/u', '', $normalized);
+        // 移除控制字符（非法 UTF-8 时不因 /u 失败返回 null 导致 TypeError / 放行）
+        $stripped = @preg_replace('/[\s\x00-\x1F\x7F-\x9F\xAD]/u', '', $normalized);
+        $normalized = is_string($stripped) ? $stripped : (string)preg_replace('/[\s\x00-\x1F\x7F]+/', '', $normalized);
         $normalized = strtolower($normalized);
         
         // 黑名单协议（第五轮修复：data:text/html 扩为 data: 全前缀——
@@ -299,20 +301,23 @@ class XssFilterMiddleware implements MiddlewareInterface
      */
     private function auditInlineStyle(string $style): ?string
     {
-        $normalized = strtolower($style);
-        $blackKeywords = ['expression', 'javascript', 'behavior', 'vmlframe', '-moz-binding', '@import'];
+        // 先去除 CSS 注释并解码反斜杠十六进制转义，阻断 \65xpression / /*x*/url() 绕过
+        $decoded = (string)preg_replace('#/\*.*?\*/#s', '', $style);
+        $decoded = (string)preg_replace_callback('/\\\\([0-9a-fA-F]{1,6})\s?/', static function ($m) {
+            $cp = hexdec($m[1]);
+            if ($cp <= 0 || $cp > 0x10FFFF) return '';
+            return mb_chr($cp, 'UTF-8');
+        }, $decoded);
+        $decoded = str_replace('\\', '', $decoded);
+        $normalized = strtolower((string)preg_replace('/[\x00-\x20\x7F]+/', '', $decoded));
+        $blackKeywords = ['expression', 'javascript', 'vbscript', 'behavior', 'vmlframe', '-moz-binding', '@import', 'position:', 'z-index:', 'inset:'];
         
         foreach ($blackKeywords as $word) {
             if (str_contains($normalized, $word)) return null;
         }
         
-        // url() 检查（第五轮修复：原实现仅对整段 style 做前缀式协议检查，
-        // url(javascript:...) 形态可穿透。改为提取 url(...) 载荷逐一校验：仅放行 http/https
-        // （对齐主闸 xn_html_safe 的 background url(https?://) 白名单口径）；javascript:/data:/
-        // vbscript:/协议相对/相对路径一律剔除；形如 url( 但无法完整提取（嵌套括号等）时
-        // fail-closed 拒绝）
         if (str_contains($normalized, 'url')) {
-            $n = preg_match_all('#url\s*\(\s*([\'"]?)(.*?)\1\s*\)#is', $style, $m);
+            $n = preg_match_all('#url\s*\(\s*([\'"]?)(.*?)\1\s*\)#is', $decoded, $m);
             if (!$n) return null;
             foreach ($m[2] as $u) {
                 $u = trim($u);
@@ -328,7 +333,7 @@ class XssFilterMiddleware implements MiddlewareInterface
      */
     private function stripControlChars(string $s): string
     {
-        return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $s);
+        return (string)preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $s);
     }
     
     /**

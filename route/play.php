@@ -30,7 +30,7 @@ if (!($data['found'] ?? false)) {
     if (($data['reason'] ?? '') === 'forbidden') {
         http_response_code(403);
         $header['title'] = '无权限';
-        $message = '您无权观看此内容，请登录或升级会员';
+        $msg = $message = '您无权观看此内容，请登录或升级会员';
         include _file(view_load('message'));
         return;
     }
@@ -57,7 +57,7 @@ if ('' === trim((string)$play_name) || preg_match('#^https?://#i', (string)$play
     'cate_name' => $cate['name'],
     'sitename' => $conf['sitename'],
 ], [
-    'url' => \App\Service\Front\SeoService::currentUrl(),
+    'url' => \App\Service\Front\SeoService::canonicalUrl(url((!empty($conf['route']['play']) ? $conf['route']['play'] : 'play') . '-' . $vid . '-' . $play_from . '-' . $ep)),
     'image' => (strncasecmp((string)($video['pic'] ?? ''), 'http', 4) === 0 ? $video['pic'] : http_url_path() . ltrim((string)($video['pic'] ?? ''), '/')),
     'robots' => 'noindex,follow',
 ]);
@@ -83,6 +83,27 @@ if ($json) {
     // 有效，其他 UA 的访客拿着它发弹幕必被恒时校验拒绝；空串则播放器走 POST 现签端点取会话级新签。
     // 会员（uid>0）不走共享缓存（key 按 uid 隔离），token 按人派生，继续直发。
     $danmu_token = ($uid > 0 && !_SERVER('NNCMS_L0')) ? bull_token_set(0, 'danmu_send') : '';
+    $dmConf = is_array($conf['danmu'] ?? null) ? $conf['danmu'] : array();
+    $danmu_config_json = json_encode(array(
+        'danmu_toggle' => intval($dmConf['danmu_toggle'] ?? 1),
+        'pause_ad' => intval($dmConf['pause_ad'] ?? 1),
+        'select_col' => intval($dmConf['selec_col'] ?? 1),
+        'ep' => intval($ep),
+        'vid' => (string)$vid,
+        'danmu_list' => (string)($danmu_list ?? ''),
+        'danmu_send' => (string)($danmu_send ?? ''),
+        'danmu_token' => (string)$danmu_token,
+        'danmu_token_api' => (string)($danmu_token_api ?? ''),
+        'start_ad_on' => intval($dmConf['start_ad_on'] ?? 1),
+        'start_ad' => intval($dmConf['start_ad'] ?? 0),
+        'start_img_ad' => (string)($dmConf['start_img_ad'] ?? ''),
+        'start_mp4_ad' => (string)($dmConf['start_mp4_ad'] ?? ''),
+        'start_ad_url' => (string)($dmConf['start_ad_url'] ?? ''),
+        'start_close_time' => intval($dmConf['start_close_time'] ?? 5),
+        'start_all_time' => intval($dmConf['start_all_time'] ?? 10),
+        'stop_ad' => (string)($dmConf['stop_ad'] ?? ''),
+        'stop_ad_url' => (string)($dmConf['stop_ad_url'] ?? ''),
+    ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_INVALID_UTF8_SUBSTITUTE) ?: '{}';
     include _file(view_load('player', $cid));
 }
 

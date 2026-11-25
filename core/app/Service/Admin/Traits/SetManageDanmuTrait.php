@@ -85,6 +85,7 @@ trait SetManageDanmuTrait
             'stop_ad_url' => $ad_url('stop_ad_url'),
         );
         $result = ConfigRuntimeService::saveDanmu($payload);
-        return array('code' => 0, 'message' => jump($result['msg'], url('set-danmu', array(), TRUE), 3));
+        $ok = !empty($result['success']);
+        return array('code' => $ok ? 0 : -1, 'message' => $ok ? jump($result['msg'], url('set-danmu', array(), TRUE), 3) : (string)$result['msg']);
     }
 }

@@ -35,14 +35,43 @@ class MemcachedDriver implements CacheInterface
      * @param string $key 逻辑键
      * @return string 物理键（长度 ≤ 250 字节）
      */
+    private const PAYLOAD_PREFIX = 'NNS1:';
+
     private function physicalKey(string $key): string
     {
         $k = $this->prefix . $key;
-        if (strlen($k) <= 250) return $k;
-        // 250 = 前缀 + 分隔 + 32 位 md5；前缀本身超长时截断，保证总额不超限
+        if (strlen($k) <= 250 && !preg_match('/[\x00-\x20\x7F]/', $k)) return $k;
+        // 超过 250 字节或含空白/控制字符的键统一哈希，防止 RES_BAD_KEY_PROVIDED 触发自锁熔断
         $suffix = '_' . md5($key);
-        $head = substr($this->prefix, 0, max(0, 250 - strlen($suffix)));
+        $cleanPre = (string)preg_replace('/[\x00-\x20\x7F]/', '_', $this->prefix);
+        $head = substr($cleanPre, 0, max(0, 250 - strlen($suffix)));
         return $head . $suffix;
+    }
+
+    /** Memcached 协议规定 >30 天（2592000s）的过期值必须以 Unix 时间戳传递 */
+    private function normalizeExpiry(int $ttl): int
+    {
+        if ($ttl <= 0) return 0;
+        return $ttl > 2592000 ? (time() + $ttl) : $ttl;
+    }
+
+    /** PHP 侧显式序列化：整数直存兼容 increment/decrement，其余封包避免扩展层对象反序列化 */
+    private function packValue($value)
+    {
+        if (is_int($value)) return $value;
+        return self::PAYLOAD_PREFIX . serialize($value);
+    }
+
+    /** PHP 侧安全解包：强制 allowed_classes=false，阻断反序列化对象注入 */
+    private function unpackValue($raw)
+    {
+        if (is_string($raw) && 0 === strncmp($raw, self::PAYLOAD_PREFIX, 5)) {
+            $body = substr($raw, 5);
+            $val = @unserialize($body, ['allowed_classes' => false]);
+            if ($val === false && $body !== 'b:0;') return null;
+            return $val;
+        }
+        return is_object($raw) ? null : $raw;
     }
 
     /** @return Memcached|null */
@@ -79,23 +108,23 @@ class MemcachedDriver implements CacheInterface
         try {
             $k = $this->physicalKey($key);
             $val = $mem->get($k);
-            return $mem->getResultCode() === \Memcached::RES_SUCCESS ? $val : null;
+            return $mem->getResultCode() === \Memcached::RES_SUCCESS ? $this->unpackValue($val) : null;
         } finally { $this->release(); }
     }
 
     /**
-     * 写键值（cachepre 前缀拼接后交 Memcached 扩展序列化存储）。
+     * 写键值（cachepre 前缀拼接后经 PHP 侧安全封包写入 Memcached）。
      * @param string $key 逻辑键（自动加 prefix）
      * @param mixed $value 任意可序列化值
-     * @param int $ttl 存活秒数；<=0 归一为 0=永不过期（memcached 语义，>30 天会被服务端按 Unix 时间戳理解）
+     * @param int $ttl 存活秒数；<=0 归一为 0=永不过期，>30 天自动转为 Unix 时间戳
      * @return bool 取不到池连接或 set 失败 false
      */
     public function set(string $key, $value, int $ttl = 0): bool
     {
         $mem = $this->conn(); if (!$mem) return false;
         try {
-            $exp = $ttl > 0 ? $ttl : 0;
-            return $mem->set($this->physicalKey($key), $value, $exp);
+            $exp = $this->normalizeExpiry($ttl);
+            return $mem->set($this->physicalKey($key), $this->packValue($value), $exp);
         } finally { $this->release(); }
     }
 
@@ -162,7 +191,7 @@ class MemcachedDriver implements CacheInterface
             $vals = $mem->getMulti(array_values($map));
             $result = [];
             foreach ($map as $k => $pk) {
-                $result[$k] = isset($vals[$pk]) ? $vals[$pk] : null;
+                $result[$k] = (is_array($vals) && array_key_exists($pk, $vals)) ? $this->unpackValue($vals[$pk]) : null;
             }
             return $result;
         } finally { $this->release(); }
@@ -171,7 +200,7 @@ class MemcachedDriver implements CacheInterface
     /**
      * 批量写（setMulti 一次往返，键经 physicalKey 归一）。
      * @param array $items 逻辑键 => 值
-     * @param int $ttl 存活秒数；<=0 归一 0=永不过期（同 set）
+     * @param int $ttl 存活秒数；<=0 归一 0=永不过期，>30 天自动转为 Unix 时间戳
      * @return bool 无连接或 setMulti 失败 false
      */
     public function setMultiple(array $items, int $ttl = 0): bool
@@ -180,9 +209,9 @@ class MemcachedDriver implements CacheInterface
         try {
             $prefixed = [];
             foreach ($items as $k => $v) {
-                $prefixed[$this->physicalKey($k)] = $v;   // 同 get()/set()/delete() 的键口径
+                $prefixed[$this->physicalKey($k)] = $this->packValue($v);   // 同 get()/set()/delete() 的键口径
             }
-            return $mem->setMulti($prefixed, $ttl > 0 ? $ttl : 0);
+            return $mem->setMulti($prefixed, $this->normalizeExpiry($ttl));
         } finally { $this->release(); }
     }
 

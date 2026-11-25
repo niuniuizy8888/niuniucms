@@ -168,8 +168,9 @@
   // ---- view transition (from public/include.html) ----
   if (document.startViewTransition) {
     document.addEventListener('click', function(e) {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       var link = e.target.closest('a[href]');
-      if (link && link.href && !link.href.includes('#') && link.target !== '_blank' && link.hostname === window.location.hostname) {
+      if (link && link.href && !link.hasAttribute('download') && !link.href.includes('#') && link.target !== '_blank' && link.hostname === window.location.hostname) {
         e.preventDefault();
         document.startViewTransition(function() { window.location.href = link.href; });
       }

@@ -224,7 +224,7 @@ class SetManageService
             admin_param_text('seo_des', '', 500),
             $conf
         );
-        return array('code' => 0, 'message' => $result['msg']);
+        return array('code' => empty($result['success']) ? -1 : 0, 'message' => $result['msg']);
     }
 
     /**

@@ -94,10 +94,11 @@ register_shutdown_function(function () {
 // 加载工具函数（get_domain / serveStaticFile 等）
 include CORE_PATH . 'func/static.php';
 
-// 静态文件直接服务
+// 静态文件直接服务（放行动态站点地图 /sitemap.xml 及伪静态 /sitemap*.txt）
 $reqPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
 $reqPath = $reqPath ? rawurldecode($reqPath) : '';
-if ($reqPath && '/sitemap.xml' !== strtolower($reqPath) && strtolower(pathinfo($reqPath, PATHINFO_EXTENSION))) {
+$isSitemapDynamic = ($reqPath !== '' && ('/sitemap.xml' === strtolower($reqPath) || preg_match('#^/sitemap(?:[-/][A-Za-z0-9_-]+)*\.txt$#i', $reqPath)));
+if ($reqPath && !$isSitemapDynamic && strtolower(pathinfo($reqPath, PATHINFO_EXTENSION))) {
     serveStaticFile($reqPath);
 }
 
@@ -108,14 +109,14 @@ $configFile = nncms_runtime_path('config.php');
 // （保留旧文件：已按旧路径配置的 nginx `if (-f core/install.lock)` 规则继续生效）。锁换位置绝不会把站点当成未安装。
 $lockFile = nncms_runtime_path('install.lock');
 $legacyLockFile = APP_PATH . 'core/install.lock';
-$installLocked = is_file($lockFile);
-if (!$installLocked && is_file($legacyLockFile)) {
-    $installLocked = TRUE;
-    if (is_dir(APP_PATH . 'core/config') && is_writable(APP_PATH . 'core/config')) {
-        @copy($legacyLockFile, $lockFile);
+$installLocked = is_file($lockFile) || is_file($legacyLockFile);
+if ($installLocked && is_file($legacyLockFile) && !is_file(NNCMS_DATA_DIR . 'install.lock') && !is_file(APP_PATH . 'core/config/install.lock')) {
+    $targetLock = nncms_runtime_path_w('install.lock');
+    if ($targetLock !== $legacyLockFile && is_writable(dirname($targetLock))) {
+        @copy($legacyLockFile, $targetLock);
     }
 }
-unset($lockFile, $legacyLockFile);
+unset($lockFile, $legacyLockFile, $targetLock);
 // 未安装（两处 install.lock 都不在，或缺 core/config/config.php）直接跳转安装向导，不再使用 install_missing.php 引导页
 if (!$installLocked || !is_file($configFile)) {
     // 旧版 1.0.x 数据仍在（新版程序包已覆盖、升级尚未完成）：不要把访客引向安装向导

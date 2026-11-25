@@ -214,7 +214,7 @@ class VideoOriginService
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
             verified=IF(VALUES(excluded)=1,0,IF(BINARY alias=BINARY VALUES(alias),GREATEST(verified,VALUES(verified)),VALUES(verified))),alias=VALUES(alias),excluded=VALUES(excluded),
             type_id=VALUES(type_id),type_name=VALUES(type_name),checked_at=VALUES(checked_at),source_year=VALUES(source_year),source_douban_id=VALUES(source_douban_id)" . ($type!==null ? ',type_path=VALUES(type_path),suggested_cid=VALUES(suggested_cid),mismatch=VALUES(mismatch)' : ''),
-            [$code,$id,$row['vid'],$row['alias'],max(0,(int)($item['type_id'] ?? 0)),VideoService::fitText((string)($item['type_name'] ?? ''),255),
+            [$code,$id,$row['vid'],$row['alias'],max(0,min(4294967295,(int)($item['type_id'] ?? 0))),VideoService::fitText((string)($item['type_name'] ?? ''),255),
                 $type['path'] ?? '',$type['cid'] ?? 0,$type['mismatch'] ?? 0,(int)$verified,time(),$year,$douban,(int)($type['excluded'] ?? false)]);
     }
 

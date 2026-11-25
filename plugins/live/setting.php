@@ -33,7 +33,7 @@ function lv_setting_player_abs($cfg)
 {
     $raw = trim((string)(isset($cfg['player_url']) ? $cfg['player_url'] : ''));
     if ('' !== $raw) {
-        $ok = (str_starts_with($raw, '/') && FALSE === strpos($raw, '//', 1) && !str_contains($raw, '\\'))
+        $ok = (str_starts_with($raw, '/') && !str_starts_with($raw, '//') && !str_contains($raw, '//') && !str_contains($raw, '\\'))
             || 1 === preg_match('#^https?://#i', $raw);
         if ($ok
             && !str_contains($raw, '<') && !str_contains($raw, '>')
@@ -56,8 +56,8 @@ if ('POST' == $method) {
     if (!preg_match('#^\d{1,4}(px|%)?$#i', $lvWidth)) $lvWidth = '100%';
     $lvUrl = trim((string)admin_param_text('player_url', '', 255));
     $lvUrlOk = ('' === $lvUrl)
-        // '\evil.com' 会被浏览器按协议相对（//evil.com）解析，反斜杠一并拒绝
-        || ((str_starts_with($lvUrl, '/') && FALSE === strpos($lvUrl, '//', 1) && !str_contains($lvUrl, '\\')) || 1 === preg_match('#^https?://#i', $lvUrl));
+        // 仅允许单斜杠站内路径（拒 //host、/\host、\host）或 http(s) 地址
+        || ((str_starts_with($lvUrl, '/') && !str_starts_with($lvUrl, '//') && !str_contains($lvUrl, '//') && !str_contains($lvUrl, '\\')) || 1 === preg_match('#^https?://#i', $lvUrl));
     if (!$lvUrlOk) $lvUrl = '';
     $lvCfg = array(
         'on'         => admin_param_int('on', 0, 0, 1),
@@ -85,12 +85,12 @@ $lvPlayerAbs = htmlspecialchars(lv_setting_player_abs($lvCfg), ENT_QUOTES, 'UTF-
         <div class="card-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></div>
         <h3 class="card-title">体育直播 · 设置</h3>
         <div class="card-actions">
-            <a class="btn btn-sm btn-secondary" href="?live" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>前台直播</a>
+            <a class="btn btn-sm btn-secondary" href="/?live" target="_blank"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>前台直播</a>
         </div>
     </div>
     <div class="card-body">
         <div class="mb-4 p-3 rounded" style="background:var(--nn-info-light);border:1px solid var(--nn-primary-border);color:var(--nn-text-secondary);font-size:13px;line-height:1.6;">
-            前台入口：<a href="?live" target="_blank">/?live</a>。直播数据由内嵌播放器每次直连直播接口实时获取，本站不做任何缓存；页面 L0/页缓存只可能命中静态外壳，与赛程数据无关。
+            前台入口：<a href="/?live" target="_blank">/?live</a>。直播数据由内嵌播放器每次直连直播接口实时获取，本站不做任何缓存；页面 L0/页缓存只可能命中静态外壳，与赛程数据无关。
         </div>
 
         <form method="post">

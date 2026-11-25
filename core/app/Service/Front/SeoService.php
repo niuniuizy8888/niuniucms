@@ -65,10 +65,26 @@ class SeoService
             }
         }
         $base = rtrim(http_url_path(), '/');
-        // 上线前安全审计修复（反射型 XSS，VULN-003）：
-        // REQUEST_URI/Host 原样反射进 <link rel="canonical" href="{$seo.url}"/> 与
-        // <meta property="og:url" content="{$seo.url}">（public/include.html），
-        // 请求行含原始引号即可闭合属性注入标签。仅用于属性上下文，收尾统一转义。
-        return htmlspecialchars($base . '/' . ltrim($uri, '/'), ENT_QUOTES, 'UTF-8');
+        // 剥离引号/尖括号/控制字符与反斜杠（URL 本身不含这些字符），避免在裸输出模板逃逸属性，
+        // 同时不在源头把 & 编码成 &amp; 以免 {h:$seo.url} 二次转义成 &amp;amp;。
+        return (string)preg_replace('/[\x00-\x1F\x7F"\'`<>\\\\]/', '', $base . '/' . ltrim($uri, '/'));
+    }
+
+    /**
+     * 基于实体规范相对 URL 拼装绝对 canonical URL，避免整页缓存把任意未入键查询串写进 canonical/JSON-LD。
+     */
+    public static function canonicalUrl(string $relUrl = ''): string
+    {
+        if ('' === trim($relUrl)) {
+            return self::currentUrl();
+        }
+        $base = rtrim(http_url_path(), '/');
+        if (preg_match('#^https?://#i', $relUrl)) {
+            $url = $relUrl;
+        } else {
+            $rel = ltrim((string)preg_replace('#^(?:\./)+#', '', $relUrl), '/');
+            $url = $base . '/' . $rel;
+        }
+        return (string)preg_replace('/[\x00-\x1F\x7F"\'`<>\\\\]/', '', $url);
     }
 }
